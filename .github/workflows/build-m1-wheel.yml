@@ -42,7 +42,7 @@ jobs:
         arch -arm64 python3 -m venv venv
         . ./venv/bin/activate
         export PATH=~/.cargo/bin:$PATH
-        arch -arm64 pip install maturin
+        arch -arm64 pip install maturin &&
         arch -arm64 maturin build --no-sdist -i python --release --strip -m workspace/python-extension/Cargo.toml
         arch -arm64 cargo build
 

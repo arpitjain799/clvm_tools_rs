@@ -51,7 +51,7 @@ jobs:
             /opt/python/cp38-cp38/bin/python -m venv venv && \
             if [ ! -f "activate" ]; then ln -s venv/bin/activate; fi && \
             . ./activate && \
-            pip install maturin \
+            pip install maturin && \
             CC=gcc maturin build --no-sdist --release --strip --manylinux 2014 -m ./workspaces/python-extension/Cargo.toml && \
             cargo build
           '
