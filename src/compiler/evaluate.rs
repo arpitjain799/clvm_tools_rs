@@ -889,7 +889,7 @@ impl Evaluator {
             ),
             Some(HelperForm::Defun(inline, defun)) => {
                 if !inline && only_inline {
-                    return Ok(defun.body.clone());
+                    return Ok(body.clone());
                 }
 
                 let argument_captures_untranslated =
