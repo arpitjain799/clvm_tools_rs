@@ -12,6 +12,7 @@ use crate::compiler::comptypes::{
     CompileErr,
     CompileForm,
     CompilerOpts,
+    DefmacData,
     DefunData,
     HelperForm,
     LetFormKind,
@@ -78,7 +79,7 @@ fn collect_used_names_bodyform(body: &BodyForm) -> Vec<Vec<u8>> {
 fn collect_used_names_helperform(body: &HelperForm) -> Vec<Vec<u8>> {
     match body {
         HelperForm::Defconstant(_, _, value) => collect_used_names_bodyform(value),
-        HelperForm::Defmacro(_, _, _, body) => collect_used_names_compileform(body),
+        HelperForm::Defmacro(mac) => collect_used_names_compileform(mac.program.borrow()),
         HelperForm::Defun(_, defun) => collect_used_names_bodyform(&defun.body),
     }
 }
@@ -237,6 +238,7 @@ fn make_let_bindings(body: Rc<SExp>) -> Result<Vec<Rc<Binding>>, CompileErr> {
                     let mut rest_bindings = make_let_bindings(tl.clone())?;
                     result.push(Rc::new(Binding {
                         loc: l.clone(),
+                        nl: l.clone(),
                         name: name.to_vec(),
                         body: Rc::new(compiled_body),
                     }));
@@ -384,6 +386,7 @@ fn compile_defun(
 fn compile_defmacro(
     opts: Rc<dyn CompilerOpts>,
     l: Srcloc,
+    nl: Srcloc,
     name: Vec<u8>,
     args: Rc<SExp>,
     body: Rc<SExp>,
@@ -395,7 +398,13 @@ fn compile_defmacro(
     );
     let new_opts = opts.set_stdenv(false);
     frontend(new_opts, &vec![Rc::new(program)])
-        .map(|p| HelperForm::Defmacro(l, name, args.clone(), Rc::new(p)))
+        .map(|p| HelperForm::Defmacro(DefmacData {
+            loc: l,
+            nl: nl,
+            name: name,
+            args: args.clone(),
+            program: Rc::new(p)
+        }))
 }
 
 fn match_op_name_4(
@@ -459,7 +468,7 @@ fn compile_helperform(
             if *op_name == "defconstant".as_bytes().to_vec() {
                 return compile_defconstant(l, name.to_vec(), args.clone()).map(|x| Some(x));
             } else if *op_name == "defmacro".as_bytes().to_vec() {
-                return compile_defmacro(opts, l, name.to_vec(), args.clone(), body.clone())
+                return compile_defmacro(opts, l, nl, name.to_vec(), args.clone(), body.clone())
                     .map(|x| Some(x));
             } else if *op_name == "defun".as_bytes().to_vec() {
                 return compile_defun(l, nl, false, name.to_vec(), args.clone(), body.clone())

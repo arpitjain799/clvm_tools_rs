@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::borrow::Borrow;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Until {
@@ -46,6 +47,52 @@ impl Srcloc {
                 "{}({}):{}-{}({}):{}",
                 self.file, self.line, self.col, self.file, u.line, u.col
             ),
+        }
+    }
+
+    pub fn new(name: Rc<String>, line: usize, col: usize) -> Self {
+        Srcloc {
+            file: name,
+            line: line,
+            col: col,
+            until: None
+        }
+    }
+
+    pub fn overlap(&self, other: &Srcloc) -> bool {
+        let mf: &String = self.file.borrow();
+        let of: &String = other.file.borrow();
+        if mf != of {
+            return false;
+        }
+
+        if self.line == other.line && self.col == other.col {
+            return true;
+        }
+
+        match (self.until.as_ref(), other.until.as_ref()) {
+            (None, None) => self.line == other.line && self.col == other.col,
+            (None, Some(_)) => other.overlap(self),
+            (Some(u), None) => {
+                if self.line < other.line && u.line > other.line {
+                    return true;
+                }
+                if self.line == other.line && self.col <= other.col && self.col + self.len() >= other.col {
+                    return true;
+                }
+                if u.line == other.line && self.col + self.len() >= other.col {
+                    return true;
+                }
+
+                false
+            },
+            (Some(u1), Some(u2)) => {
+                let l1 = Srcloc::new(self.file.clone(), self.line, self.col);
+                let l2 = Srcloc::new(self.file.clone(), u1.line, u1.col);
+                let l3 = Srcloc::new(self.file.clone(), other.line, other.col);
+                let l4 = Srcloc::new(self.file.clone(), u2.line, u2.col);
+                other.overlap(&l1) || other.overlap(&l2) || self.overlap(&l3) || self.overlap(&l4)
+            }
         }
     }
 

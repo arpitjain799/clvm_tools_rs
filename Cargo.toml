@@ -35,6 +35,7 @@ binascii = "0.1.4"
 lsp-server = "0.6.0"
 lsp-types = "0.93.0"
 serde = "1.0.142"
+bisection = "0.1.0"
 
 [patch.crates-io]
 skimmer = { git = "https://github.com/dnsl48/skimmer", rev = "ca914ef624ecf39a75ed7afef10e7838fffe9127" }

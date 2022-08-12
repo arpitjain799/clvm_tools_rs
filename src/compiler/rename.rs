@@ -6,6 +6,7 @@ use crate::compiler::comptypes::{
     Binding,
     BodyForm,
     CompileForm,
+    DefmacData,
     DefunData,
     HelperForm,
     LetFormKind
@@ -122,6 +123,7 @@ fn make_binding_unique(b: &Binding) -> (Vec<u8>, Binding) {
         b.name.to_vec(),
         Binding {
             loc: b.loc.clone(),
+            nl: b.nl.clone(),
             name: gensym(b.name.clone()),
             body: b.body.clone(),
         },
@@ -137,6 +139,7 @@ fn rename_in_bodyform(namemap: &HashMap<Vec<u8>, Vec<u8>>, b: Rc<BodyForm>) -> B
                 .map(|b| {
                     Rc::new(Binding {
                         loc: b.loc().clone(),
+                        nl: b.nl.clone(),
                         name: b.name.clone(),
                         body: Rc::new(rename_in_bodyform(namemap, b.body.clone())),
                     })
@@ -232,6 +235,7 @@ fn rename_args_bodyform(b: &BodyForm) -> BodyForm {
                 .map(|x| {
                     Rc::new(Binding {
                         loc: x.loc.clone(),
+                        nl: x.nl.clone(),
                         name: x.name.clone(),
                         body: Rc::new(rename_args_bodyform(&x.body)),
                     })
@@ -267,12 +271,13 @@ fn rename_in_helperform(namemap: &HashMap<Vec<u8>, Vec<u8>>, h: &HelperForm) -> 
             n.to_vec(),
             Rc::new(rename_in_bodyform(&namemap, body.clone())),
         ),
-        HelperForm::Defmacro(l, n, arg, body) => HelperForm::Defmacro(
-            l.clone(),
-            n.to_vec(),
-            arg.clone(),
-            Rc::new(rename_in_compileform(&namemap, body.clone())),
-        ),
+        HelperForm::Defmacro(mac) => HelperForm::Defmacro(DefmacData {
+            loc: mac.loc.clone(),
+            nl: mac.nl.clone(),
+            name: mac.name.to_vec(),
+            args: mac.args.clone(),
+            program: Rc::new(rename_in_compileform(&namemap, mac.program.clone()))
+        }),
         HelperForm::Defun(inline, defun) => HelperForm::Defun(
             *inline, DefunData {
                 loc: defun.loc.clone(),
@@ -290,26 +295,27 @@ fn rename_args_helperform(h: &HelperForm) -> HelperForm {
         HelperForm::Defconstant(l, n, body) => {
             HelperForm::Defconstant(l.clone(), n.clone(), Rc::new(rename_args_bodyform(body)))
         }
-        HelperForm::Defmacro(l, n, arg, body) => {
+        HelperForm::Defmacro(mac) => {
             let mut new_names: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
-            for x in invent_new_names_sexp(arg.clone()).iter() {
+            for x in invent_new_names_sexp(mac.args.clone()).iter() {
                 new_names.insert(x.0.clone(), x.1.clone());
             }
             let mut local_namemap = HashMap::new();
             for x in new_names.iter() {
                 local_namemap.insert(x.0.to_vec(), x.1.to_vec());
             }
-            let local_renamed_arg = rename_in_cons(&local_namemap, arg.clone());
-            let local_renamed_body = rename_args_compileform(body);
-            HelperForm::Defmacro(
-                l.clone(),
-                n.clone(),
-                local_renamed_arg,
-                Rc::new(rename_in_compileform(
+            let local_renamed_arg = rename_in_cons(&local_namemap, mac.args.clone());
+            let local_renamed_body = rename_args_compileform(mac.program.borrow());
+            HelperForm::Defmacro(DefmacData {
+                loc: mac.loc.clone(),
+                nl: mac.nl.clone(),
+                name: mac.name.clone(),
+                args: local_renamed_arg,
+                program: Rc::new(rename_in_compileform(
                     &local_namemap,
                     Rc::new(local_renamed_body),
                 )),
-            )
+            })
         }
         HelperForm::Defun(inline, defun) => {
             let new_names = invent_new_names_sexp(defun.args.clone());

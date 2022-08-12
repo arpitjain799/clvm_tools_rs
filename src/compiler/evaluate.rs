@@ -877,12 +877,12 @@ impl Evaluator {
     ) -> Result<Rc<BodyForm>, CompileErr> {
         let helper = select_helper(&self.helpers, call_name);
         match helper {
-            Some(HelperForm::Defmacro(l, _name, _args, program)) => self.invoke_macro_expansion(
+            Some(HelperForm::Defmacro(mac)) => self.invoke_macro_expansion(
                 allocator,
                 visited,
-                l.clone(),
+                mac.loc.clone(),
                 call_loc.clone(),
-                program,
+                mac.program,
                 prog_args.clone(),
                 arguments_to_convert,
                 env,

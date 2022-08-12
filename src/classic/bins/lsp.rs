@@ -1,9 +1,10 @@
 use std::cmp::Ordering;
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::error::Error;
 use std::rc::Rc;
 
+use bisection::bisect_left;
 use lazy_static::lazy_static;
 use serde_json::value::{Value, to_value};
 
@@ -17,6 +18,9 @@ use lsp_types::{
     DidOpenTextDocumentParams,
     GotoDefinitionResponse,
     InitializeParams,
+    Location,
+    Position,
+    Range,
     SemanticToken,
     SemanticTokenModifier,
     SemanticTokens,
@@ -35,7 +39,7 @@ use lsp_server::{Connection, ExtractError, Message, Request, RequestId, Response
 
 use clvm_tools_rs::compiler::compiler::DefaultCompilerOpts;
 use clvm_tools_rs::compiler::comptypes::{
-    CompileErr, CompilerOpts, CompileForm, HelperForm
+    BodyForm, CompileErr, CompilerOpts, CompileForm, HelperForm, LetFormKind
 };
 use clvm_tools_rs::compiler::frontend::frontend;
 use clvm_tools_rs::compiler::sexp::{SExp, parse_sexp};
@@ -45,6 +49,7 @@ lazy_static! {
     pub static ref TOKEN_TYPES: Vec<SemanticTokenType> = {
         vec![
             SemanticTokenType::PARAMETER,
+            SemanticTokenType::VARIABLE,
             SemanticTokenType::FUNCTION,
             SemanticTokenType::MACRO,
             SemanticTokenType::KEYWORD,
@@ -65,13 +70,14 @@ lazy_static! {
 }
 
 const TK_PARAMETER_IDX: u32 = 0;
-const TK_FUNCTION_IDX: u32 = 1;
-const TK_MACRO_IDX: u32 = 2;
-const TK_KEYWORD_IDX: u32 = 3;
-const TK_COMMENT_IDX: u32 = 4;
-const TK_STRING_IDX: u32 = 5;
-const TK_NUMBER_IDX: u32 = 6;
-const TK_OPERATOR_IDX: u32 = 7;
+const TK_VARIABLE_IDX: u32 = 1;
+const TK_FUNCTION_IDX: u32 = 2;
+const TK_MACRO_IDX: u32 = 3;
+const TK_KEYWORD_IDX: u32 = 4;
+const TK_COMMENT_IDX: u32 = 5;
+const TK_STRING_IDX: u32 = 6;
+const TK_NUMBER_IDX: u32 = 7;
+const TK_OPERATOR_IDX: u32 = 8;
 
 const TK_DEFINITION_BIT: u32 = 0;
 const TK_READONLY_BIT: u32 = 1;
@@ -230,10 +236,12 @@ impl Ord for SemanticTokenSortable {
 
 fn collect_arg_tokens(
     collected_tokens: &mut Vec<SemanticTokenSortable>,
+    argcollection: &mut HashMap<Vec<u8>, Srcloc>,
     args: Rc<SExp>
 ) {
     match args.borrow() {
         SExp::Atom(l,a) => {
+            argcollection.insert(a.clone(), l.clone());
             collected_tokens.push(SemanticTokenSortable {
                 loc: l.clone(),
                 token_type: TK_PARAMETER_IDX,
@@ -241,29 +249,205 @@ fn collect_arg_tokens(
             });
         },
         SExp::Cons(_,a,b) => {
-            collect_arg_tokens(collected_tokens, a.clone());
-            collect_arg_tokens(collected_tokens, b.clone());
+            collect_arg_tokens(collected_tokens, argcollection, a.clone());
+            collect_arg_tokens(collected_tokens, argcollection, b.clone());
         }
         _ => { }
     }
 }
 
-fn do_semantic_tokens(id: RequestId, frontend: &CompileForm) -> Response {
+fn process_body_code(
+    collected_tokens: &mut Vec<SemanticTokenSortable>,
+    gotodef: &mut BTreeMap<SemanticTokenSortable, Srcloc>,
+    argcollection: &HashMap<Vec<u8>, Srcloc>,
+    varcollection: &HashMap<Vec<u8>, Srcloc>,
+    frontend: &CompileForm,
+    body: Rc<BodyForm>
+) {
+    match body.borrow() {
+        BodyForm::Let(l,k,bindings,inner_body) => {
+            let mut bindings_vars = varcollection.clone();
+            for b in bindings.clone() {
+                collected_tokens.push(SemanticTokenSortable {
+                    loc: b.nl.clone(),
+                    token_type: TK_VARIABLE_IDX,
+                    token_mod: 1 << TK_DEFINITION_BIT | 1 << TK_READONLY_BIT
+                });
+                if k == &LetFormKind::Sequential {
+                    // Bindings above affect code below
+                    process_body_code(
+                        collected_tokens,
+                        gotodef,
+                        argcollection,
+                        &bindings_vars,
+                        frontend,
+                        b.body.clone()
+                    );
+                } else {
+                    process_body_code(
+                        collected_tokens,
+                        gotodef,
+                        argcollection,
+                        varcollection,
+                        frontend,
+                        b.body.clone()
+                    )
+                }
+                bindings_vars.insert(b.name.clone(), b.nl.clone());
+            }
+            process_body_code(
+                collected_tokens,
+                gotodef,
+                argcollection,
+                &bindings_vars,
+                frontend,
+                inner_body.clone()
+            );
+        },
+        BodyForm::Quoted(SExp::Integer(l,i)) => {
+            collected_tokens.push(SemanticTokenSortable {
+                loc: l.clone(),
+                token_type: TK_NUMBER_IDX,
+                token_mod: 0
+            });
+        },
+        BodyForm::Quoted(SExp::QuotedString(l,_,s)) => {
+            collected_tokens.push(SemanticTokenSortable {
+                loc: l.clone(),
+                token_type: TK_STRING_IDX,
+                token_mod: 0,
+            });
+        },
+        BodyForm::Value(SExp::Atom(l,a)) => {
+            if let Some(argloc) = argcollection.get(a) {
+                let t = SemanticTokenSortable {
+                    loc: l.clone(),
+                    token_type: TK_PARAMETER_IDX,
+                    token_mod: 0
+                };
+                collected_tokens.push(t.clone());
+                gotodef.insert(t, argloc.clone());
+            }
+            if let Some(varloc) = varcollection.get(a) {
+                let t = SemanticTokenSortable {
+                    loc: l.clone(),
+                    token_type: TK_VARIABLE_IDX,
+                    token_mod: 0
+                };
+                collected_tokens.push(t.clone());
+                gotodef.insert(t, varloc.clone());
+            }
+        },
+        BodyForm::Value(SExp::Integer(l,i)) => {
+            collected_tokens.push(SemanticTokenSortable {
+                loc: l.clone(),
+                token_type: TK_NUMBER_IDX,
+                token_mod: 0
+            });
+        },
+        BodyForm::Call(l, args) => {
+            if args.len() == 0 {
+                return;
+            }
+
+            let head: &BodyForm = args[0].borrow();
+            if let BodyForm::Value(SExp::Atom(l,a)) = head {
+                for f in frontend.helpers.iter() {
+                    match f {
+                        HelperForm::Defun(inline, defun) => {
+                            if &defun.name == a {
+                                let st = SemanticTokenSortable {
+                                    loc: l.clone(),
+                                    token_type: TK_FUNCTION_IDX,
+                                    token_mod: 0
+                                };
+                                eprintln!("function call at {:?}", st);
+                                gotodef.insert(st.clone(), defun.nl.clone());
+                                collected_tokens.push(st);
+                                break;
+                            }
+                        },
+                        HelperForm::Defmacro(mac) => {
+                            if &mac.name == a {
+                                let st = SemanticTokenSortable {
+                                    loc: l.clone(),
+                                    token_type: TK_MACRO_IDX,
+                                    token_mod: 0
+                                };
+                                gotodef.insert(st.clone(), mac.nl.clone());
+                                collected_tokens.push(st);
+                                break;
+                            }
+                        },
+                        _ => { }
+                    }
+                }
+            }
+
+            for a in args.iter().skip(1) {
+                process_body_code(
+                    collected_tokens,
+                    gotodef,
+                    argcollection,
+                    varcollection,
+                    frontend,
+                    a.clone()
+                );
+            }
+        },
+        _ => { }
+    }
+}
+
+fn do_semantic_tokens(
+    id: RequestId,
+    goto_def: &mut BTreeMap<SemanticTokenSortable, Srcloc>,
+    frontend: &CompileForm
+) -> Response {
     let mut collected_tokens = Vec::new();
+    let varcollection = HashMap::new();
     for form in frontend.helpers.iter() {
         match form {
             HelperForm::Defun(_,defun) => {
+                let mut argcollection = HashMap::new();
                 eprintln!("handling form {}", form.to_sexp().to_string());
                 collected_tokens.push(SemanticTokenSortable {
                     loc: defun.nl.clone(),
                     token_type: TK_FUNCTION_IDX,
                     token_mod: 1 << TK_DEFINITION_BIT
                 });
-                collect_arg_tokens(&mut collected_tokens, defun.args.clone());
+                collect_arg_tokens(
+                    &mut collected_tokens,
+                    &mut argcollection,
+                    defun.args.clone()
+                );
+                process_body_code(
+                    &mut collected_tokens,
+                    goto_def,
+                    &argcollection,
+                    &varcollection,
+                    frontend,
+                    defun.body.clone()
+                );
             },
             _ => { }
         }
     }
+
+    let mut argcollection = HashMap::new();
+    collect_arg_tokens(
+        &mut collected_tokens,
+        &mut argcollection,
+        frontend.args.clone()
+    );
+    process_body_code(
+        &mut collected_tokens,
+        goto_def,
+        &argcollection,
+        &varcollection,
+        frontend,
+        frontend.exp.clone()
+    );
 
     collected_tokens.sort();
     let mut result_tokens = SemanticTokens {
@@ -306,6 +490,7 @@ fn main_loop(
     let params: InitializeParams = serde_json::from_value(params).unwrap();
     let mut document_collection: HashMap<String, DocData> = HashMap::new();
     let mut parsed_documents: HashMap<String, ParsedDoc> = HashMap::new();
+    let mut goto_defs: HashMap<String, BTreeMap<SemanticTokenSortable, Srcloc>> = HashMap::new();
 
     eprintln!("starting example main loop");
     for msg in &connection.receiver {
@@ -327,11 +512,12 @@ fn main_loop(
                         );
                     }
                     if let Some(parsed) = parsed_documents.get(&uristring) {
-                        eprintln!("parsed {:?}", parsed);
                         match &parsed.result {
                             ParseResult::Completed(frontend) => {
-                                let resp = do_semantic_tokens(id, &frontend);
-                                eprintln!("response {}", serde_json::to_string(&resp).unwrap());
+                                let mut our_goto_defs = BTreeMap::new();
+                                let resp = do_semantic_tokens(id, &mut our_goto_defs, &frontend);
+                                eprintln!("our goto defs {:?}", our_goto_defs);
+                                goto_defs.insert(uristring.clone(), our_goto_defs);
                                 connection.sender.send(Message::Response(resp))?;
                             },
                             ParseResult::WithError(error) => {
@@ -348,7 +534,34 @@ fn main_loop(
                     }
                 } else if let Ok((id, params)) = cast::<GotoDefinition>(req.clone()) {
                     eprintln!("got gotoDefinition request #{}: {:?}", id, params);
-                    let result = Some(GotoDefinitionResponse::Array(Vec::new()));
+                    let mut goto_response = None;
+                    let docname = params.text_document_position_params.text_document.uri.to_string();
+                    let docpos = params.text_document_position_params.position;
+                    let wantloc = Srcloc::new(Rc::new(docname.clone()), (docpos.line + 1) as usize, (docpos.character + 1) as usize);
+                    if let Some(defs) = goto_defs.get(&docname) {
+                        eprintln!("find {:?} in {:?}", wantloc, defs);
+                        for kv in defs.iter() {
+                            if kv.0.loc.overlap(&wantloc) {
+                                goto_response = Some(Location {
+                                    uri: params.text_document_position_params.text_document.uri.clone(),
+                                    range: Range {
+                                        start: Position {
+                                            line: (kv.1.line - 1) as u32,
+                                            character: (kv.1.col - 1) as u32
+                                        },
+                                        end: Position {
+                                            line: (kv.1.line - 1) as u32,
+                                            character: (kv.1.col + kv.1.len() - 1) as u32
+                                        }
+                                    }
+                                });
+                                break;
+                            }
+                        }
+                    }
+                    let result = goto_response.map(|gr| {
+                        GotoDefinitionResponse::Scalar(gr)
+                    });
                     let result = serde_json::to_value(&result).unwrap();
                     let resp = Response { id, result: Some(result), error: None };
                     connection.sender.send(Message::Response(resp))?;

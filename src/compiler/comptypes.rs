@@ -60,11 +60,12 @@ pub fn list_to_cons(l: Srcloc, list: &Vec<Rc<SExp>>) -> SExp {
 #[derive(Clone, Debug)]
 pub struct Binding {
     pub loc: Srcloc,
+    pub nl: Srcloc,
     pub name: Vec<u8>,
     pub body: Rc<BodyForm>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LetFormKind {
     Parallel,
     Sequential,
@@ -88,9 +89,26 @@ pub struct DefunData {
 }
 
 #[derive(Clone, Debug)]
+pub struct DefmacData {
+    pub loc: Srcloc,
+    pub name: Vec<u8>,
+    pub nl: Srcloc,
+    pub args: Rc<SExp>,
+    pub program: Rc<CompileForm>
+}
+
+#[derive(Clone, Debug)]
+pub struct DefconstData {
+    pub loc: Srcloc,
+    pub name: Vec<u8>,
+    pub nl: Srcloc,
+    pub body: Rc<BodyForm>
+}
+
+#[derive(Clone, Debug)]
 pub enum HelperForm {
     Defconstant(Srcloc, Vec<u8>, Rc<BodyForm>),
-    Defmacro(Srcloc, Vec<u8>, Rc<SExp>, Rc<CompileForm>),
+    Defmacro(DefmacData),
     Defun(bool, DefunData),
 }
 
@@ -214,7 +232,7 @@ impl HelperForm {
     pub fn name(&self) -> &Vec<u8> {
         match self {
             HelperForm::Defconstant(_, name, _) => name,
-            HelperForm::Defmacro(_, name, _, _) => name,
+            HelperForm::Defmacro(mac) => &mac.name,
             HelperForm::Defun(_, defun) => &defun.name,
         }
     }
@@ -222,7 +240,7 @@ impl HelperForm {
     pub fn loc(&self) -> Srcloc {
         match self {
             HelperForm::Defconstant(l, _, _) => l.clone(),
-            HelperForm::Defmacro(l, _, _, _) => l.clone(),
+            HelperForm::Defmacro(mac) => mac.loc.clone(),
             HelperForm::Defun(_, defun) => defun.loc.clone(),
         }
     }
@@ -240,13 +258,13 @@ impl HelperForm {
                     body.to_sexp(),
                 ],
             )),
-            HelperForm::Defmacro(loc, name, _args, body) => Rc::new(SExp::Cons(
-                loc.clone(),
-                Rc::new(SExp::atom_from_string(loc.clone(), &"defmacro".to_string())),
+            HelperForm::Defmacro(mac) => Rc::new(SExp::Cons(
+                mac.loc.clone(),
+                Rc::new(SExp::atom_from_string(mac.loc.clone(), &"defmacro".to_string())),
                 Rc::new(SExp::Cons(
-                    loc.clone(),
-                    Rc::new(SExp::atom_from_vec(loc.clone(), &name)),
-                    body.to_sexp(),
+                    mac.loc.clone(),
+                    Rc::new(SExp::atom_from_vec(mac.nl.clone(), &mac.name)),
+                    mac.program.to_sexp(),
                 )),
             )),
             HelperForm::Defun(inline, defun) => {

@@ -933,6 +933,7 @@ fn hoist_body_let_binding(
                 out_defuns.append(&mut new_helpers);
                 revised_bindings.push(Rc::new(Binding {
                     loc: b.loc.clone(),
+                    nl: b.nl.clone(),
                     name: b.name.clone(),
                     body: new_binding,
                 }));
@@ -1089,11 +1090,11 @@ fn start_codegen(
                     use_compiler.add_constant(&name, Rc::new(quoted))
                 })?
             }
-            HelperForm::Defmacro(loc, name, _args, body) => {
+            HelperForm::Defmacro(mac) => {
                 let macro_program = Rc::new(SExp::Cons(
-                    loc.clone(),
-                    Rc::new(SExp::Atom(loc.clone(), "mod".as_bytes().to_vec())),
-                    body.to_sexp(),
+                    mac.loc.clone(),
+                    Rc::new(SExp::Atom(mac.loc.clone(), "mod".as_bytes().to_vec())),
+                    mac.program.to_sexp(),
                 ));
 
                 let updated_opts = opts
@@ -1116,7 +1117,7 @@ fn start_codegen(
                             Ok(Rc::new(code))
                         }
                     })
-                    .map(|code| use_compiler.add_macro(&name, code))?
+                    .map(|code| use_compiler.add_macro(&mac.name, code))?
             }
             _ => use_compiler,
         };
