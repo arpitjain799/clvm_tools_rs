@@ -31,7 +31,7 @@ fn main() {
             return CompileErr(e.0.clone(), e.1.clone());
         })
         .and_then(|parsed_program| {
-            return frontend(opts.clone(), parsed_program);
+            return frontend(opts.clone(), &parsed_program);
         })
         .and_then(|program| {
             let e = Evaluator::new(opts.clone(), runner.clone(), program.helpers.clone());

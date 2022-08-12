@@ -619,7 +619,7 @@ impl Evaluator {
                 )),
             ));
 
-            frontend(self.opts.clone(), vec![frontend_macro_input]).and_then(|program| {
+            frontend(self.opts.clone(), &vec![frontend_macro_input]).and_then(|program| {
                 self.shrink_bodyform_visited(
                     allocator,
                     visited,
@@ -887,13 +887,13 @@ impl Evaluator {
                 arguments_to_convert,
                 env,
             ),
-            Some(HelperForm::Defun(_, _, inline, args, fun_body)) => {
+            Some(HelperForm::Defun(inline, defun)) => {
                 if !inline && only_inline {
-                    return Ok(body.clone());
+                    return Ok(defun.body.clone());
                 }
 
                 let argument_captures_untranslated =
-                    build_argument_captures(&call_loc, &arguments_to_convert, args.clone())?;
+                    build_argument_captures(&call_loc, &arguments_to_convert, defun.args.clone())?;
 
                 let mut argument_captures = HashMap::new();
                 // Do this to protect against misalignment
@@ -914,9 +914,9 @@ impl Evaluator {
                 self.shrink_bodyform_visited(
                     allocator,
                     visited,
-                    args.clone(),
+                    defun.args.clone(),
                     &argument_captures,
-                    fun_body,
+                    defun.body,
                     only_inline,
                 )
             }

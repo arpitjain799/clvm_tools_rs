@@ -1,11 +1,23 @@
 use std::rc::Rc;
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct Until {
+    pub line: usize,
+    pub col: usize
+}
+
+impl Until {
+    pub fn from_pair(p : (usize, usize)) -> Self {
+        Until { line: p.0, col: p.1 }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Srcloc {
     pub file: Rc<String>,
     pub line: usize,
     pub col: usize,
-    pub until: Option<(usize, usize)>,
+    pub until: Option<Until>,
 }
 
 // let srcLocationToJson sl =
@@ -28,17 +40,35 @@ pub struct Srcloc {
 
 impl Srcloc {
     pub fn to_string(&self) -> String {
-        match self.until {
+        match &self.until {
             None => format!("{}({}):{}", self.file, self.line, self.col),
-            Some((l, c)) => format!(
+            Some(u) => format!(
                 "{}({}):{}-{}({}):{}",
-                self.file, self.line, self.col, self.file, l, c
+                self.file, self.line, self.col, self.file, u.line, u.col
             ),
         }
     }
 
+    pub fn len(&self) -> usize {
+        if let Some(u) = &self.until {
+            if u.line != self.line {
+                1 // TODO: Can't tell length ...
+                // We can fix this by recording the character
+                // number in the file.
+            } else {
+                u.col - self.col
+            }
+        } else {
+            1
+        }
+    }
+
     pub fn ext(&self, other: &Srcloc) -> Srcloc {
-        combine_src_location(self, other)
+        if other.file == self.file {
+            combine_src_location(self, other)
+        } else {
+            self.clone()
+        }
     }
 
     pub fn advance(&self, ch: u8) -> Srcloc {
@@ -47,7 +77,7 @@ impl Srcloc {
                 file: self.file.clone(),
                 col: 1,
                 line: self.line + 1,
-                until: self.until,
+                until: self.until.clone(),
             },
             '\t' => {
                 let next_tab = (self.col + 8) & !7;
@@ -55,14 +85,14 @@ impl Srcloc {
                     file: self.file.clone(),
                     col: next_tab,
                     line: self.line,
-                    until: self.until,
+                    until: self.until.clone(),
                 }
             }
             _ => Srcloc {
                 file: self.file.clone(),
                 col: self.col + 1,
                 line: self.line,
-                until: self.until,
+                until: self.until.clone(),
             },
         }
     }
@@ -82,9 +112,9 @@ pub fn src_location_min(a: &Srcloc) -> (usize, usize) {
 }
 
 pub fn src_location_max(a: &Srcloc) -> (usize, usize) {
-    match a.until {
+    match &a.until {
         None => (a.line, a.col + 1),
-        Some((ll, cc)) => (ll, cc),
+        Some(u) => (u.line, u.col),
     }
 }
 
@@ -93,7 +123,7 @@ fn add_onto(x: &Srcloc, y: &Srcloc) -> Srcloc {
         file: x.file.clone(),
         line: x.line,
         col: x.col,
-        until: Some(src_location_max(y)),
+        until: Some(Until::from_pair(src_location_max(y))),
     }
 }
 

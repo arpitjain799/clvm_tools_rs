@@ -6,8 +6,16 @@ use std::rc::Rc;
 use crate::classic::clvm::__type_compatibility__::bi_one;
 
 use crate::compiler::comptypes::{
-    list_to_cons, Binding, BodyForm, CompileErr, CompileForm, CompilerOpts, HelperForm,
-    LetFormKind, ModAccum,
+    list_to_cons,
+    Binding,
+    BodyForm,
+    CompileErr,
+    CompileForm,
+    CompilerOpts,
+    DefunData,
+    HelperForm,
+    LetFormKind,
+    ModAccum,
 };
 use crate::compiler::preprocessor::preprocess;
 use crate::compiler::rename::rename_children_compileform;
@@ -71,7 +79,7 @@ fn collect_used_names_helperform(body: &HelperForm) -> Vec<Vec<u8>> {
     match body {
         HelperForm::Defconstant(_, _, value) => collect_used_names_bodyform(value),
         HelperForm::Defmacro(_, _, _, body) => collect_used_names_compileform(body),
-        HelperForm::Defun(_, _, _, _, body) => collect_used_names_bodyform(body),
+        HelperForm::Defun(_, defun) => collect_used_names_bodyform(&defun.body),
     }
 }
 
@@ -350,6 +358,7 @@ fn compile_defconstant(l: Srcloc, name: Vec<u8>, body: Rc<SExp>) -> Result<Helpe
 
 fn compile_defun(
     l: Srcloc,
+    nl: Srcloc,
     inline: bool,
     name: Vec<u8>,
     args: Rc<SExp>,
@@ -363,7 +372,13 @@ fn compile_defun(
         _ => {}
     }
     compile_bodyform(take_form)
-        .map(|bf| HelperForm::Defun(l, name, inline, args.clone(), Rc::new(bf)))
+        .map(|bf| HelperForm::Defun(inline, DefunData {
+            loc: l,
+            nl: nl,
+            name: name,
+            args: args.clone(),
+            body: Rc::new(bf)
+        }))
 }
 
 fn compile_defmacro(
@@ -379,14 +394,14 @@ fn compile_defmacro(
         Rc::new(SExp::Cons(l.clone(), args.clone(), body.clone())),
     );
     let new_opts = opts.set_stdenv(false);
-    frontend(new_opts, vec![Rc::new(program)])
+    frontend(new_opts, &vec![Rc::new(program)])
         .map(|p| HelperForm::Defmacro(l, name, args.clone(), Rc::new(p)))
 }
 
 fn match_op_name_4(
     body: Rc<SExp>,
     pl: &Vec<SExp>,
-) -> Option<(Vec<u8>, Vec<u8>, Rc<SExp>, Rc<SExp>)> {
+) -> Option<(Vec<u8>, Srcloc, Vec<u8>, Rc<SExp>, Rc<SExp>)> {
     let l = body.loc();
 
     if pl.len() < 1 {
@@ -394,10 +409,11 @@ fn match_op_name_4(
     }
 
     match &pl[0] {
-        SExp::Atom(_, op_name) => {
+        SExp::Atom(l, op_name) => {
             if pl.len() < 3 {
                 return Some((
                     op_name.clone(),
+                    l.clone(),
                     Vec::new(),
                     Rc::new(SExp::Nil(l.clone())),
                     Rc::new(SExp::Nil(l.clone())),
@@ -405,13 +421,14 @@ fn match_op_name_4(
             }
 
             match &pl[1] {
-                SExp::Atom(_, name) => {
+                SExp::Atom(ll, name) => {
                     let mut tail_list = Vec::new();
                     for elt in pl.iter().skip(3) {
                         tail_list.push(Rc::new(elt.clone()));
                     }
                     Some((
                         op_name.clone(),
+                        ll.clone(),
                         name.clone(),
                         Rc::new(pl[2].clone()),
                         Rc::new(enlist(l.clone(), tail_list)),
@@ -419,6 +436,7 @@ fn match_op_name_4(
                 }
                 _ => Some((
                     op_name.clone(),
+                    pl[1].loc(),
                     Vec::new(),
                     Rc::new(SExp::Nil(l.clone())),
                     Rc::new(SExp::Nil(l.clone())),
@@ -437,17 +455,17 @@ fn compile_helperform(
     let plist = body.proper_list();
 
     match plist.and_then(|pl| match_op_name_4(body.clone(), &pl)) {
-        Some((op_name, name, args, body)) => {
+        Some((op_name, nl, name, args, body)) => {
             if *op_name == "defconstant".as_bytes().to_vec() {
                 return compile_defconstant(l, name.to_vec(), args.clone()).map(|x| Some(x));
             } else if *op_name == "defmacro".as_bytes().to_vec() {
                 return compile_defmacro(opts, l, name.to_vec(), args.clone(), body.clone())
                     .map(|x| Some(x));
             } else if *op_name == "defun".as_bytes().to_vec() {
-                return compile_defun(l, false, name.to_vec(), args.clone(), body.clone())
+                return compile_defun(l, nl, false, name.to_vec(), args.clone(), body.clone())
                     .map(|x| Some(x));
             } else if *op_name == "defun-inline".as_bytes().to_vec() {
-                return compile_defun(l, true, name.to_vec(), args.clone(), body.clone())
+                return compile_defun(l, nl, true, name.to_vec(), args.clone(), body.clone())
                     .map(|x| Some(x));
             }
         }
@@ -503,7 +521,7 @@ fn compile_mod_(
 
 fn frontend_start(
     opts: Rc<dyn CompilerOpts>,
-    pre_forms: Vec<Rc<SExp>>,
+    pre_forms: &Vec<Rc<SExp>>,
 ) -> Result<ModAccum, CompileErr> {
     if pre_forms.len() == 0 {
         Err(CompileErr(
@@ -515,7 +533,7 @@ fn frontend_start(
             let loc = pre_forms[0].loc();
             frontend_start(
                 opts.clone(),
-                vec![Rc::new(SExp::Cons(
+                &vec![Rc::new(SExp::Cons(
                     loc.clone(),
                     Rc::new(SExp::Atom(loc.clone(), "mod".as_bytes().to_vec())),
                     Rc::new(SExp::Cons(
@@ -568,7 +586,7 @@ fn frontend_start(
 
 pub fn frontend(
     opts: Rc<dyn CompilerOpts>,
-    pre_forms: Vec<Rc<SExp>>,
+    pre_forms: &Vec<Rc<SExp>>,
 ) -> Result<CompileForm, CompileErr> {
     let started = frontend_start(opts.clone(), pre_forms)?;
 

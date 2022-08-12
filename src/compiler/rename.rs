@@ -2,7 +2,14 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::compiler::comptypes::{Binding, BodyForm, CompileForm, HelperForm, LetFormKind};
+use crate::compiler::comptypes::{
+    Binding,
+    BodyForm,
+    CompileForm,
+    DefunData,
+    HelperForm,
+    LetFormKind
+};
 use crate::compiler::gensym::gensym;
 use crate::compiler::sexp::{decode_string, SExp};
 
@@ -266,12 +273,14 @@ fn rename_in_helperform(namemap: &HashMap<Vec<u8>, Vec<u8>>, h: &HelperForm) -> 
             arg.clone(),
             Rc::new(rename_in_compileform(&namemap, body.clone())),
         ),
-        HelperForm::Defun(l, n, inline, arg, body) => HelperForm::Defun(
-            l.clone(),
-            n.to_vec(),
-            *inline,
-            arg.clone(),
-            Rc::new(rename_in_bodyform(&namemap, body.clone())),
+        HelperForm::Defun(inline, defun) => HelperForm::Defun(
+            *inline, DefunData {
+                loc: defun.loc.clone(),
+                nl: defun.nl.clone(),
+                name: defun.name.to_vec(),
+                args: defun.args.clone(),
+                body: Rc::new(rename_in_bodyform(&namemap, defun.body.clone()))
+            }
         ),
     }
 }
@@ -302,23 +311,25 @@ fn rename_args_helperform(h: &HelperForm) -> HelperForm {
                 )),
             )
         }
-        HelperForm::Defun(l, n, inline, arg, body) => {
-            let new_names = invent_new_names_sexp(arg.clone());
+        HelperForm::Defun(inline, defun) => {
+            let new_names = invent_new_names_sexp(defun.args.clone());
             let mut local_namemap = HashMap::new();
             for x in new_names.iter() {
                 local_namemap.insert(x.0.clone(), x.1.clone());
             }
-            let local_renamed_arg = rename_in_cons(&local_namemap, arg.clone());
-            let local_renamed_body = rename_args_bodyform(body);
+            let local_renamed_arg = rename_in_cons(&local_namemap, defun.args.clone());
+            let local_renamed_body = rename_args_bodyform(defun.body.borrow());
             HelperForm::Defun(
-                l.clone(),
-                n.clone(),
-                *inline,
-                local_renamed_arg,
-                Rc::new(rename_in_bodyform(
-                    &local_namemap,
-                    Rc::new(local_renamed_body),
-                )),
+                *inline, DefunData {
+                    loc: defun.loc.clone(),
+                    nl: defun.nl.clone(),
+                    name: defun.name.clone(),
+                    args: local_renamed_arg,
+                    body: Rc::new(rename_in_bodyform(
+                        &local_namemap,
+                        Rc::new(local_renamed_body),
+                    ))
+                }
             )
         }
     }

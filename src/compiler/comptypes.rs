@@ -79,10 +79,19 @@ pub enum BodyForm {
 }
 
 #[derive(Clone, Debug)]
+pub struct DefunData {
+    pub loc: Srcloc,
+    pub name: Vec<u8>,
+    pub nl: Srcloc,
+    pub args: Rc<SExp>,
+    pub body: Rc<BodyForm>
+}
+
+#[derive(Clone, Debug)]
 pub enum HelperForm {
     Defconstant(Srcloc, Vec<u8>, Rc<BodyForm>),
     Defmacro(Srcloc, Vec<u8>, Rc<SExp>, Rc<CompileForm>),
-    Defun(Srcloc, Vec<u8>, bool, Rc<SExp>, Rc<BodyForm>),
+    Defun(bool, DefunData),
 }
 
 #[derive(Clone, Debug)]
@@ -206,7 +215,7 @@ impl HelperForm {
         match self {
             HelperForm::Defconstant(_, name, _) => name,
             HelperForm::Defmacro(_, name, _, _) => name,
-            HelperForm::Defun(_, name, _, _, _) => name,
+            HelperForm::Defun(_, defun) => &defun.name,
         }
     }
 
@@ -214,7 +223,7 @@ impl HelperForm {
         match self {
             HelperForm::Defconstant(l, _, _) => l.clone(),
             HelperForm::Defmacro(l, _, _, _) => l.clone(),
-            HelperForm::Defun(l, _, _, _, _) => l.clone(),
+            HelperForm::Defun(_, defun) => defun.loc.clone(),
         }
     }
 
@@ -240,19 +249,19 @@ impl HelperForm {
                     body.to_sexp(),
                 )),
             )),
-            HelperForm::Defun(loc, name, inline, arg, body) => {
+            HelperForm::Defun(inline, defun) => {
                 let di_string = "defun-inline".to_string();
                 let d_string = "defun".to_string();
                 Rc::new(list_to_cons(
-                    loc.clone(),
+                    defun.loc.clone(),
                     &vec![
                         Rc::new(SExp::atom_from_string(
-                            loc.clone(),
+                            defun.loc.clone(),
                             if *inline { &di_string } else { &d_string },
                         )),
-                        Rc::new(SExp::atom_from_vec(loc.clone(), &name)),
-                        arg.clone(),
-                        body.to_sexp(),
+                        Rc::new(SExp::atom_from_vec(defun.nl.clone(), &defun.name)),
+                        defun.args.clone(),
+                        defun.body.to_sexp(),
                     ],
                 ))
             }

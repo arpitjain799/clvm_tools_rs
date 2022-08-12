@@ -13,9 +13,24 @@ use crate::classic::clvm::__type_compatibility__::bi_one;
 use crate::compiler::clvm::run;
 use crate::compiler::compiler::{is_at_capture, run_optimizer};
 use crate::compiler::comptypes::{
-    cons_of_string_map, foldM, join_vecs_to_string, list_to_cons, with_heading, Binding, BodyForm,
-    Callable, CompileErr, CompileForm, CompiledCode, CompilerOpts, DefunCall, HelperForm,
-    InlineFunction, LetFormKind, PrimaryCodegen,
+    cons_of_string_map,
+    foldM,
+    join_vecs_to_string,
+    list_to_cons,
+    with_heading,
+    Binding,
+    BodyForm,
+    Callable,
+    CompileErr,
+    CompileForm,
+    CompiledCode,
+    CompilerOpts,
+    DefunCall,
+    DefunData,
+    HelperForm,
+    InlineFunction,
+    LetFormKind,
+    PrimaryCodegen,
 };
 use crate::compiler::debug::{build_swap_table_mut, relabel};
 use crate::compiler::frontend::compile_bodyform;
@@ -721,16 +736,16 @@ fn codegen_(
     h: &HelperForm,
 ) -> Result<PrimaryCodegen, CompileErr> {
     match h {
-        HelperForm::Defun(loc, name, inline, args, body) => {
+        HelperForm::Defun(inline, defun) => {
             if *inline {
                 // Note: this just replaces a dummy function inserted earlier.
                 // The real redefinition check is in dummy_functions.
                 Ok(compiler.add_inline(
-                    name,
+                    &defun.name,
                     &InlineFunction {
-                        name: name.clone(),
-                        args: args.clone(),
-                        body: body.clone(),
+                        name: defun.name.clone(),
+                        args: defun.args.clone(),
+                        body: defun.body.clone(),
                     },
                 ))
             } else {
@@ -738,7 +753,7 @@ fn codegen_(
                     .set_compiler(compiler.clone())
                     .set_in_defun(true)
                     .set_stdenv(false)
-                    .set_start_env(Some(combine_defun_env(compiler.env.clone(), args.clone())));
+                    .set_start_env(Some(combine_defun_env(compiler.env.clone(), defun.args.clone())));
 
                 let opt = if opts.optimize() {
                     // Run optimizer on frontend style forms.
@@ -747,24 +762,24 @@ fn codegen_(
                         opts.clone(),
                         runner.clone(),
                         compiler,
-                        body.clone(),
+                        defun.body.clone(),
                     )
                     .map(|x| x.1)
-                    .unwrap_or_else(|| body.clone())
+                    .unwrap_or_else(|| defun.body.clone())
                 } else {
-                    body.clone()
+                    defun.body.clone()
                 };
 
                 let tocompile = SExp::Cons(
-                    loc.clone(),
-                    Rc::new(SExp::Atom(loc.clone(), "mod".as_bytes().to_vec())),
+                    defun.loc.clone(),
+                    Rc::new(SExp::Atom(defun.loc.clone(), "mod".as_bytes().to_vec())),
                     Rc::new(SExp::Cons(
-                        loc.clone(),
-                        args.clone(),
+                        defun.loc.clone(),
+                        defun.args.clone(),
                         Rc::new(SExp::Cons(
-                            loc.clone(),
+                            defun.loc.clone(),
                             opt.to_sexp(),
-                            Rc::new(SExp::Nil(loc.clone())),
+                            Rc::new(SExp::Nil(defun.loc.clone())),
                         )),
                     )),
                 );
@@ -784,13 +799,13 @@ fn codegen_(
                             Ok(Rc::new(code))
                         }
                     })
-                    .and_then(|code| fail_if_present(loc.clone(), &compiler.inlines, &name, code))
-                    .and_then(|code| fail_if_present(loc.clone(), &compiler.defuns, &name, code))
+                    .and_then(|code| fail_if_present(defun.loc.clone(), &compiler.inlines, &defun.name, code))
+                    .and_then(|code| fail_if_present(defun.loc.clone(), &compiler.defuns, &defun.name, code))
                     .map(|code| {
                         compiler.add_defun(
-                            name,
+                            &defun.name,
                             DefunCall {
-                                required_env: args.clone(),
+                                required_env: defun.args.clone(),
                                 code,
                             },
                         )
@@ -803,7 +818,7 @@ fn codegen_(
 
 fn is_defun(b: &HelperForm) -> bool {
     match b {
-        HelperForm::Defun(_, _, false, _, _) => true,
+        HelperForm::Defun(false, _) => true,
         _ => false,
     }
 }
@@ -848,11 +863,14 @@ fn generate_let_defun(
     );
 
     HelperForm::Defun(
-        l.clone(),
-        name.clone(),
         true,
-        Rc::new(inner_function_args),
-        body,
+        DefunData {
+            loc: l.clone(),
+            nl: l.clone(),
+            name: name.clone(),
+            args: Rc::new(inner_function_args),
+            body: body
+        }
     )
 }
 
@@ -986,15 +1004,21 @@ fn process_helper_let_bindings(
 
     while i < result.len() {
         match result[i].clone() {
-            HelperForm::Defun(l, name, inline, args, body) => {
-                let context = if inline { Some(args.clone()) } else { None };
+            HelperForm::Defun(inline, defun) => {
+                let context = if inline { Some(defun.args.clone()) } else { None };
                 let helper_result =
-                    hoist_body_let_binding(compiler, context, args.clone(), body.clone());
+                    hoist_body_let_binding(compiler, context, defun.args.clone(), defun.body.clone());
                 let hoisted_helpers = helper_result.0;
                 let hoisted_body = helper_result.1.clone();
 
                 result[i] =
-                    HelperForm::Defun(l.clone(), name.clone(), inline, args.clone(), hoisted_body);
+                    HelperForm::Defun(inline, DefunData {
+                        loc: defun.loc.clone(),
+                        nl: defun.nl.clone(),
+                        name: defun.name.clone(),
+                        args: defun.args.clone(),
+                        body: hoisted_body
+                    });
 
                 i += 1;
 
@@ -1241,21 +1265,21 @@ fn finalize_env(
 fn dummy_functions(compiler: &PrimaryCodegen) -> Result<PrimaryCodegen, CompileErr> {
     foldM(
         &|compiler: &PrimaryCodegen, form: &HelperForm| match form {
-            HelperForm::Defun(_, name, false, _, _) => {
+            HelperForm::Defun(false, defun) => {
                 let mut c_copy = compiler.clone();
-                c_copy.parentfns.insert(name.clone());
+                c_copy.parentfns.insert(defun.name.clone());
                 Ok(c_copy)
             }
-            HelperForm::Defun(loc, name, true, args, body) => Ok(compiler)
-                .and_then(|comp| fail_if_present(loc.clone(), &compiler.inlines, &name, comp))
-                .and_then(|comp| fail_if_present(loc.clone(), &compiler.defuns, &name, comp))
+            HelperForm::Defun(true, defun) => Ok(compiler)
+                .and_then(|comp| fail_if_present(defun.loc.clone(), &compiler.inlines, &defun.name, comp))
+                .and_then(|comp| fail_if_present(defun.loc.clone(), &compiler.defuns, &defun.name, comp))
                 .map(|comp| {
                     comp.add_inline(
-                        name,
+                        &defun.name,
                         &InlineFunction {
-                            name: name.clone(),
-                            args: args.clone(),
-                            body: body.clone(),
+                            name: defun.name.clone(),
+                            args: defun.args.clone(),
+                            body: defun.body.clone(),
                         },
                     )
                 }),
