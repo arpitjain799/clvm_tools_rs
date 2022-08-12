@@ -9,6 +9,7 @@ mod compiler;
 mod evaluate;
 mod repl;
 mod usecheck;
+mod lsp;
 
 #[test]
 fn test_sexp_parse_print() {
