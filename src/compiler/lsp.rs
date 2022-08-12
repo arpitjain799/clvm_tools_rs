@@ -54,19 +54,19 @@ lazy_static! {
     };
 }
 
-const TK_PARAMETER_IDX: u32 = 0;
-const TK_VARIABLE_IDX: u32 = 1;
-const TK_FUNCTION_IDX: u32 = 2;
-const TK_MACRO_IDX: u32 = 3;
-const TK_KEYWORD_IDX: u32 = 4;
-const TK_COMMENT_IDX: u32 = 5;
-const TK_STRING_IDX: u32 = 6;
-const TK_NUMBER_IDX: u32 = 7;
-const TK_OPERATOR_IDX: u32 = 8;
+pub const TK_PARAMETER_IDX: u32 = 0;
+pub const TK_VARIABLE_IDX: u32 = 1;
+pub const TK_FUNCTION_IDX: u32 = 2;
+pub const TK_MACRO_IDX: u32 = 3;
+pub const TK_KEYWORD_IDX: u32 = 4;
+pub const TK_COMMENT_IDX: u32 = 5;
+pub const TK_STRING_IDX: u32 = 6;
+pub const TK_NUMBER_IDX: u32 = 7;
+pub const TK_OPERATOR_IDX: u32 = 8;
 
-const TK_DEFINITION_BIT: u32 = 0;
-const TK_READONLY_BIT: u32 = 1;
-const TK_DOCUMENTATION_BIT: u32 = 2;
+pub const TK_DEFINITION_BIT: u32 = 0;
+pub const TK_READONLY_BIT: u32 = 1;
+pub const TK_DOCUMENTATION_BIT: u32 = 2;
 
 fn cast<R>(req: Request) -> Result<(RequestId, R::Params), ExtractError<Request>>
 where
