@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::error::Error;
 use std::rc::Rc;
@@ -36,7 +38,7 @@ use clvm_tools_rs::compiler::comptypes::{
     CompileErr, CompilerOpts, CompileForm, HelperForm
 };
 use clvm_tools_rs::compiler::frontend::frontend;
-use clvm_tools_rs::compiler::sexp::parse_sexp;
+use clvm_tools_rs::compiler::sexp::{SExp, parse_sexp};
 use clvm_tools_rs::compiler::srcloc::Srcloc;
 
 lazy_static! {
@@ -190,39 +192,110 @@ fn ensure_parsed_document<'a>(
     }
 }
 
+#[derive(Clone, Debug)]
+struct SemanticTokenSortable {
+    loc: Srcloc,
+    token_type: u32,
+    token_mod: u32,
+}
+
+impl PartialEq for SemanticTokenSortable {
+    fn eq(&self, other: &SemanticTokenSortable) -> bool {
+        self.loc.file == other.loc.file && self.loc.line == other.loc.line && self.loc.col == other.loc.col
+    }
+}
+
+impl Eq for SemanticTokenSortable {
+}
+
+impl PartialOrd for SemanticTokenSortable {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        let cf = self.loc.file.cmp(other.loc.file.borrow());
+        if cf != Ordering::Equal {
+            return Some(cf);
+        }
+        let lf = self.loc.line.cmp(&other.loc.line);
+        if lf != Ordering::Equal {
+            return Some(lf);
+        }
+        Some(self.loc.col.cmp(&other.loc.col))
+    }
+}
+
+impl Ord for SemanticTokenSortable {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+fn collect_arg_tokens(
+    collected_tokens: &mut Vec<SemanticTokenSortable>,
+    args: Rc<SExp>
+) {
+    match args.borrow() {
+        SExp::Atom(l,a) => {
+            collected_tokens.push(SemanticTokenSortable {
+                loc: l.clone(),
+                token_type: TK_PARAMETER_IDX,
+                token_mod: 1 << TK_DEFINITION_BIT
+            });
+        },
+        SExp::Cons(_,a,b) => {
+            collect_arg_tokens(collected_tokens, a.clone());
+            collect_arg_tokens(collected_tokens, b.clone());
+        }
+        _ => { }
+    }
+}
+
 fn do_semantic_tokens(id: RequestId, frontend: &CompileForm) -> Response {
-    let mut last_row = 1;
-    let mut last_col = 1;
-    let mut result = SemanticTokens {
-        result_id: None,
-        data: Vec::new(),
-    };
+    let mut collected_tokens = Vec::new();
     for form in frontend.helpers.iter() {
         match form {
             HelperForm::Defun(_,defun) => {
                 eprintln!("handling form {}", form.to_sexp().to_string());
-                if defun.nl.line != last_row {
-                    last_col = 1;
-                    let st = SemanticToken {
-                        delta_line: (defun.nl.line - last_row) as u32,
-                        delta_start: (defun.nl.col - last_col) as u32,
-                        length: defun.nl.len() as u32,
-                        token_type: TK_FUNCTION_IDX,
-                        token_modifiers_bitset: TK_DEFINITION_BIT
-                    };
-                    last_row = defun.nl.line;
-                    last_col = defun.nl.col + defun.nl.len();
-                    result.data.push(st);
-                }
+                collected_tokens.push(SemanticTokenSortable {
+                    loc: defun.nl.clone(),
+                    token_type: TK_FUNCTION_IDX,
+                    token_mod: 1 << TK_DEFINITION_BIT
+                });
+                collect_arg_tokens(&mut collected_tokens, defun.args.clone());
             },
             _ => { }
         }
     }
 
+    collected_tokens.sort();
+    let mut result_tokens = SemanticTokens {
+        result_id: None,
+        data: Vec::new(),
+    };
+
+    let mut last_row = 1;
+    let mut last_col = 1;
+
+    for t in collected_tokens.iter() {
+        if t.loc.line < last_row || (t.loc.line == last_row && t.loc.col <= last_col) {
+            continue;
+        }
+        if t.loc.line != last_row {
+            last_col = 1;
+        }
+        result_tokens.data.push(SemanticToken {
+            delta_line: (t.loc.line - last_row) as u32,
+            delta_start: (t.loc.col - last_col) as u32,
+            length: t.loc.len() as u32,
+            token_type: t.token_type,
+            token_modifiers_bitset: t.token_mod
+        });
+        last_row = t.loc.line;
+        last_col = t.loc.col;
+    }
+
     Response {
         id,
         error: None,
-        result: Some(serde_json::to_value(result).unwrap())
+        result: Some(serde_json::to_value(result_tokens).unwrap())
     }
 }
 
@@ -258,6 +331,7 @@ fn main_loop(
                         match &parsed.result {
                             ParseResult::Completed(frontend) => {
                                 let resp = do_semantic_tokens(id, &frontend);
+                                eprintln!("response {}", serde_json::to_string(&resp).unwrap());
                                 connection.sender.send(Message::Response(resp))?;
                             },
                             ParseResult::WithError(error) => {
