@@ -30,6 +30,43 @@ use crate::compiler::sexp::{parse_sexp, SExp};
 use crate::compiler::srcloc::Srcloc;
 use crate::util::Number;
 
+lazy_static! {
+    pub static ref KNOWN_DIALECTS: HashMap<String, String> = {
+        let mut known_dialects: HashMap<String, String> = HashMap::new();
+        known_dialects.insert(
+            "*standard-cl-21*".to_string(),
+            indoc! {"(
+           (defconstant *chialisp-version* 21)
+        )"}
+            .to_string(),
+        );
+        known_dialects.insert(
+            "*standard-cl-22*".to_string(),
+            indoc! {"(
+           (defconstant *chialisp-version* 22)
+        )"}
+            .to_string(),
+        );
+        known_dialects
+    };
+    pub static ref STANDARD_MACROS: String = {
+        indoc! {"(
+            (defmacro if (A B C) (qq (a (i (unquote A) (com (unquote B)) (com (unquote C))) @)))
+            (defmacro list ARGS
+                            (defun compile-list
+                                   (args)
+                                   (if args
+                                       (qq (c (unquote (f args))
+                                             (unquote (compile-list (r args)))))
+                                       ()))
+                            (compile-list ARGS)
+                    )
+            (defun-inline / (A B) (f (divmod A B)))
+            )
+            "}.to_string()
+    };
+}
+
 #[derive(Clone, Debug)]
 pub struct DefaultCompilerOpts {
     pub include_dirs: Vec<String>,
@@ -43,6 +80,16 @@ pub struct DefaultCompilerOpts {
     pub prim_map: Rc<HashMap<Vec<u8>, Rc<SExp>>>,
 
     known_dialects: Rc<HashMap<String, String>>,
+}
+
+pub fn create_prim_map() -> Rc<HashMap<Vec<u8>, Rc<SExp>>> {
+    let mut prim_map: HashMap<Vec<u8>, Rc<SExp>> = HashMap::new();
+
+    for p in prims::prims() {
+        prim_map.insert(p.0.clone(), Rc::new(p.1.clone()));
+    }
+
+    Rc::new(prim_map)
 }
 
 fn at_path(path_mask: Number, loc: Srcloc) -> Rc<BodyForm> {
@@ -169,7 +216,7 @@ fn fe_opt(
     })
 }
 
-fn compile_pre_forms(
+pub fn compile_pre_forms(
     allocator: &mut Allocator,
     runner: Rc<dyn TRunProgram>,
     opts: Rc<dyn CompilerOpts>,
@@ -293,21 +340,7 @@ impl CompilerOpts for DefaultCompilerOpts {
         filename: String,
     ) -> Result<(String, String), CompileErr> {
         if filename == "*macros*" {
-            let macros = indoc! {"(
-            (defmacro if (A B C) (qq (a (i (unquote A) (com (unquote B)) (com (unquote C))) @)))
-            (defmacro list ARGS
-                            (defun compile-list
-                                   (args)
-                                   (if args
-                                       (qq (c (unquote (f args))
-                                             (unquote (compile-list (r args)))))
-                                       ()))
-                            (compile-list ARGS)
-                    )
-            (defun-inline / (A B) (f (divmod A B)))
-            )
-            "};
-            return Ok((filename, macros.to_string()));
+            return Ok((filename, STANDARD_MACROS.clone()));
         } else if let Some(content) = self.known_dialects.get(&filename) {
             return Ok((filename, content.to_string()));
         }
@@ -343,28 +376,6 @@ impl CompilerOpts for DefaultCompilerOpts {
 
 impl DefaultCompilerOpts {
     pub fn new(filename: &String) -> DefaultCompilerOpts {
-        let mut prim_map = HashMap::new();
-
-        for p in prims::prims() {
-            prim_map.insert(p.0.clone(), Rc::new(p.1.clone()));
-        }
-
-        let mut known_dialects: HashMap<String, String> = HashMap::new();
-        known_dialects.insert(
-            "*standard-cl-21*".to_string(),
-            indoc! {"(
-           (defconstant *chialisp-version* 21)
-        )"}
-            .to_string(),
-        );
-        known_dialects.insert(
-            "*standard-cl-22*".to_string(),
-            indoc! {"(
-           (defconstant *chialisp-version* 22)
-        )"}
-            .to_string(),
-        );
-
         DefaultCompilerOpts {
             include_dirs: vec![".".to_string()],
             filename: filename.clone(),
@@ -374,8 +385,8 @@ impl DefaultCompilerOpts {
             optimize: false,
             frontend_opt: false,
             start_env: None,
-            prim_map: Rc::new(prim_map),
-            known_dialects: Rc::new(known_dialects),
+            prim_map: create_prim_map(),
+            known_dialects: Rc::new(KNOWN_DIALECTS.clone())
         }
     }
 }

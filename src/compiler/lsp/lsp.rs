@@ -1,6 +1,8 @@
+use std::cell::{Ref, RefCell};
 use std::cmp::Ordering;
 use std::borrow::Borrow;
 use std::collections::{HashMap, BTreeMap};
+use std::mem::swap;
 use std::rc::Rc;
 
 use lazy_static::lazy_static;
@@ -27,6 +29,7 @@ use crate::compiler::comptypes::{
     BodyForm, CompileErr, CompilerOpts, CompileForm, HelperForm, LetFormKind
 };
 use crate::compiler::frontend::frontend;
+use crate::compiler::lsp::compopts::LSPCompilerOpts;
 use crate::compiler::sexp::{SExp, parse_sexp};
 use crate::compiler::srcloc::Srcloc;
 
@@ -77,9 +80,9 @@ where
 }
 
 
-#[derive(Debug)]
-struct DocData {
-    text: String,
+#[derive(Debug, Clone)]
+pub struct DocData {
+    pub text: Rc<String>,
 }
 
 #[derive(Debug)]
@@ -92,6 +95,11 @@ enum ParseResult {
 struct ParsedDoc {
     parses: Vec<u32>,
     result: ParseResult,
+}
+
+pub fn copy_text_rc(t: Rc<String>) -> String {
+    let sb: &String = t.borrow();
+    sb.clone()
 }
 
 impl ParsedDoc {
@@ -124,18 +132,6 @@ impl ParsedDoc {
                     result: ParseResult::WithError(e)
                 }
             })
-    }
-}
-
-fn ensure_parsed_document<'a>(
-    document_collection: &HashMap<String, DocData>,
-    parsed_documents: &'a mut HashMap<String, ParsedDoc>,
-    uristring: &String
-) {
-    if let Some(doc) = document_collection.get(uristring) {
-        let opts = Rc::new(DefaultCompilerOpts::new(uristring));
-        let parsed = ParsedDoc::new(opts, uristring, &doc.text);
-        parsed_documents.insert(uristring.clone(), parsed);
     }
 }
 
@@ -425,18 +421,49 @@ fn do_semantic_tokens(
 }
 
 pub struct LSPServiceProvider {
-    document_collection: HashMap<String, DocData>,
+    document_collection: Rc<RefCell<HashMap<String, DocData>>>,
     parsed_documents: HashMap<String, ParsedDoc>,
     goto_defs: HashMap<String, BTreeMap<SemanticTokenSortable, Srcloc>>,
 }
 
 impl LSPServiceProvider {
+    fn get_doc(&self, uristring: &String) -> Option<DocData> {
+        let cell: &RefCell<HashMap<String, DocData>> = self.document_collection.borrow();
+        let coll: Ref<HashMap<String, DocData>> = cell.borrow();
+        (&coll).get(uristring).map(|x| x.clone())
+    }
+
+    fn save_doc(&self, uristring: String, dd: DocData) {
+        let cell: &RefCell<HashMap<String, DocData>> = self.document_collection.borrow();
+        cell.replace_with(|coll| {
+            let mut repl = HashMap::new();
+            swap(&mut repl, coll);
+            repl.insert(uristring, dd);
+            repl
+        });
+    }
+
+    fn ensure_parsed_document<'a>(
+        &mut self,
+        uristring: &String
+    ) {
+        if let Some(doc) = self.get_doc(uristring) {
+            let opts = Rc::new(LSPCompilerOpts::new(uristring.clone(), self.document_collection.clone()));
+            let parsed = ParsedDoc::new(opts, uristring, &doc.text);
+            self.parsed_documents.insert(uristring.clone(), parsed);
+        }
+    }
+
     pub fn new() -> Self {
         LSPServiceProvider {
-            document_collection: HashMap::new(),
+            document_collection: Rc::new(RefCell::new(HashMap::new())),
             parsed_documents: HashMap::new(),
             goto_defs: HashMap::new()
         }
+    }
+
+    pub fn get_file(&self, filename: &String) -> Result<String, String> {
+        self.get_doc(filename).map(|d| Ok(copy_text_rc(d.text.clone()))).unwrap_or_else(|| Err(format!("don't have file {}", filename)))
     }
 
     pub fn handle_message(&mut self, msg: &Message) -> Result<Vec<Message>, String> {
@@ -449,11 +476,7 @@ impl LSPServiceProvider {
                     let uristring = params.text_document.uri.to_string();
                     if self.parsed_documents.get(&uristring).is_none() {
                         eprintln!("ensure parsed");
-                        ensure_parsed_document(
-                            &self.document_collection,
-                            &mut self.parsed_documents,
-                            &uristring
-                        );
+                        self.ensure_parsed_document(&uristring);
                     }
                     if let Some(parsed) = self.parsed_documents.get(&uristring) {
                         match &parsed.result {
@@ -523,7 +546,10 @@ impl LSPServiceProvider {
                     let stringified_params = serde_json::to_string(&not.params).unwrap();
                     eprintln!("stringified_params: {}", stringified_params);
                     if let Ok(params) = serde_json::from_str::<DidOpenTextDocumentParams>(&stringified_params) {
-                        self.document_collection.insert(params.text_document.uri.to_string(), DocData { text: params.text_document.text.clone() });
+                        self.save_doc(
+                            params.text_document.uri.to_string(),
+                            DocData { text: Rc::new(params.text_document.text.clone()) }
+                        );
                     } else {
                         eprintln!("cast failed in didOpen");
                     }
