@@ -167,6 +167,11 @@ impl Formatter {
             }
         }
 
+        // Handle the case where the ;s are the last characters on the line.
+        if semis + semi_off == line.len() {
+            line = trim_ascii_end(&line[0..semi_off].to_vec());
+        }
+
         line = trim_ascii_end(&line);
 
         if semis == 1 && self.last_single_line_comment == 0 {
