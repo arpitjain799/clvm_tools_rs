@@ -286,7 +286,7 @@ impl Formatter {
                     continue;
                 } else if should_reset_indent {
                     self.reset_form_indent = true;
-                    self.reset_indent(prec_ws + i);
+                    self.reset_indent(line_indent + i);
                 }
 
             }
