@@ -1,6 +1,6 @@
 use std::env;
-use std::io;
 use std::fs;
+use std::io::Write;
 
 use clvm_tools_rs::compiler::sexp::decode_string;
 
@@ -9,9 +9,15 @@ struct Formatter {
     start_paren_level: usize,
     paren_level: usize,
     out_col: usize,
+    cur_line: usize,
     line: Vec<u8>,
+    lines: Vec<Vec<u8>>,
+    def_started: bool,
     last_single_line_comment: usize,
-    pub result: Vec<u8>,
+    definition_starts: Vec<usize>,
+    extra_def_lines: Vec<usize>,
+    result_line: Vec<u8>,
+    pub result: Vec<Vec<u8>>,
 }
 
 fn trim_ascii_start(line: &Vec<u8>) -> Vec<u8> {
@@ -57,23 +63,66 @@ impl Formatter {
             start_paren_level: 0,
             paren_level: 0,
             out_col: 0,
+            cur_line: 0,
             line: Vec::new(),
+            lines: Vec::new(),
+            def_started: false,
+            result_line: Vec::new(),
             last_single_line_comment: 0,
+            definition_starts: Vec::new(),
+            extra_def_lines: Vec::new(),
             result: Vec::new()
         }
     }
 
     pub fn finish(&mut self) {
         if self.line.len() != 0 {
+            self.lines.push(self.line.clone());
+            self.line.clear();
+        }
+        for i in 0..self.lines.len() {
+            self.line = self.lines[i].clone();
+            self.cur_line = i;
             self.output_line();
+        }
+
+        if self.result_line.len() != 0 {
+            self.result.push(self.result_line.clone());
+        }
+
+        let mut el_idx = 0;
+        let mut inserted = 0;
+
+        for ds in self.definition_starts[0..self.definition_starts.len()-1].iter() {
+            while el_idx < self.extra_def_lines.len() && self.extra_def_lines[el_idx] < *ds {
+                el_idx += 1;
+            }
+
+            if el_idx >= self.extra_def_lines.len() {
+                break;
+            }
+
+            let el = self.extra_def_lines[el_idx];
+            if el <= ds + 1 {
+                let insert_at = el + inserted;
+                self.result.insert(insert_at, Vec::new());
+                inserted += 1;
+            }
         }
     }
 
+    pub fn finish_line(&mut self) {
+        self.lines.push(self.line.clone());
+        self.line.clear();
+    }
+
     pub fn output_char(&mut self, ch: u8) {
-        self.result.push(ch);
         if ch == 10 {
+            self.result.push(self.result_line.clone());
+            self.result_line.clear();
             self.out_col = 0;
         } else {
+            self.result_line.push(ch);
             self.out_col += 1;
         }
     }
@@ -87,6 +136,7 @@ impl Formatter {
     pub fn output_line(&mut self) {
         let mut prec_ws = 0;
         let mut ws_end = 0;
+        let mut max_paren_level = self.paren_level;
 
         self.start_paren_level = self.paren_level;
 
@@ -127,6 +177,11 @@ impl Formatter {
         for i in 0..line.len() {
             let ch = line[i];
 
+            if self.start_paren_level == 1 && !self.def_started {
+                self.def_started = true;
+                self.definition_starts.push(self.result.len());
+            }
+
             if string_bs {
                 string_bs = false;
                 continue;
@@ -147,6 +202,9 @@ impl Formatter {
                     continue;
                 } else if ch == b'(' {
                     self.paren_level += 1;
+                    if self.paren_level > max_paren_level {
+                        max_paren_level = self.paren_level;
+                    }
                     continue;
                 } else if ch == b')' {
                     self.paren_level -= 1;
@@ -221,11 +279,18 @@ impl Formatter {
         }
 
         self.output_char(b'\n');
+        // Insert a line after every definition ends, and record it in extra
+        // def lines.
+        if max_paren_level > 1 && self.paren_level == 1 {
+            // A definition ended.
+            self.def_started = false;
+            self.extra_def_lines.push(self.result.len());
+        }
     }
 
     pub fn run_char(&mut self, ch: u8) {
         if ch == b'\n' {
-            self.output_line();
+            self.finish_line();
         } else {
             self.line.push(ch);
         }
@@ -242,7 +307,10 @@ fn main() {
         }
         formatter.finish();
 
-        let out_str = decode_string(&formatter.result);
-        fs::write(format!("{}.new", filename), out_str).expect(&format!("could not write file {}", filename));
+        let mut f = fs::File::create(format!("{}.new", filename)).expect(&format!("could not open file {}", filename));
+        for line in formatter.result.iter() {
+            f.write(line).expect(&format!("could not write file {}", filename));
+            f.write("\n".as_bytes());
+        }
     }
 }
