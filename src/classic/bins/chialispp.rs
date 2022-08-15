@@ -2,8 +2,6 @@ use std::env;
 use std::fs;
 use std::io::Write;
 
-use clvm_tools_rs::compiler::sexp::decode_string;
-
 #[derive(Debug)]
 struct Formatter {
     start_paren_level: usize,
@@ -25,12 +23,12 @@ struct Formatter {
     pub result: Vec<Vec<u8>>,
 }
 
-fn trim_ascii_start(line: &Vec<u8>) -> Vec<u8> {
+fn trim_ascii_start(line: &[u8]) -> Vec<u8> {
     let mut first_non_ws = 0;
     let mut got_one = false;
 
-    for i in 0..line.len() {
-        if !line[i].is_ascii_whitespace() {
+    for (i, ch) in line.iter().enumerate() {
+        if !ch.is_ascii_whitespace() {
             got_one = true;
             first_non_ws = i;
             break;
@@ -38,27 +36,27 @@ fn trim_ascii_start(line: &Vec<u8>) -> Vec<u8> {
     }
 
     if !got_one {
-        return Vec::new();
+        Vec::new()
     } else {
-        return line[first_non_ws..].to_vec();
+        line[first_non_ws..].to_vec()
     }
 }
 
-fn trim_ascii_end(line: &Vec<u8>) -> Vec<u8> {
+fn trim_ascii_end(line: &[u8]) -> Vec<u8> {
     let mut last_non_ws = 0;
     let mut got_one = false;
 
-    for i in 0..line.len() {
-        if !line[i].is_ascii_whitespace() {
+    for (i, ch) in line.iter().enumerate() {
+        if !ch.is_ascii_whitespace() {
             got_one = true;
             last_non_ws = i;
         }
     }
 
     if !got_one {
-        return Vec::new();
+        Vec::new()
     } else {
-        return line[0..last_non_ws+1].to_vec();
+        line[0..last_non_ws+1].to_vec()
     }
 }
 
@@ -86,7 +84,7 @@ impl Formatter {
     }
 
     pub fn finish(&mut self) {
-        if self.line.len() != 0 {
+        if !self.line.is_empty() {
             self.lines.push(self.line.clone());
             self.line.clear();
         }
@@ -96,7 +94,7 @@ impl Formatter {
             self.output_line();
         }
 
-        if self.result_line.len() != 0 {
+        if !self.result_line.is_empty() {
             self.result.push(self.result_line.clone());
         }
 
@@ -144,7 +142,7 @@ impl Formatter {
     }
 
     pub fn get_cur_indent(&mut self) -> usize {
-        if self.indent_stack.len() > 0 {
+        if !self.indent_stack.is_empty() {
             self.indent_stack[self.indent_stack.len()-1]
         } else {
             0
@@ -152,7 +150,7 @@ impl Formatter {
     }
 
     pub fn reset_indent(&mut self, i: usize) {
-        if self.indent_stack.len() > 0 {
+        if !self.indent_stack.is_empty() {
             let idx = self.indent_stack.len()-1;
             self.indent_stack[idx] = i;
         }
@@ -160,7 +158,7 @@ impl Formatter {
 
     pub fn indent_paren(&mut self) {
         let current_indent =
-            if self.indent_stack.len() > 0 {
+            if !self.indent_stack.is_empty() {
                 self.indent_stack[self.indent_stack.len() - 1]
             } else {
                 0
@@ -169,7 +167,7 @@ impl Formatter {
     }
 
     pub fn retire_indent(&mut self) {
-        if self.indent_stack.len() > 0 {
+        if !self.indent_stack.is_empty() {
             self.indent_stack.remove(self.indent_stack.len()-1);
         }
     }
@@ -177,19 +175,11 @@ impl Formatter {
     pub fn output_line(&mut self) {
         let line_indent = self.get_cur_indent();
         let mut prec_ws = 0;
-        let mut ws_end = 0;
         let mut max_paren_level = self.paren_level;
-        let mut detect_if = 0;
-        let start_index =
-            if self.indent_stack.len() > 0 {
-                self.indent_stack[self.indent_stack.len()-1]
-            } else {
-                2 * self.paren_level
-            };
 
         self.start_paren_level = self.paren_level;
 
-        if self.line.len() == 0 {
+        if self.line.is_empty() {
             self.output_char(b'\n');
             return;
         }
@@ -198,15 +188,13 @@ impl Formatter {
         self.line.clear();
 
         let mut col = 0;
-        for i in 0..line.len() {
-            let ch = line[i];
-            if ch != b' ' && ch != b'\t' {
+        for ch in line.iter() {
+            if *ch != b' ' && *ch != b'\t' {
                 prec_ws = col;
-                ws_end = i;
                 break;
             }
 
-            if ch == b'\t' {
+            if *ch == b'\t' {
                 col = (col & !7) + 8;
             } else {
                 col += 1;
@@ -317,43 +305,47 @@ impl Formatter {
             self.last_single_line_comment = 0;
         }
 
-        if semis == 1 {
-            self.indent(line_indent);
-            for co in line.iter() {
-                self.output_char(*co);
-            }
-            if semi_loc > self.last_single_line_comment {
-                self.output_char(b'\n');
-            }
-            while self.out_col < self.last_single_line_comment {
-                self.output_char(b' ');
-            }
-            self.output_char(b';');
-            for co in comment.iter() {
-                self.output_char(*co);
-            }
-        } else if semis > 1 {
-            if semis == 2 {
-                self.indent(line_indent);
-            }
-            for i in 0..semis {
-                self.output_char(b';');
-            }
-            for co in comment.iter() {
-                self.output_char(*co);
-            }
-            if line.len() != 0 {
-                // Code after comment in this scenario
-                self.output_char(b'\n');
+        match (semis, semis > 1) {
+            (1, _) => {
                 self.indent(line_indent);
                 for co in line.iter() {
                     self.output_char(*co);
                 }
+                if semi_loc > self.last_single_line_comment {
+                    self.output_char(b'\n');
+                }
+                while self.out_col < self.last_single_line_comment {
+                    self.output_char(b' ');
+                }
+                self.output_char(b';');
+                for co in comment.iter() {
+                    self.output_char(*co);
+                }
             }
-        } else {
-            self.indent(line_indent);
-            for co in line.iter() {
-                self.output_char(*co);
+            (_, true) => {
+                if semis == 2 {
+                    self.indent(line_indent);
+                }
+                for _i in 0..semis {
+                    self.output_char(b';');
+                }
+                for co in comment.iter() {
+                    self.output_char(*co);
+                }
+                if !line.is_empty() {
+                    // Code after comment in this scenario
+                    self.output_char(b'\n');
+                    self.indent(line_indent);
+                    for co in line.iter() {
+                        self.output_char(*co);
+                    }
+                }
+            }
+            _ => {
+                self.indent(line_indent);
+                for co in line.iter() {
+                    self.output_char(*co);
+                }
             }
         }
 
@@ -378,7 +370,7 @@ impl Formatter {
 
 fn main() {
     for filename in env::args().skip(1) {
-        let filedata = fs::read(filename.clone()).expect(&format!("could not read file {}", filename));
+        let filedata = fs::read(filename.clone()).unwrap_or_else(|_| panic!("could not read file {}", filename));
         let mut formatter = Formatter::new();
 
         for ch in filedata.iter() {
@@ -386,10 +378,10 @@ fn main() {
         }
         formatter.finish();
 
-        let mut f = fs::File::create(format!("{}.new", filename)).expect(&format!("could not open file {}", filename));
+        let mut f = fs::File::create(format!("{}.new", filename)).unwrap_or_else(|_| panic!("could not open file {}", filename));
         for line in formatter.result.iter() {
-            f.write(line).expect(&format!("could not write file {}", filename));
-            f.write("\n".as_bytes());
+            f.write_all(line).unwrap_or_else(|_| panic!("could not write file {}", filename));
+            f.write_all("\n".as_bytes()).unwrap_or_else(|_| panic!("could not write file {}", filename));
         }
     }
 }
