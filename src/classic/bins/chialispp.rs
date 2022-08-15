@@ -13,10 +13,15 @@ struct Formatter {
     line: Vec<u8>,
     lines: Vec<Vec<u8>>,
     def_started: bool,
+    getting_form_name: u8,
+    form_name: Vec<u8>,
+    got_form_on_line: usize,
+    reset_form_indent: bool,
     last_single_line_comment: usize,
     definition_starts: Vec<usize>,
     extra_def_lines: Vec<usize>,
     result_line: Vec<u8>,
+    indent_stack: Vec<usize>,
     pub result: Vec<Vec<u8>>,
 }
 
@@ -66,11 +71,16 @@ impl Formatter {
             cur_line: 0,
             line: Vec::new(),
             lines: Vec::new(),
+            getting_form_name: 0,
+            got_form_on_line: 0,
+            form_name: Vec::new(),
+            reset_form_indent: false,
             def_started: false,
             result_line: Vec::new(),
             last_single_line_comment: 0,
             definition_starts: Vec::new(),
             extra_def_lines: Vec::new(),
+            indent_stack: Vec::new(),
             result: Vec::new()
         }
     }
@@ -93,7 +103,7 @@ impl Formatter {
         let mut el_idx = 0;
         let mut inserted = 0;
 
-        for ds in self.definition_starts[0..self.definition_starts.len()-1].iter() {
+        for ds in self.definition_starts[0..self.definition_starts.len()].iter() {
             while el_idx < self.extra_def_lines.len() && self.extra_def_lines[el_idx] < *ds {
                 el_idx += 1;
             }
@@ -127,16 +137,55 @@ impl Formatter {
         }
     }
 
-    pub fn indent(&mut self) {
-        while self.out_col < self.start_paren_level * 2 {
+    pub fn indent(&mut self, cur_indent: usize) {
+        while self.out_col < cur_indent {
             self.output_char(b' ');
         }
     }
 
+    pub fn get_cur_indent(&mut self) -> usize {
+        if self.indent_stack.len() > 0 {
+            self.indent_stack[self.indent_stack.len()-1]
+        } else {
+            0
+        }
+    }
+
+    pub fn reset_indent(&mut self, i: usize) {
+        if self.indent_stack.len() > 0 {
+            let idx = self.indent_stack.len()-1;
+            self.indent_stack[idx] = i;
+        }
+    }
+
+    pub fn indent_paren(&mut self) {
+        let current_indent =
+            if self.indent_stack.len() > 0 {
+                self.indent_stack[self.indent_stack.len() - 1]
+            } else {
+                0
+            };
+        self.indent_stack.push(current_indent + 2);
+    }
+
+    pub fn retire_indent(&mut self) {
+        if self.indent_stack.len() > 0 {
+            self.indent_stack.remove(self.indent_stack.len()-1);
+        }
+    }
+
     pub fn output_line(&mut self) {
+        let line_indent = self.get_cur_indent();
         let mut prec_ws = 0;
         let mut ws_end = 0;
         let mut max_paren_level = self.paren_level;
+        let mut detect_if = 0;
+        let start_index =
+            if self.indent_stack.len() > 0 {
+                self.indent_stack[self.indent_stack.len()-1]
+            } else {
+                2 * self.paren_level
+            };
 
         self.start_paren_level = self.paren_level;
 
@@ -177,11 +226,25 @@ impl Formatter {
         for i in 0..line.len() {
             let ch = line[i];
 
+            if self.getting_form_name > 0 {
+                self.reset_form_indent = false;
+                if self.getting_form_name == 1 && !ch.is_ascii_whitespace() {
+                    self.getting_form_name = 2;
+                    self.form_name.push(ch);
+                } else if self.getting_form_name == 2 && ch.is_ascii_whitespace() || ch == b'(' || ch == b')' {
+                    self.getting_form_name = 0;
+                    self.got_form_on_line = self.cur_line;
+                } else {
+                    self.form_name.push(ch);
+                }
+            }
+
             if self.start_paren_level == 1 && !self.def_started {
                 self.def_started = true;
                 self.definition_starts.push(self.result.len());
             }
 
+            let should_reset_indent = self.getting_form_name == 0 && self.form_name == "if".as_bytes().to_vec() && !ch.is_ascii_whitespace() && !self.reset_form_indent;
             if string_bs {
                 string_bs = false;
                 continue;
@@ -201,15 +264,31 @@ impl Formatter {
                     in_string = ch;
                     continue;
                 } else if ch == b'(' {
-                    self.paren_level += 1;
+                    // If the previous level was an 'if', reset the indent.
                     if self.paren_level > max_paren_level {
                         max_paren_level = self.paren_level;
                     }
+
+                    self.paren_level += 1;
+                    if should_reset_indent {
+                        self.reset_indent(line_indent + i);
+                        self.reset_form_indent = true;
+                    }
+                    self.indent_paren();
+
+                    self.form_name.clear();
+                    self.got_form_on_line = 0;
+                    self.getting_form_name = 1;
                     continue;
                 } else if ch == b')' {
                     self.paren_level -= 1;
+                    self.retire_indent();
                     continue;
+                } else if should_reset_indent {
+                    self.reset_form_indent = true;
+                    self.reset_indent(prec_ws + i);
                 }
+
             }
 
             if ch == b';' {
@@ -239,7 +318,7 @@ impl Formatter {
         }
 
         if semis == 1 {
-            self.indent();
+            self.indent(line_indent);
             for co in line.iter() {
                 self.output_char(*co);
             }
@@ -255,7 +334,7 @@ impl Formatter {
             }
         } else if semis > 1 {
             if semis == 2 {
-                self.indent();
+                self.indent(line_indent);
             }
             for i in 0..semis {
                 self.output_char(b';');
@@ -266,13 +345,13 @@ impl Formatter {
             if line.len() != 0 {
                 // Code after comment in this scenario
                 self.output_char(b'\n');
-                self.indent();
+                self.indent(line_indent);
                 for co in line.iter() {
                     self.output_char(*co);
                 }
             }
         } else {
-            self.indent();
+            self.indent(line_indent);
             for co in line.iter() {
                 self.output_char(*co);
             }
