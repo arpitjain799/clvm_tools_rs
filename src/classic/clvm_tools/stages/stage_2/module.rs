@@ -6,7 +6,7 @@ use clvm_rs::allocator::{Allocator, NodePtr, SExp};
 use clvm_rs::reduction::EvalErr;
 
 use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType};
-use crate::classic::clvm::sexp::{enlist, first, flatten, foldM, mapM, non_nil, proper_list, rest};
+use crate::classic::clvm::sexp::{enlist, first, flatten, fold_m, map_m, non_nil, proper_list, rest};
 use crate::classic::clvm_tools::debug::build_symbol_dump;
 use crate::classic::clvm_tools::stages::assemble;
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
@@ -474,7 +474,7 @@ fn build_macro_lookup_program(
 
         let runner = || run_program.clone();
         macro_lookup_program <- quote(allocator, macro_lookup);
-        result_program <- foldM(
+        result_program <- fold_m(
             allocator,
             &|allocator, macro_lookup_program, macro_def: &(Vec<u8>, NodePtr)| m! {
                 cons_list <-
@@ -524,7 +524,7 @@ fn add_one_function(
         lambda_body <- first(allocator, lambda_form_content);
         quoted_lambda_expr <- quote(allocator, lambda_body);
         all_symbols_list_sexp <-
-            mapM(
+            map_m(
                 allocator,
                 &mut all_symbols.iter(),
                 &|allocator, pair| m! {
@@ -561,7 +561,7 @@ fn compile_functions(
 ) -> Result<HashMap<Vec<u8>, NodePtr>, EvalErr> {
     let compiled_functions = HashMap::new();
 
-    return foldM(
+    return fold_m(
         allocator,
         &|allocator: &mut Allocator, compiled_functions, name_exp: (&Vec<u8>, &NodePtr)| {
             add_one_function(

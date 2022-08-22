@@ -11,7 +11,7 @@ use clvm_rs::reduction::{EvalErr, Reduction, Response};
 
 use crate::classic::clvm::__type_compatibility__::{bi_one, bi_zero};
 use crate::classic::clvm::sexp::{
-    atom, enlist, equal_to, first, foldM, mapM, non_nil, proper_list,
+    atom, enlist, equal_to, first, fold_m, map_m, non_nil, proper_list,
 };
 use crate::classic::clvm_tools::binutils::{assemble_from_ir, disassemble};
 use crate::classic::clvm_tools::ir::reader::read_ir;
@@ -256,7 +256,7 @@ fn sub_args<'a>(
 
             match proper_list(allocator, rest, true) {
                 Some(tail_args) => m! {
-                    res <- mapM(
+                    res <- map_m(
                         allocator,
                         &mut tail_args.iter(),
                         &|allocator, elt| {
@@ -355,7 +355,7 @@ fn var_change_optimizer_cons_eval(
                         );
 
                     opt_operands <-
-                        mapM(
+                        map_m(
                             allocator,
                             &mut new_operands.iter(),
                             &|allocator, item| {
@@ -363,7 +363,7 @@ fn var_change_optimizer_cons_eval(
                             }
                         );
 
-                    non_constant_count <- foldM(
+                    non_constant_count <- fold_m(
                         allocator,
                         &|allocator, acc, val| {
                             if DIAG_OPTIMIZATIONS {
@@ -437,7 +437,7 @@ fn children_optimizer(
             }
 
             m! {
-                optimized <- mapM(
+                optimized <- map_m(
                     allocator,
                     &mut list.into_iter(),
                     &|allocator, v| {

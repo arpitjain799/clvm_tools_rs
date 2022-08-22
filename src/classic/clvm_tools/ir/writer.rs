@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, Stream};
 use crate::classic::clvm::casts::{bigint_from_bytes, TConvertOption};
-use crate::classic::clvm::KEYWORD_TO_ATOM;
+use crate::classic::clvm::keyword_to_atom;
 
 use crate::classic::clvm_tools::ir::Type::IRRepr;
 
@@ -107,7 +107,7 @@ impl Iterator for IROutputIterator {
 }
 
 pub fn write_ir_to_stream(ir_sexp: Rc<IRRepr>, f: &mut Stream) {
-    for b in IROutputIterator::new(KEYWORD_TO_ATOM().clone(), ir_sexp) {
+    for b in IROutputIterator::new(keyword_to_atom().clone(), ir_sexp) {
         f.write(Bytes::new(Some(BytesFromType::String(b))));
     }
 }

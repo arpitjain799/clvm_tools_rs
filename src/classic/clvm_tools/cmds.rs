@@ -23,7 +23,7 @@ use clvm_rs::run_program::PreEval;
 use crate::classic::clvm::__type_compatibility__::{t, Bytes, BytesFromType, Stream, Tuple};
 use crate::classic::clvm::serialize::{sexp_from_stream, sexp_to_stream, SimpleCreateCLVMObject};
 use crate::classic::clvm::sexp::{enlist, proper_list, sexp_as_bin};
-use crate::classic::clvm::KEYWORD_FROM_ATOM;
+use crate::classic::clvm::keyword_from_atom;
 use crate::classic::clvm_tools::binutils::{assemble_from_ir, disassemble, disassemble_with_kw};
 use crate::classic::clvm_tools::clvmc::detect_modern;
 use crate::classic::clvm_tools::debug::{
@@ -57,7 +57,7 @@ use crate::util::collapse;
 pub struct PathOrCodeConv {}
 
 impl ArgumentValueConv for PathOrCodeConv {
-    fn convert(&self, arg: &String) -> Result<ArgumentValue, String> {
+    fn convert(&self, arg: &str) -> Result<ArgumentValue, String> {
         match fs::read_to_string(arg) {
             Ok(s) => Ok(ArgumentValue::ArgString(Some(arg.to_string()), s)),
             Err(_) => Ok(ArgumentValue::ArgString(None, arg.to_string())),
@@ -222,7 +222,7 @@ pub fn opd(args: &Vec<String>) {
 struct StageImport {}
 
 impl ArgumentValueConv for StageImport {
-    fn convert(&self, arg: &String) -> Result<ArgumentValue, String> {
+    fn convert(&self, arg: &str) -> Result<ArgumentValue, String> {
         if arg == "0" {
             return Ok(ArgumentValue::ArgInt(0));
         } else if arg == "1" {
@@ -728,9 +728,9 @@ pub fn launch_tool(
 
     let empty_map = HashMap::new();
     let keywords = match parsedArgs.get("no_keywords") {
-        None => KEYWORD_FROM_ATOM(),
+        None => keyword_from_atom(),
         Some(ArgumentValue::ArgBool(_b)) => &empty_map,
-        _ => KEYWORD_FROM_ATOM(),
+        _ => keyword_from_atom(),
     };
 
     let dpr;

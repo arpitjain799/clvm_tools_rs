@@ -14,7 +14,7 @@ use clvm_rs::run_program::run_program;
 use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, Stream};
 
 use crate::classic::clvm::sexp::proper_list;
-use crate::classic::clvm::KEYWORD_FROM_ATOM;
+use crate::classic::clvm::keyword_from_atom;
 
 use crate::classic::clvm_tools::binutils::{assemble_from_ir, disassemble_to_ir_with_kw};
 use crate::classic::clvm_tools::ir::reader::read_ir;
@@ -104,7 +104,7 @@ impl CompilerOperators {
                         let filename_bytes =
                             Bytes::new(Some(BytesFromType::Raw(filename_buf.to_vec())));
                         let ir =
-                            disassemble_to_ir_with_kw(allocator, data, KEYWORD_FROM_ATOM(), true);
+                            disassemble_to_ir_with_kw(allocator, data, keyword_from_atom(), true);
                         let mut stream = Stream::new(None);
                         write_ir_to_stream(Rc::new(ir), &mut stream);
                         return fs::write(filename_bytes.decode(), stream.get_value().decode())

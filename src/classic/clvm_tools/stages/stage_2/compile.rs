@@ -4,8 +4,8 @@ use std::rc::Rc;
 use clvm_rs::allocator::{Allocator, AtomBuf, NodePtr, SExp};
 use clvm_rs::reduction::{EvalErr, Reduction, Response};
 
-use crate::classic::clvm::sexp::{enlist, first, mapM, non_nil, proper_list, rest};
-use crate::classic::clvm::{KEYWORD_FROM_ATOM, KEYWORD_TO_ATOM};
+use crate::classic::clvm::sexp::{enlist, first, map_m, non_nil, proper_list, rest};
+use crate::classic::clvm::{keyword_from_atom, keyword_to_atom};
 
 use crate::classic::clvm_tools::binutils::{assemble_from_ir, disassemble};
 use crate::classic::clvm_tools::ir::reader::read_ir;
@@ -21,10 +21,10 @@ const DIAG_OUTPUT: bool = false;
 lazy_static! {
     static ref PASS_THROUGH_OPERATORS: HashSet<Vec<u8>> = {
         let mut result = HashSet::new();
-        for key in KEYWORD_TO_ATOM().keys() {
+        for key in keyword_to_atom().keys() {
             result.insert(key.as_bytes().to_vec());
         }
-        for key in KEYWORD_FROM_ATOM().keys() {
+        for key in keyword_from_atom().keys() {
             result.insert(key.to_vec());
         }
         // added by optimize
@@ -520,7 +520,7 @@ fn compile_application(
         Some(prog_args) => {
             m! {
                 new_args <-
-                    mapM(
+                    map_m(
                         allocator,
                         &mut prog_args.iter(),
                         &|allocator, arg| {
