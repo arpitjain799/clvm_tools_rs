@@ -6,7 +6,9 @@ use clvm_rs::allocator::{Allocator, NodePtr, SExp};
 use clvm_rs::reduction::EvalErr;
 
 use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType};
-use crate::classic::clvm::sexp::{enlist, first, flatten, fold_m, map_m, non_nil, proper_list, rest};
+use crate::classic::clvm::sexp::{
+    enlist, first, flatten, fold_m, map_m, non_nil, proper_list, rest,
+};
 use crate::classic::clvm_tools::debug::build_symbol_dump;
 use crate::classic::clvm_tools::stages::assemble;
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;

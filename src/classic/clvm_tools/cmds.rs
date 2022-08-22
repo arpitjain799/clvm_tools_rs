@@ -21,9 +21,9 @@ use clvm_rs::reduction::EvalErr;
 use clvm_rs::run_program::PreEval;
 
 use crate::classic::clvm::__type_compatibility__::{t, Bytes, BytesFromType, Stream, Tuple};
+use crate::classic::clvm::keyword_from_atom;
 use crate::classic::clvm::serialize::{sexp_from_stream, sexp_to_stream, SimpleCreateCLVMObject};
 use crate::classic::clvm::sexp::{enlist, proper_list, sexp_as_bin};
-use crate::classic::clvm::keyword_from_atom;
 use crate::classic::clvm_tools::binutils::{assemble_from_ir, disassemble, disassemble_with_kw};
 use crate::classic::clvm_tools::clvmc::detect_modern;
 use crate::classic::clvm_tools::debug::{
