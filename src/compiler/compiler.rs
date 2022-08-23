@@ -245,7 +245,7 @@ pub fn compile_file(
     symbol_table: &mut HashMap<String, String>,
 ) -> Result<SExp, CompileErr> {
     let pre_forms =
-        parse_sexp(Srcloc::start(&opts.filename()), content).map_err(|e| CompileErr(e.0, e.1))?;
+        parse_sexp(Srcloc::start(&opts.filename()), content.as_bytes().iter().copied()).map_err(|e| CompileErr(e.0, e.1))?;
 
     compile_pre_forms(allocator, runner, opts, &pre_forms, symbol_table)
 }
@@ -290,6 +290,9 @@ impl CompilerOpts for DefaultCompilerOpts {
     }
     fn frontend_opt(&self) -> bool {
         self.frontend_opt
+    }
+    fn frontend_check_live(&self) -> bool {
+        true
     }
     fn start_env(&self) -> Option<Rc<SExp>> {
         self.start_env.clone()

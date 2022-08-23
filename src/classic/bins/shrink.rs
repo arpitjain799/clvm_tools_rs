@@ -26,7 +26,7 @@ fn main() {
     }
 
     let loc = Srcloc::start(&"*program*".to_string());
-    let _ = parse_sexp(loc.clone(), &args[1])
+    let _ = parse_sexp(loc.clone(), args[1].as_bytes().iter().copied())
         .map_err(|e| {
             return CompileErr(e.0.clone(), e.1.clone());
         })

@@ -11,6 +11,7 @@ use lsp_server::ResponseError;
 use lsp_types::{
     request::GotoDefinition,
     request::SemanticTokensFullRequest,
+    DidChangeTextDocumentParams,
     DidOpenTextDocumentParams,
     GotoDefinitionResponse,
     Location,
@@ -20,11 +21,11 @@ use lsp_types::{
     SemanticTokenModifier,
     SemanticTokens,
     SemanticTokenType,
+    TextDocumentContentChangeEvent
 };
 
 use lsp_server::{ExtractError, Message, Request, RequestId, Response};
 
-use crate::compiler::compiler::DefaultCompilerOpts;
 use crate::compiler::comptypes::{
     BodyForm, CompileErr, CompilerOpts, CompileForm, HelperForm, LetFormKind
 };
@@ -82,24 +83,55 @@ where
 
 #[derive(Debug, Clone)]
 pub struct DocData {
-    pub text: Rc<String>,
+    pub text: Vec<Rc<Vec<u8>>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ParseResult {
     WithError(CompileErr),
     Completed(CompileForm)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ParsedDoc {
     parses: Vec<u32>,
     result: ParseResult,
 }
 
-pub fn copy_text_rc(t: Rc<String>) -> String {
-    let sb: &String = t.borrow();
-    sb.clone()
+pub struct DocVecByteIter<'a> {
+    line: usize,
+    offs: usize,
+    target: &'a [Rc<Vec<u8>>]
+}
+
+impl<'a> Iterator for DocVecByteIter<'a> {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.line >= self.target.len() {
+                return None;
+            } else if self.offs >= self.target[self.line].len() {
+                self.line += 1;
+                self.offs = 0;
+                return Some(b'\n');
+            } else {
+                let res = self.target[self.line][self.offs];
+                self.offs += 1;
+                return Some(res);
+            }
+        }
+    }
+}
+
+impl<'a> DocVecByteIter<'a> {
+    fn new(target: &'a [Rc<Vec<u8>>]) -> Self {
+        DocVecByteIter {
+            line: 0,
+            offs: 0,
+            target
+        }
+    }
 }
 
 impl ParsedDoc {
@@ -110,12 +142,13 @@ impl ParsedDoc {
         }
     }
 
-    fn new(opts: Rc<dyn CompilerOpts>, file: &String, srctext: &String) -> Self {
+    fn new(opts: Rc<dyn CompilerOpts>, file: &String, srctext: &[Rc<Vec<u8>>]) -> Self {
         let srcloc = Srcloc::start(file);
-        parse_sexp(srcloc, srctext).
+        parse_sexp(srcloc, DocVecByteIter::new(srctext)).
             map_err(|e| { CompileErr(e.0.clone(), "parse error".to_string()) }).
             map(|parsed| {
                 frontend(opts.clone(), &parsed).map(|fe| {
+                    eprintln!("fe {}", fe.to_sexp().to_string());
                     ParsedDoc {
                         parses: Vec::new(),
                         result: ParseResult::Completed(fe)
@@ -338,6 +371,7 @@ fn process_body_code(
 
 fn do_semantic_tokens(
     id: RequestId,
+    uristring: &String,
     goto_def: &mut BTreeMap<SemanticTokenSortable, Srcloc>,
     frontend: &CompileForm
 ) -> Response {
@@ -345,7 +379,7 @@ fn do_semantic_tokens(
     let varcollection = HashMap::new();
     for form in frontend.helpers.iter() {
         match form {
-            HelperForm::Defun(_,defun) => {
+            HelperForm::Defun(l,defun) => {
                 let mut argcollection = HashMap::new();
                 eprintln!("handling form {}", form.to_sexp().to_string());
                 collected_tokens.push(SemanticTokenSortable {
@@ -386,6 +420,10 @@ fn do_semantic_tokens(
         frontend.exp.clone()
     );
 
+    collected_tokens = collected_tokens.iter().filter(|t| {
+        let borrowed: &String = t.loc.file.borrow();
+        borrowed == uristring
+    }).cloned().collect();
     collected_tokens.sort();
     let mut result_tokens = SemanticTokens {
         result_id: None,
@@ -422,8 +460,18 @@ fn do_semantic_tokens(
 
 pub struct LSPServiceProvider {
     document_collection: Rc<RefCell<HashMap<String, DocData>>>,
-    parsed_documents: HashMap<String, ParsedDoc>,
+    parsed_documents: Rc<RefCell<HashMap<String, ParsedDoc>>>,
     goto_defs: HashMap<String, BTreeMap<SemanticTokenSortable, Srcloc>>,
+}
+
+fn split_text(td: &String) -> Vec<Rc<Vec<u8>>> {
+    let result: Vec<Rc<Vec<u8>>> = td.split("\n").map(|x| Rc::new(x.as_bytes().to_vec())).collect();
+    result
+}
+
+pub fn stringify_doc(d: &Vec<Rc<Vec<u8>>>) -> Result<String, String> {
+    let bytes = DocVecByteIter::new(d).collect();
+    String::from_utf8(bytes).map_err(|_| "no conversion from utf8".to_string())
 }
 
 impl LSPServiceProvider {
@@ -433,14 +481,119 @@ impl LSPServiceProvider {
         (&coll).get(uristring).map(|x| x.clone())
     }
 
+    fn get_parsed(&self, uristring: &String) -> Option<ParsedDoc> {
+        let cell: &RefCell<HashMap<String, ParsedDoc>> = self.parsed_documents.borrow();
+        let coll: Ref<HashMap<String, ParsedDoc>> = cell.borrow();
+        (&coll).get(uristring).cloned()
+    }
+
     fn save_doc(&self, uristring: String, dd: DocData) {
         let cell: &RefCell<HashMap<String, DocData>> = self.document_collection.borrow();
         cell.replace_with(|coll| {
             let mut repl = HashMap::new();
             swap(&mut repl, coll);
-            repl.insert(uristring, dd);
+            repl.insert(uristring.clone(), dd);
             repl
         });
+        let pcell: &RefCell<HashMap<String, ParsedDoc>> = self.parsed_documents.borrow();
+        pcell.replace_with(|pcoll| {
+            let mut repl = HashMap::new();
+            swap(&mut repl, pcoll);
+            eprintln!("erased parse for {}", uristring);
+            repl.remove(&uristring);
+            repl
+        });
+    }
+
+    fn save_parse(&self, uristring: String, p: ParsedDoc) {
+        eprintln!("p {} {:?}", uristring, p);
+        let cell: &RefCell<HashMap<String, ParsedDoc>> = self.parsed_documents.borrow();
+        cell.replace_with(|pcoll| {
+            let mut repl = HashMap::new();
+            swap(&mut repl, pcoll);
+            repl.insert(uristring, p);
+            repl
+        });
+    }
+
+    fn apply_document_patch(&mut self, uristring: &String, patches: &Vec<TextDocumentContentChangeEvent>) {
+        if let Some(dd) = self.get_doc(uristring) {
+            let mut last_line = 1;
+            let mut last_col = 1;
+
+            if patches.len() == 1 && patches[0].range.is_none() {
+                // We can short circuit a full document rewrite.
+                eprintln!("change whole doc {}", patches[0].text);
+                self.save_doc(uristring.clone(), DocData {
+                    text: split_text(&patches[0].text)
+                });
+                return;
+            }
+
+            // Try to do an efficient job of patching the old document content.
+            let mut doc_copy = dd.text.clone();
+            for p in patches.iter() {
+                if let Some(r) = p.range {
+                    let split_data = split_text(&p.text);
+                    let replaced_line = 0;
+                    let rstart_line = r.start.line as usize;
+                    let rend_line = r.end.line as usize;
+                    let rstart_char = r.start.character as usize;
+                    let rend_char = r.end.character as usize;
+                    let original_end_line = rend_line;
+                    for (i, l) in split_data.iter().enumerate() {
+                        let match_line = rstart_line + i;
+                        let begin_this_line =
+                            if rstart_line == i {
+                                rstart_char
+                            } else {
+                                0
+                            };
+                        let end_this_line =
+                            if match_line == rend_line {
+                                rend_char
+                            } else {
+                                doc_copy[match_line].len()
+                            };
+                        let (mut prefix, mut suffix) =
+                            if match_line == rstart_line {
+                                ((&doc_copy[match_line])[0..begin_this_line].to_vec(), Vec::new())
+                            } else if match_line == rend_line {
+                                (Vec::new(), (&doc_copy[match_line])[end_this_line..].to_vec())
+                            } else {
+                                (Vec::new(), Vec::new())
+                            };
+                        let new_line =
+                            if prefix.is_empty() && suffix.is_empty() {
+                                // Whole line
+                                l.clone()
+                            } else {
+                                // Partial line
+                                let mut vec_copy = prefix.clone();
+                                let line_borrowed: &Vec<u8> = l.borrow();
+                                vec_copy.append(&mut line_borrowed.clone());
+                                vec_copy.append(&mut suffix);
+                                Rc::new(vec_copy)
+                            };
+
+                        if match_line >= original_end_line {
+                            // Insert the new line
+                            doc_copy.insert(match_line, new_line);
+                        } else {
+                            // Overwrite line
+                            doc_copy[match_line] = new_line;
+                        }
+                    }
+                } else {
+                    doc_copy = split_text(&p.text)
+                }
+            }
+
+            eprintln!("apply document patch: {}", stringify_doc(&doc_copy).unwrap_or_else(|_| "*error*".to_string()));
+            self.save_doc(uristring.clone(), DocData {
+                text: doc_copy
+            });
+        }
     }
 
     fn ensure_parsed_document<'a>(
@@ -450,20 +603,20 @@ impl LSPServiceProvider {
         if let Some(doc) = self.get_doc(uristring) {
             let opts = Rc::new(LSPCompilerOpts::new(uristring.clone(), self.document_collection.clone()));
             let parsed = ParsedDoc::new(opts, uristring, &doc.text);
-            self.parsed_documents.insert(uristring.clone(), parsed);
+            self.save_parse(uristring.clone(), parsed);
         }
     }
 
     pub fn new() -> Self {
         LSPServiceProvider {
             document_collection: Rc::new(RefCell::new(HashMap::new())),
-            parsed_documents: HashMap::new(),
+            parsed_documents: Rc::new(RefCell::new(HashMap::new())),
             goto_defs: HashMap::new()
         }
     }
 
     pub fn get_file(&self, filename: &String) -> Result<String, String> {
-        self.get_doc(filename).map(|d| Ok(copy_text_rc(d.text.clone()))).unwrap_or_else(|| Err(format!("don't have file {}", filename)))
+        self.get_doc(filename).map(|d| stringify_doc(&d.text)).unwrap_or_else(|| Err(format!("don't have file {}", filename)))
     }
 
     pub fn handle_message(&mut self, msg: &Message) -> Result<Vec<Message>, String> {
@@ -474,15 +627,14 @@ impl LSPServiceProvider {
                 if let Ok((id, params)) = cast::<SemanticTokensFullRequest>(req.clone()) {
                     eprintln!("got semantic token request #{}: for file {}", id, params.text_document.uri.to_string());
                     let uristring = params.text_document.uri.to_string();
-                    if self.parsed_documents.get(&uristring).is_none() {
-                        eprintln!("ensure parsed");
-                        self.ensure_parsed_document(&uristring);
-                    }
-                    if let Some(parsed) = self.parsed_documents.get(&uristring) {
+
+                    self.ensure_parsed_document(&uristring);
+
+                    if let Some(parsed) = self.get_parsed(&uristring) {
                         match &parsed.result {
                             ParseResult::Completed(frontend) => {
                                 let mut our_goto_defs = BTreeMap::new();
-                                let resp = do_semantic_tokens(id, &mut our_goto_defs, &frontend);
+                                let resp = do_semantic_tokens(id, &uristring, &mut our_goto_defs, &frontend);
                                 eprintln!("our goto defs {:?}", our_goto_defs);
                                 self.goto_defs.insert(uristring.clone(), our_goto_defs);
                                 res.push(Message::Response(resp));
@@ -544,14 +696,21 @@ impl LSPServiceProvider {
                 eprintln!("got notification: {:?}", not);
                 if not.method == "textDocument/didOpen" {
                     let stringified_params = serde_json::to_string(&not.params).unwrap();
-                    eprintln!("stringified_params: {}", stringified_params);
                     if let Ok(params) = serde_json::from_str::<DidOpenTextDocumentParams>(&stringified_params) {
                         self.save_doc(
                             params.text_document.uri.to_string(),
-                            DocData { text: Rc::new(params.text_document.text.clone()) }
+                            DocData { text: split_text(&params.text_document.text) }
                         );
                     } else {
                         eprintln!("cast failed in didOpen");
+                    }
+                } else if not.method == "textDocument/didChange" {
+                    let stringified_params = serde_json::to_string(&not.params).unwrap();
+                    if let Ok(params) = serde_json::from_str::<DidChangeTextDocumentParams>(&stringified_params) {
+                        let doc_id = params.text_document.uri.to_string();
+                        self.apply_document_patch(&doc_id, &params.content_changes);
+                    } else {
+                        eprintln!("case failed in didChange");
                     }
                 } else {
                     eprintln!("not sure what we got: {:?}", not);

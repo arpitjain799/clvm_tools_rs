@@ -1,7 +1,6 @@
 use std::borrow::Borrow;
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use clvmr::allocator::Allocator;
@@ -19,10 +18,10 @@ use crate::compiler::comptypes::{
     PrimaryCodegen
 };
 use crate::compiler::lsp::lsp::{
-    copy_text_rc,
-    DocData
+    DocData,
+    stringify_doc
 };
-use crate::compiler::sexp::{SExp, parse_sexp};
+use crate::compiler::sexp::SExp;
 use crate::compiler::srcloc::Srcloc;
 
 #[derive(Clone, Debug)]
@@ -60,6 +59,9 @@ impl CompilerOpts for LSPCompilerOpts {
     }
     fn frontend_opt(&self) -> bool {
         self.frontend_opt
+    }
+    fn frontend_check_live(&self) -> bool {
+        false
     }
     fn start_env(&self) -> Option<Rc<SExp>> {
         self.start_env.clone()
@@ -122,15 +124,17 @@ impl CompilerOpts for LSPCompilerOpts {
                     continue;
                 }
                 Ok(content) => {
-                    return Ok((filename, copy_text_rc(content.text)));
+                    return stringify_doc(&content.text).map(|s| (filename, s)).map_err(|x| CompileErr(Srcloc::start(&p), x));
                 }
             }
         }
+
         return Err(CompileErr(
             Srcloc::start(&inc_from),
             format!("could not find {} to include", filename),
         ));
     }
+
     fn compile_program(
         &self,
         allocator: &mut Allocator,
@@ -139,6 +143,7 @@ impl CompilerOpts for LSPCompilerOpts {
         symbol_table: &mut HashMap<String, String>,
     ) -> Result<SExp, CompileErr> {
         let me = Rc::new(self.clone());
+        eprintln!("compile_program {}", sexp.to_string());
         compile_pre_forms(allocator, runner, me, &vec![sexp.clone()], symbol_table)
     }
 }

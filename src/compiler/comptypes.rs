@@ -149,6 +149,7 @@ pub trait CompilerOpts {
     fn stdenv(&self) -> bool;
     fn optimize(&self) -> bool;
     fn frontend_opt(&self) -> bool;
+    fn frontend_check_live(&self) -> bool;
     fn start_env(&self) -> Option<Rc<SExp>>;
     fn prim_map(&self) -> Rc<HashMap<Vec<u8>, Rc<SExp>>>;
 

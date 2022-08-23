@@ -596,68 +596,66 @@ fn parse_sexp_step(loc: Srcloc, p: &SExpParseState, this_char: u8) -> SExpParseR
     }
 }
 
-fn parse_sexp_inner(
+fn parse_sexp_inner<I>(
     start_: Srcloc,
     p_: SExpParseState,
-    n_: usize,
-    s: &Vec<u8>,
-) -> Result<Vec<Rc<SExp>>, (Srcloc, String)> {
+    s: I,
+) -> Result<Vec<Rc<SExp>>, (Srcloc, String)> where
+    I: Iterator<Item = u8>
+{
     let mut start = start_;
     let mut p = p_;
-    let mut n = n_;
     let mut res = Vec::new();
 
-    loop {
-        if n >= s.len() {
-            match p {
-                SExpParseState::Empty => {
-                    return Ok(res);
-                }
-                SExpParseState::Bareword(l, t) => {
-                    return Ok(vec![Rc::new(make_atom(l, t))]);
-                }
-                SExpParseState::CommentText(_, _) => {
-                    return Ok(res);
-                }
-                SExpParseState::QuotedText(l, _, _) => {
-                    return Err((l, "unterminated quoted string".to_string()));
-                }
-                SExpParseState::QuotedEscaped(l, _, _) => {
-                    return Err((l, "unterminated quoted string with escape".to_string()));
-                }
-                SExpParseState::OpenList(l) => {
-                    return Err((l, "Unterminated list (empty)".to_string()));
-                }
-                SExpParseState::ParsingList(l, _, _) => {
-                    return Err((l, "Unterminated mid list".to_string()));
-                }
-                SExpParseState::TermList(l, _, _) => {
-                    return Err((l, "Unterminated tail list".to_string()));
-                }
-            }
-        } else {
-            let this_char = s[n];
-            let next_location = start.clone().advance(this_char);
+    for this_char in s {
+        eprintln!("this_char {}", this_char);
+        let next_location = start.clone().advance(this_char);
 
-            match parse_sexp_step(start.clone(), p.borrow(), this_char) {
-                SExpParseResult::PError(l, e) => {
-                    return Err((l, e));
-                }
-                SExpParseResult::PResume(np) => {
-                    start = next_location;
-                    p = np;
-                    n += 1;
-                }
-                SExpParseResult::PEmit(o, np) => {
-                    p = np;
-                    n += 1;
-                    res.push(o);
-                }
+        match parse_sexp_step(start.clone(), p.borrow(), this_char) {
+            SExpParseResult::PError(l, e) => {
+                return Err((l, e));
             }
+            SExpParseResult::PResume(np) => {
+                start = next_location;
+                p = np;
+            }
+            SExpParseResult::PEmit(o, np) => {
+                p = np;
+                res.push(o);
+            }
+        }
+    }
+
+    match p {
+        SExpParseState::Empty => {
+            return Ok(res);
+        }
+        SExpParseState::Bareword(l, t) => {
+            return Ok(vec![Rc::new(make_atom(l, t))]);
+        }
+        SExpParseState::CommentText(_, _) => {
+            return Ok(res);
+        }
+        SExpParseState::QuotedText(l, _, _) => {
+            return Err((l, "unterminated quoted string".to_string()));
+        }
+        SExpParseState::QuotedEscaped(l, _, _) => {
+            return Err((l, "unterminated quoted string with escape".to_string()));
+        }
+        SExpParseState::OpenList(l) => {
+            return Err((l, "Unterminated list (empty)".to_string()));
+        }
+        SExpParseState::ParsingList(l, _, _) => {
+            return Err((l, "Unterminated mid list".to_string()));
+        }
+        SExpParseState::TermList(l, _, _) => {
+            return Err((l, "Unterminated tail list".to_string()));
         }
     }
 }
 
-pub fn parse_sexp(start: Srcloc, input: &String) -> Result<Vec<Rc<SExp>>, (Srcloc, String)> {
-    parse_sexp_inner(start, SExpParseState::Empty, 0, &input.as_bytes().to_vec())
+pub fn parse_sexp<I>(start: Srcloc, input: I) -> Result<Vec<Rc<SExp>>, (Srcloc, String)> where
+    I: Iterator<Item = u8>
+{
+    parse_sexp_inner(start, SExpParseState::Empty, input)
 }
