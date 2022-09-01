@@ -508,7 +508,7 @@ fn parse_sexp_step(loc: Srcloc, p: &SExpParseState, this_char: u8) -> SExpParseR
                     list_content.to_vec(),
                 )),
                 (')', SExpParseState::Empty) => emit(
-                    Rc::new(enlist(pl.clone(), list_content.to_vec())),
+                    Rc::new(enlist(pl.ext(&loc), list_content.to_vec())),
                     SExpParseState::Empty,
                 ),
                 (')', SExpParseState::Bareword(l, t)) => {
@@ -516,7 +516,7 @@ fn parse_sexp_step(loc: Srcloc, p: &SExpParseState, this_char: u8) -> SExpParseR
                     let mut updated_list = list_content.to_vec();
                     updated_list.push(Rc::new(parsed_atom));
                     emit(
-                        Rc::new(enlist(pl.clone(), updated_list)),
+                        Rc::new(enlist(pl.ext(&loc), updated_list)),
                         SExpParseState::Empty,
                     )
                 }
@@ -547,7 +547,7 @@ fn parse_sexp_step(loc: Srcloc, p: &SExpParseState, this_char: u8) -> SExpParseR
                     emit(list_content[0].clone(), SExpParseState::Empty)
                 } else {
                     emit(
-                        Rc::new(enlist(pl.clone(), list_content.to_vec())),
+                        Rc::new(enlist(pl.ext(&loc), list_content.to_vec())),
                         SExpParseState::Empty,
                     )
                 }
@@ -562,7 +562,7 @@ fn parse_sexp_step(loc: Srcloc, p: &SExpParseState, this_char: u8) -> SExpParseR
                             emit(Rc::new(new_tail), SExpParseState::Empty)
                         } else {
                             list_copy.push(Rc::new(new_tail));
-                            let new_list = enlist(pl.ext(l), list_copy);
+                            let new_list = enlist(pl.ext(&loc), list_copy);
                             emit(Rc::new(new_list), SExpParseState::Empty)
                         }
                     }
@@ -608,7 +608,6 @@ fn parse_sexp_inner<I>(
     let mut res = Vec::new();
 
     for this_char in s {
-        eprintln!("this_char {}", this_char);
         let next_location = start.clone().advance(this_char);
 
         match parse_sexp_step(start.clone(), p.borrow(), this_char) {
@@ -620,6 +619,7 @@ fn parse_sexp_inner<I>(
                 p = np;
             }
             SExpParseResult::PEmit(o, np) => {
+                start = next_location;
                 p = np;
                 res.push(o);
             }

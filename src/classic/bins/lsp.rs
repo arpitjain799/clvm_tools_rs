@@ -14,6 +14,7 @@ use lsp_types::{
     request::SemanticTokensFullRequest,
     notification::DidOpenTextDocument,
     ClientCapabilities,
+    CompletionOptions,
     DidOpenTextDocumentParams,
     GotoDefinitionResponse,
     InitializeParams,
@@ -85,6 +86,13 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
 
     let init_params: InitializeParams = serde_json::from_value(params).unwrap();
     let client_capabilities: ClientCapabilities = init_params.capabilities;
+    let mut completion_start = Vec::new();
+    for i in 65..65+27 {
+        completion_start.push(i as u8);
+    }
+    for i in 97..97+27 {
+        completion_start.push(i as u8);
+    }
     let server_capabilities = ServerCapabilities {
         // Specify capabilities from the set:
         // https://docs.rs/lsp-types/latest/lsp_types/struct.ServerCapabilities.html
@@ -101,6 +109,11 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
             full: Some(SemanticTokensFullOptions::Delta {delta: Some(true)})
         })),
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        completion_provider: Some(CompletionOptions {
+            resolve_provider: Some(true),
+//             trigger_characters: Some(completion_start),
+            ..Default::default()
+        }),
         ..Default::default()
     };
 

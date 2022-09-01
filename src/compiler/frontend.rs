@@ -20,7 +20,7 @@ use crate::compiler::comptypes::{
 };
 use crate::compiler::preprocessor::preprocess;
 use crate::compiler::rename::rename_children_compileform;
-use crate::compiler::sexp::{enlist, SExp};
+use crate::compiler::sexp::{enlist, SExp, decode_string};
 use crate::compiler::srcloc::Srcloc;
 use crate::util::u8_from_number;
 
@@ -358,6 +358,16 @@ fn compile_defconstant(l: Srcloc, name: Vec<u8>, body: Rc<SExp>) -> Result<Helpe
     compile_bodyform(body).map(|bf| HelperForm::Defconstant(l, name.to_vec(), Rc::new(bf)))
 }
 
+fn location_span(l_: Srcloc, lst_: Rc<SExp>) -> Srcloc {
+    let mut l = l_;
+    let mut lst = lst_;
+    while let SExp::Cons(cl,a,b) = lst.borrow() {
+        l = location_span(l.clone(), a.clone()).ext(&b.loc());
+        lst = b.clone();
+    }
+    l
+}
+
 fn compile_defun(
     l: Srcloc,
     nl: Srcloc,
@@ -367,6 +377,7 @@ fn compile_defun(
     body: Rc<SExp>,
 ) -> Result<HelperForm, CompileErr> {
     let mut take_form = body.clone();
+
     match body.borrow() {
         SExp::Cons(_, f, _r) => {
             take_form = f.clone();
@@ -460,7 +471,7 @@ fn compile_helperform(
     opts: Rc<dyn CompilerOpts>,
     body: Rc<SExp>,
 ) -> Result<Option<HelperForm>, CompileErr> {
-    let l = body.loc();
+    let l = location_span(body.loc(), body.clone());
     let plist = body.proper_list();
 
     match plist.and_then(|pl| match_op_name_4(body.clone(), &pl)) {

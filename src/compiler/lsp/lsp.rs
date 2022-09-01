@@ -1,7 +1,7 @@
 use std::cell::{Ref, RefCell};
 use std::cmp::Ordering;
 use std::borrow::Borrow;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::mem::swap;
 use std::rc::Rc;
 
@@ -9,8 +9,13 @@ use lazy_static::lazy_static;
 
 use lsp_server::ResponseError;
 use lsp_types::{
+    request::Completion,
     request::GotoDefinition,
     request::SemanticTokensFullRequest,
+    CompletionItem,
+    CompletionList,
+    CompletionParams,
+    CompletionResponse,
     DidChangeTextDocumentParams,
     DidOpenTextDocumentParams,
     GotoDefinitionResponse,
@@ -31,7 +36,7 @@ use crate::compiler::comptypes::{
 };
 use crate::compiler::frontend::frontend;
 use crate::compiler::lsp::compopts::LSPCompilerOpts;
-use crate::compiler::sexp::{SExp, parse_sexp};
+use crate::compiler::sexp::{SExp, parse_sexp, decode_string};
 use crate::compiler::srcloc::Srcloc;
 
 lazy_static! {
@@ -80,6 +85,13 @@ where
     req.extract(R::METHOD)
 }
 
+#[derive(Debug, Clone)]
+pub enum ScopeKind {
+    Module,
+    Macro,
+    Function,
+    Let
+}
 
 #[derive(Debug, Clone)]
 pub struct DocData {
@@ -87,13 +99,28 @@ pub struct DocData {
 }
 
 #[derive(Debug, Clone)]
-enum ParseResult {
-    WithError(CompileErr),
-    Completed(CompileForm)
+pub struct ParseScope {
+    region: Srcloc,
+    kind: ScopeKind,
+    variables: HashSet<String>,
+    functions: HashSet<String>,
+    containing: Vec<ParseScope>
 }
 
 #[derive(Debug, Clone)]
-struct ParsedDoc {
+pub struct ParseOutput {
+    compiled: CompileForm,
+    scopes: ParseScope
+}
+
+#[derive(Debug, Clone)]
+pub enum ParseResult {
+    WithError(CompileErr),
+    Completed(ParseOutput)
+}
+
+#[derive(Debug, Clone)]
+pub struct ParsedDoc {
     parses: Vec<u32>,
     result: ParseResult,
 }
@@ -134,6 +161,149 @@ impl<'a> DocVecByteIter<'a> {
     }
 }
 
+fn grab_scope_range(text: &[Rc<Vec<u8>>], loc: Srcloc) -> String {
+    let eloc = loc.ending();
+    let mut res = Vec::new();
+
+    if (loc.line - 1) >= text.len() {
+        return "".to_string();
+    }
+
+    // First line
+    let tline = text[loc.line - 1].clone();
+    let text_borrowed: &Vec<u8> = tline.borrow();
+
+    if eloc.line == loc.line {
+        // Only line
+        for ch in text_borrowed.iter().take(eloc.col).skip(loc.col - 1) {
+            res.push(*ch);
+        }
+    } else {
+        for ch in text_borrowed.iter().skip(loc.col - 1) {
+            res.push(*ch);
+        }
+    }
+
+    for ch in text_borrowed.iter() {
+        res.push(*ch);
+    }
+
+    // Inside lines.
+    let end_line =
+        if eloc.line - 1 > text.len() {
+            text.len()
+        } else {
+            eloc.line - 1
+        };
+
+    eprintln!("loc.line {} end_line {}", loc.line, end_line);
+    if loc.line < end_line - 1 {
+        for l in text[loc.line..end_line - 1].iter() {
+            res.push(b'\n');
+            let iline = l.clone();
+            let il: &Vec<u8> = iline.borrow();
+            for ch in il.iter() {
+                res.push(*ch);
+            }
+        }
+    }
+    
+    let eline = text[end_line].clone();
+    let end_borrowed: &Vec<u8> = eline.borrow();
+
+    res.push(b'\n');
+    for ch in end_borrowed.iter().take(eloc.col - 1) {
+        res.push(*ch);
+    }
+
+    decode_string(&res)
+}
+
+fn make_arg_set(set: &mut HashSet<String>, args: Rc<SExp>) {
+    match args.borrow() {
+        SExp::Atom(l,a) => {
+            set.insert(decode_string(&a));
+        },
+        SExp::Cons(l,a,b) => {
+            make_arg_set(set, a.clone());
+            make_arg_set(set, b.clone());
+        },
+        _ => { }
+    }
+}
+
+fn make_helper_scope(h: &HelperForm) -> Option<ParseScope> {
+    let loc = h.loc();
+    let eloc = loc.ending();
+
+    let mut kind = None;
+    let mut args = HashSet::new();
+
+    match h {
+        HelperForm::Defun(i,d) => {
+            kind = Some(ScopeKind::Function);
+            make_arg_set(&mut args, d.args.clone());
+        },
+        HelperForm::Defmacro(m) => {
+            kind = Some(ScopeKind::Macro);
+            make_arg_set(&mut args, m.args.clone());
+        },
+        _ => { }
+    }
+
+    kind.map(|k| {
+        ParseScope {
+            kind: k,
+            region: loc,
+            variables: args,
+            functions: HashSet::new(),
+            containing: Vec::new()
+        }
+    })
+}
+
+fn recover_scopes(ourfile: &String, text: &[Rc<Vec<u8>>], fe: &CompileForm) -> ParseScope {
+    let mut toplevel_args = HashSet::new();
+    let mut toplevel_funs = HashSet::new();
+    let mut contained = Vec::new();
+
+    make_arg_set(&mut toplevel_args, fe.args.clone());
+
+    for h in fe.helpers.iter() {
+        eprintln!("helper {} has this range in the code: {}", h.to_sexp().to_string(), grab_scope_range(text, h.loc()));
+
+        match h {
+            HelperForm::Defun(i,d) => {
+                toplevel_funs.insert(decode_string(&d.name));
+            },
+            HelperForm::Defmacro(m) => {
+                toplevel_funs.insert(decode_string(&m.name));
+            },
+            HelperForm::Defconstant(l,n,c) => {
+                toplevel_args.insert(decode_string(&n));
+            }
+        }
+
+        let f = h.loc().file.clone();
+        let filename: &String = f.borrow();
+        if filename == ourfile {
+            if let Some(scope) = make_helper_scope(h) {
+                contained.push(scope);
+            }
+        }
+    }
+
+    ParseScope {
+        kind: ScopeKind::Module,
+        region: Srcloc::start(ourfile).ext(
+            &Srcloc::new(Rc::new(ourfile.clone()), text.len() + 1, 0)
+        ),
+        variables: toplevel_args,
+        functions: toplevel_funs,
+        containing: contained
+    }
+}
+
 impl ParsedDoc {
     fn empty() -> Self {
         ParsedDoc {
@@ -147,16 +317,20 @@ impl ParsedDoc {
         parse_sexp(srcloc, DocVecByteIter::new(srctext)).
             map_err(|e| { CompileErr(e.0.clone(), "parse error".to_string()) }).
             map(|parsed| {
-                frontend(opts.clone(), &parsed).map(|fe| {
-                    eprintln!("fe {}", fe.to_sexp().to_string());
+                frontend(opts.clone(), &parsed).as_ref().map(|fe| {
+                    let parsed = ParseOutput {
+                        compiled: fe.clone(),
+                        // Todo: fill out
+                        scopes: recover_scopes(file, srctext, fe)
+                    };
                     ParsedDoc {
                         parses: Vec::new(),
-                        result: ParseResult::Completed(fe)
+                        result: ParseResult::Completed(parsed)
                     }
                 }).unwrap_or_else(|e| {
                     ParsedDoc {
                         parses: Vec::new(),
-                        result: ParseResult::WithError(e)
+                        result: ParseResult::WithError(e.clone())
                     }
                 })
             }).unwrap_or_else(|e| {
@@ -331,7 +505,6 @@ fn process_body_code(
                                     token_type: TK_FUNCTION_IDX,
                                     token_mod: 0
                                 };
-                                eprintln!("function call at {:?}", st);
                                 gotodef.insert(st.clone(), defun.nl.clone());
                                 collected_tokens.push(st);
                                 break;
@@ -380,8 +553,8 @@ fn do_semantic_tokens(
     for form in frontend.helpers.iter() {
         match form {
             HelperForm::Defun(l,defun) => {
+                eprintln!("helperform range {}: {}", decode_string(&defun.name), defun.loc.to_string());
                 let mut argcollection = HashMap::new();
-                eprintln!("handling form {}", form.to_sexp().to_string());
                 collected_tokens.push(SemanticTokenSortable {
                     loc: defun.nl.clone(),
                     token_type: TK_FUNCTION_IDX,
@@ -474,6 +647,44 @@ pub fn stringify_doc(d: &Vec<Rc<Vec<u8>>>) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "no conversion from utf8".to_string())
 }
 
+fn find_ident(line: Rc<Vec<u8>>, char_at: u32) -> Option<Vec<u8>> {
+    let ca_size = char_at as usize;
+    let ll = line.len();
+
+    if ca_size > ll {
+        return None;
+    }
+
+    let borrowed: &Vec<u8> = line.borrow();
+    let mut lb = ca_size - 1;
+    let mut ub = ca_size;
+    while lb > 0 && borrowed[lb-1].is_ascii_alphabetic() {
+        lb -= 1;
+    }
+    while ub < borrowed.len() && borrowed[ub].is_ascii_alphanumeric() {
+        ub += 1;
+    }
+
+    let ident_vec: Vec<u8> =
+        borrowed[lb..].iter().
+        take(ub - lb).copied().collect();
+
+    Some(ident_vec)
+}
+
+fn find_scope_stack(
+    out_scopes: &mut Vec<ParseScope>,
+    scope: &ParseScope,
+    position: &Srcloc
+) {
+    if scope.region.overlap(&position) {
+        for s in scope.containing.iter() {
+            find_scope_stack(out_scopes, s, position);
+        }
+        out_scopes.push(scope.clone());
+    }
+}
+
 impl LSPServiceProvider {
     fn get_doc(&self, uristring: &String) -> Option<DocData> {
         let cell: &RefCell<HashMap<String, DocData>> = self.document_collection.borrow();
@@ -481,7 +692,7 @@ impl LSPServiceProvider {
         (&coll).get(uristring).map(|x| x.clone())
     }
 
-    fn get_parsed(&self, uristring: &String) -> Option<ParsedDoc> {
+    pub fn get_parsed(&self, uristring: &String) -> Option<ParsedDoc> {
         let cell: &RefCell<HashMap<String, ParsedDoc>> = self.parsed_documents.borrow();
         let coll: Ref<HashMap<String, ParsedDoc>> = cell.borrow();
         (&coll).get(uristring).cloned()
@@ -499,14 +710,12 @@ impl LSPServiceProvider {
         pcell.replace_with(|pcoll| {
             let mut repl = HashMap::new();
             swap(&mut repl, pcoll);
-            eprintln!("erased parse for {}", uristring);
             repl.remove(&uristring);
             repl
         });
     }
 
     fn save_parse(&self, uristring: String, p: ParsedDoc) {
-        eprintln!("p {} {:?}", uristring, p);
         let cell: &RefCell<HashMap<String, ParsedDoc>> = self.parsed_documents.borrow();
         cell.replace_with(|pcoll| {
             let mut repl = HashMap::new();
@@ -516,6 +725,24 @@ impl LSPServiceProvider {
         });
     }
 
+    fn get_positional_text(&mut self, uri: &String, position: &Position) -> Option<Vec<u8>> {
+        eprintln!("get positional text: {:?}", position);
+        self.get_doc(uri).and_then(|lines| {
+            let pl = position.line as usize;
+            if pl < lines.text.len() {
+                Some(lines.text[pl].clone())
+            } else {
+                None
+            }
+        }).and_then(|line| {
+            if position.character == 0 {
+                None
+            } else {
+                find_ident(line.clone(), position.character)
+            }
+        })
+    }
+
     fn apply_document_patch(&mut self, uristring: &String, patches: &Vec<TextDocumentContentChangeEvent>) {
         if let Some(dd) = self.get_doc(uristring) {
             let mut last_line = 1;
@@ -523,7 +750,6 @@ impl LSPServiceProvider {
 
             if patches.len() == 1 && patches[0].range.is_none() {
                 // We can short circuit a full document rewrite.
-                eprintln!("change whole doc {}", patches[0].text);
                 self.save_doc(uristring.clone(), DocData {
                     text: split_text(&patches[0].text)
                 });
@@ -555,7 +781,7 @@ impl LSPServiceProvider {
                             } else {
                                 doc_copy[match_line].len()
                             };
-                        let (mut prefix, mut suffix) =
+                        let (prefix, mut suffix) =
                             if match_line == rstart_line {
                                 ((&doc_copy[match_line])[0..begin_this_line].to_vec(), Vec::new())
                             } else if match_line == rend_line {
@@ -619,6 +845,72 @@ impl LSPServiceProvider {
         self.get_doc(filename).map(|d| stringify_doc(&d.text)).unwrap_or_else(|| Err(format!("don't have file {}", filename)))
     }
 
+    // Completions:
+    //
+    // Functions:
+    //
+    // - Top level: show top level functions
+    // - Inside macro: Show functions at this level
+    // - Inside function: Show top level functions
+    //
+    // Variables:
+    //
+    // - Top level: show top level variables
+    // - Inside macro: Show variables at this level
+    // - Inside function: Show top level constants and
+    //   variables at this level.
+    //
+    // If at the head of a list: show function completions
+    // Otherwise show variable completions.
+    pub fn handle_completion_request(&mut self, id: RequestId, params: &CompletionParams) -> Result<Vec<Message>, String> {
+        let mut res = Vec::new();
+        let uristring =
+            params.text_document_position.text_document.uri.to_string();
+        self.ensure_parsed_document(&uristring);
+
+        if let (Some(cpl), Some(parsed)) = (
+            self.get_positional_text(&uristring, &params.text_document_position.position),
+            self.get_parsed(&uristring)
+        ) {
+            if let ParseResult::Completed(output) = parsed.result {
+                let mut found_scopes = Vec::new();
+                let pos = params.text_document_position.position;
+                let want_position = Srcloc::new(
+                    Rc::new(uristring.clone()),
+                    (pos.line + 1) as usize,
+                    (pos.character + 1) as usize
+                );
+                find_scope_stack(
+                    &mut found_scopes,
+                    &output.scopes,
+                    &want_position
+                );
+                eprintln!("scopes: {:?}", found_scopes);
+                let mut result_items = Vec::new();
+                if found_scopes.len() == 1 {
+                } else {
+                    for s in found_scopes.iter() {
+                        for sym in s.variables.iter() {
+                            result_items.push(CompletionItem {
+                                label: sym.clone(),
+                                ..Default::default()
+                            });
+                        }
+                    }
+                }
+                let result = CompletionResponse::List(CompletionList {
+                    is_incomplete: false,
+                    items: result_items
+                });
+                let result = serde_json::to_value(&result).unwrap();
+                let resp = Response { id, result: Some(result), error: None };
+                res.push(Message::Response(resp));
+            }
+        }
+
+        Ok(res)
+    }
+
     pub fn handle_message(&mut self, msg: &Message) -> Result<Vec<Message>, String> {
         let mut res = Vec::new();
         eprintln!("got msg: {:?}", msg);
@@ -634,8 +926,7 @@ impl LSPServiceProvider {
                         match &parsed.result {
                             ParseResult::Completed(frontend) => {
                                 let mut our_goto_defs = BTreeMap::new();
-                                let resp = do_semantic_tokens(id, &uristring, &mut our_goto_defs, &frontend);
-                                eprintln!("our goto defs {:?}", our_goto_defs);
+                                let resp = do_semantic_tokens(id, &uristring, &mut our_goto_defs, &frontend.compiled);
                                 self.goto_defs.insert(uristring.clone(), our_goto_defs);
                                 res.push(Message::Response(resp));
                             },
@@ -684,6 +975,8 @@ impl LSPServiceProvider {
                     let result = serde_json::to_value(&result).unwrap();
                     let resp = Response { id, result: Some(result), error: None };
                     res.push(Message::Response(resp));
+                } else if let Ok((id, params)) = cast::<Completion>(req.clone()) {
+                    self.handle_completion_request(id, &params);
                 } else {
                     eprintln!("unknown request {:?}", req);
                 };

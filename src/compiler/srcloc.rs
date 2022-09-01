@@ -59,6 +59,18 @@ impl Srcloc {
         }
     }
 
+    pub fn ending(&self) -> Srcloc {
+        if let Some(u) = &self.until {
+            return Srcloc {
+                file: self.file.clone(),
+                line: u.line,
+                col: u.col,
+                until: None
+            };
+        }
+        self.clone()
+    }
+
     pub fn overlap(&self, other: &Srcloc) -> bool {
         let mf: &String = self.file.borrow();
         let of: &String = other.file.borrow();
