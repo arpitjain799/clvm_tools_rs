@@ -62,7 +62,7 @@ pub fn int_from_bytes<'a>(
     if signed && ((dv[0] & 0x80) != 0) {
         return Ok((unsigned64 - 1 << (b.length() * 8)) as u64);
     }
-    return Ok(unsigned64);
+    Ok(unsigned64)
 }
 
 pub fn bigint_from_bytes(b: &Bytes, option: Option<TConvertOption>) -> Number {
@@ -104,7 +104,7 @@ pub fn bigint_from_bytes(b: &Bytes, option: Option<TConvertOption>) -> Number {
     if signed && ((dv[0] & 0x80) != 0) {
         return unsigned - (bi_one() << (b.length() * 8));
     }
-    return unsigned;
+    unsigned
 }
 
 pub fn bigint_to_bytes(v_: &Number, option: Option<TConvertOption>) -> Result<Bytes, String> {
@@ -174,19 +174,20 @@ pub fn bigint_to_bytes(v_: &Number, option: Option<TConvertOption>) -> Result<By
     }
 
     let lastbytes = u32_digits[u32_digits.len() - 1];
-    let bytes_bitmask = 0xff;
-    for i in 0..byte4_remain {
-        let num = (lastbytes >> (8 * i)) & bytes_bitmask;
-        let pointer = extra_byte + byte4_remain - 1 - i;
-        let setval = if negative {
-            (1_u32 << 8) - num as u32
+    let pointer = total_bytes - byte4_remain;
+    let transform = |idx| {
+        if negative {
+            (((1 << (8 * byte4_remain)) - lastbytes) >> (8 * idx)) as u8
         } else {
-            num as u32
-        };
-        set_u8(&mut dv, pointer, setval as u8);
+            (lastbytes >> (8 * idx)) as u8
+        }
+    };
+
+    for i in 0..byte4_remain {
+        set_u8(&mut dv, pointer + i, transform(byte4_remain - i - 1));
     }
 
-    return Ok(Bytes::new(Some(BytesFromType::Raw(dv))));
+    Ok(Bytes::new(Some(BytesFromType::Raw(dv))))
 }
 
 // /**

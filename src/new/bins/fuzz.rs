@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::rc::Rc;
 
-use clvm_rs::allocator::Allocator;
+use clvmr::allocator::Allocator;
 
 use clvm_tools_rs::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
 
@@ -38,11 +39,13 @@ fn main() {
     println!("random-seed: {}", random_seed);
     println!("prog: {}", prog.to_sexp().to_string());
 
+    let mut syms = HashMap::new();
     compile_file(
         &mut allocator,
         runner.clone(),
         opts.clone(),
-        &prog.to_sexp().to_string()
+        &prog.to_sexp().to_string(),
+        &mut syms
     ).map_err(|e| RunFailure::RunErr(e.0, e.1)).and_then(|compiled| {
         println!("compiled: {}", compiled.to_string());
 

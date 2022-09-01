@@ -21,7 +21,7 @@ pub fn is_printable_string(s: &String) -> bool {
             return false;
         }
     }
-    return true;
+    true
 }
 
 pub fn assemble_from_ir<'a>(
@@ -29,18 +29,10 @@ pub fn assemble_from_ir<'a>(
     ir_sexp: Rc<IRRepr>,
 ) -> Result<NodePtr, EvalErr> {
     match ir_sexp.borrow() {
-        IRRepr::Null => {
-            return Ok(allocator.null());
-        }
-        IRRepr::Quotes(b) => {
-            return allocator.new_atom(b.data());
-        }
-        IRRepr::Int(b, _signed) => {
-            return allocator.new_atom(b.data());
-        }
-        IRRepr::Hex(b) => {
-            return allocator.new_atom(b.data());
-        }
+        IRRepr::Null => Ok(allocator.null()),
+        IRRepr::Quotes(b) => allocator.new_atom(b.data()),
+        IRRepr::Int(b, _signed) => allocator.new_atom(b.data()),
+        IRRepr::Hex(b) => allocator.new_atom(b.data()),
         IRRepr::Symbol(s) => {
             let mut s_real_name = s.clone();
             if s.starts_with("#") {
@@ -48,23 +40,34 @@ pub fn assemble_from_ir<'a>(
             }
 
             match KEYWORD_TO_ATOM().get(&s_real_name) {
-                Some(v) => {
-                    return allocator.new_atom(v);
-                }
+                Some(v) => allocator.new_atom(v),
                 None => {
                     let v: Vec<u8> = s_real_name.as_bytes().to_vec();
-                    return allocator.new_atom(&v);
+                    allocator.new_atom(&v)
                 }
             }
         }
-        IRRepr::Cons(l, r) => {
-            return assemble_from_ir(allocator, l.clone()).and_then(|l| {
-                return assemble_from_ir(allocator, r.clone()).and_then(|r| {
-                    return allocator.new_pair(l, r);
-                });
-            });
-        }
+        IRRepr::Cons(l, r) => assemble_from_ir(allocator, l.clone()).and_then(|l| {
+            assemble_from_ir(allocator, r.clone()).and_then(|r| allocator.new_pair(l, r))
+        }),
     }
+}
+
+fn has_oversized_sign_extension(atom: &Bytes) -> bool {
+    if atom.length() < 3 {
+        return false;
+    }
+
+    let data = atom.data();
+    if data[0] == 0 {
+        // 0x0080 -> 128
+        return data[1] & 0x80 == 0x80;
+    } else if data[0] == 0xff {
+        // 0xff00 -> -256
+        return data[1] & 0x80 == 0;
+    }
+
+    true
 }
 
 pub fn ir_for_atom(atom: &Bytes, allow_keyword: bool) -> IRRepr {
@@ -80,7 +83,6 @@ pub fn ir_for_atom(atom: &Bytes, allow_keyword: bool) -> IRRepr {
             }
             _ => {}
         }
-        // Determine whether the bytes identity an integer in canonical form.
     } else {
         if allow_keyword {
             match KEYWORD_FROM_ATOM().get(atom.data()) {
@@ -91,11 +93,13 @@ pub fn ir_for_atom(atom: &Bytes, allow_keyword: bool) -> IRRepr {
             }
         }
 
-        if atom.length() == 1 || (atom.length() > 1 && atom.data()[0] != 0) {
+        // Determine whether the bytes identity an integer in canonical form.
+        // It's not canonical if there is oversized sign extension.
+        if !has_oversized_sign_extension(atom) {
             return IRRepr::Int(atom.clone(), true);
         }
     }
-    return IRRepr::Hex(atom.clone());
+    IRRepr::Hex(atom.clone())
 }
 
 /*
@@ -120,12 +124,12 @@ pub fn disassemble_to_ir_with_kw<'a>(
             let v0 =
                 disassemble_to_ir_with_kw(allocator, l.clone(), keyword_from_atom, allow_keyword);
             let v1 = disassemble_to_ir_with_kw(allocator, r.clone(), keyword_from_atom, false);
-            return IRRepr::Cons(Rc::new(v0), Rc::new(v1));
+            IRRepr::Cons(Rc::new(v0), Rc::new(v1))
         }
 
         SExp::Atom(a) => {
             let bytes = Bytes::new(Some(BytesFromType::Raw(allocator.buf(&a).to_vec())));
-            return ir_for_atom(&bytes, allow_keyword);
+            ir_for_atom(&bytes, allow_keyword)
         }
     }
 }
@@ -141,7 +145,7 @@ pub fn disassemble_with_kw<'a>(
     };
 
     let symbols = disassemble_to_ir_with_kw(allocator, sexp, &keyword_from_atom, with_keywords);
-    return write_ir(Rc::new(symbols));
+    write_ir(Rc::new(symbols))
 }
 
 pub fn disassemble<'a>(allocator: &'a mut Allocator, sexp: NodePtr) -> String {
@@ -152,8 +156,8 @@ pub fn assemble<'a>(allocator: &'a mut Allocator, s: &String) -> Result<NodePtr,
     let v = s.as_bytes().to_vec();
     let stream = Stream::new(Some(Bytes::new(Some(BytesFromType::Raw(v)))));
     let mut reader = IRReader::new(stream);
-    return reader
+    reader
         .read_expr()
         .map_err(|e| EvalErr(allocator.null(), e))
-        .and_then(|ir| assemble_from_ir(allocator, Rc::new(ir)));
+        .and_then(|ir| assemble_from_ir(allocator, Rc::new(ir)))
 }

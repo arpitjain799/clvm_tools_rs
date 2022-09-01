@@ -25,6 +25,8 @@ these command line tools from clvm_tools in their equivalents in this repository
  - run
  
  - brun
+
+ - repl
  
 argparse was ported to javascript and I believe I have faithfully reproduced it
 as it is used in cmds, so command line parsing should work similarly in all three
@@ -39,6 +41,12 @@ The directory structure is expected to be:
                      structure.  Select new style compilation by
                      including a `(include *standard-cl-21*)`
                      form in your toplevel `mod` form.
+
+Mac M1
+===
+
+Use ```cargo build --no-default-features``` due to differences in how mac m1 and
+other platforms handle python extensions.
 
 Use with chia-blockchain
 ===

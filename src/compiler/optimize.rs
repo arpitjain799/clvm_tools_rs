@@ -8,7 +8,6 @@ use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
 use crate::compiler::clvm::run;
 use crate::compiler::codegen::get_callable;
 use crate::compiler::comptypes::{BodyForm, Callable, CompilerOpts, PrimaryCodegen};
-use crate::compiler::prims::primquote;
 use crate::compiler::sexp::SExp;
 use crate::compiler::srcloc::Srcloc;
 use crate::util::u8_from_number;
@@ -47,11 +46,11 @@ pub fn optimize_expr(
                 .map(|calltype| match calltype {
                     // A macro invocation emits a bodyform, which we
                     // run back through the frontend and check.
-                    Callable::CallMacro(l, _) => None,
+                    Callable::CallMacro(_l, _) => None,
                     // A function is constant if its body is a constant
                     // expression or all its arguments are constant and
                     // its body doesn't include an environment reference.
-                    Callable::CallDefun(l, target) => None,
+                    Callable::CallDefun(_l, _target) => None,
                     // A primcall is constant if its arguments are constant
                     Callable::CallPrim(l, _) => {
                         let mut constant = true;
@@ -104,14 +103,10 @@ pub fn optimize_expr(
 
             match forms[0].borrow() {
                 BodyForm::Value(SExp::Integer(al, an)) => {
-                    return examine_call(al.clone(), &u8_from_number(an.clone()));
+                    examine_call(al.clone(), &u8_from_number(an.clone()))
                 }
-                BodyForm::Value(SExp::QuotedString(al, _, an)) => {
-                    return examine_call(al.clone(), an);
-                }
-                BodyForm::Value(SExp::Atom(al, an)) => {
-                    return examine_call(al.clone(), an);
-                }
+                BodyForm::Value(SExp::QuotedString(al, _, an)) => examine_call(al.clone(), an),
+                BodyForm::Value(SExp::Atom(al, an)) => examine_call(al.clone(), an),
                 _ => None,
             }
         }
