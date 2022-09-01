@@ -241,14 +241,9 @@ impl Bytes {
 
         for i in 0..slen - 1 {
             let diff: i32 = other.at(i) as i32 - self._b[i] as i32;
-            match (diff < 0, diff > 0) {
-                (true, _) => {
-                    return Ordering::Less;
-                }
-                (_, true) => {
-                    return Ordering::Greater;
-                }
-                _ => {}
+            let cmp = diff.cmp(&0);
+            if cmp != Ordering::Equal {
+                return cmp;
             }
         }
         if self._b.len() < slen {
