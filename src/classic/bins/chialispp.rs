@@ -1,6 +1,22 @@
+use std::cmp::max;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::Write;
+
+use clvm_tools_rs::compiler::sexp::decode_string;
+
+#[derive(Debug)]
+struct Line {
+    code: Vec<u8>,
+    comment: Option<Vec<u8>>,
+}
+
+impl Line {
+    pub fn new(code: Vec<u8>, comment: Option<Vec<u8>>) -> Self {
+        Line { code, comment }
+    }
+}
 
 #[derive(Debug)]
 struct Formatter {
@@ -9,7 +25,9 @@ struct Formatter {
     out_col: usize,
     cur_line: usize,
     line: Vec<u8>,
+    comment: Option<Vec<u8>>,
     lines: Vec<Vec<u8>>,
+    work_lines: Vec<Line>,
     def_started: bool,
     getting_form_name: u8,
     form_name: Vec<u8>,
@@ -56,7 +74,7 @@ fn trim_ascii_end(line: &[u8]) -> Vec<u8> {
     if !got_one {
         Vec::new()
     } else {
-        line[0..last_non_ws+1].to_vec()
+        line[0..last_non_ws + 1].to_vec()
     }
 }
 
@@ -68,7 +86,9 @@ impl Formatter {
             out_col: 0,
             cur_line: 0,
             line: Vec::new(),
+            comment: None,
             lines: Vec::new(),
+            work_lines: Vec::new(),
             getting_form_name: 0,
             got_form_on_line: 0,
             form_name: Vec::new(),
@@ -79,7 +99,7 @@ impl Formatter {
             definition_starts: Vec::new(),
             extra_def_lines: Vec::new(),
             indent_stack: Vec::new(),
-            result: Vec::new()
+            result: Vec::new(),
         }
     }
 
@@ -87,15 +107,49 @@ impl Formatter {
         if !self.line.is_empty() {
             self.lines.push(self.line.clone());
             self.line.clear();
+            self.comment = None;
         }
+
         for i in 0..self.lines.len() {
             self.line = self.lines[i].clone();
             self.cur_line = i;
             self.output_line();
         }
 
-        if !self.result_line.is_empty() {
-            self.result.push(self.result_line.clone());
+        let mut next_handle_line = 0;
+        for i in 0..self.work_lines.len() {
+            if i < next_handle_line {
+                continue;
+            }
+
+            // Find the max comment spacing needed and output the group.
+            // Skip if already handled.
+            if let Some(comment) = &self.work_lines[i].comment {
+                let mut comment_offset = self.work_lines[i].code.len();
+                let mut comments = vec![comment.clone()];
+                for j in i + 1..self.lines.len() {
+                    if let Some(comment) = &self.work_lines[j].comment {
+                        comments.push(comment.clone());
+                        comment_offset = max(comment_offset, self.work_lines[j].code.len());
+                    } else {
+                        next_handle_line = j;
+                        break;
+                    }
+                }
+
+                for (j, comment) in comments.iter().enumerate() {
+                    let mut line: Vec<u8> = self.work_lines[i + j].code.clone();
+                    while line.len() < comment_offset {
+                        line.push(b' ');
+                    }
+                    line.push(b' ');
+                    line.push(b';');
+                    line.append(&mut comment.clone());
+                    self.result.push(line);
+                }
+            } else {
+                self.result.push(self.work_lines[i].code.clone());
+            }
         }
 
         let mut el_idx = 0;
@@ -122,12 +176,17 @@ impl Formatter {
     pub fn finish_line(&mut self) {
         self.lines.push(self.line.clone());
         self.line.clear();
+        self.comment = None;
     }
 
     pub fn output_char(&mut self, ch: u8) {
         if ch == 10 {
-            self.result.push(self.result_line.clone());
+            self.work_lines.push(Line {
+                code: self.result_line.clone(),
+                comment: self.comment.clone(),
+            });
             self.result_line.clear();
+            self.comment = None;
             self.out_col = 0;
         } else {
             self.result_line.push(ch);
@@ -143,7 +202,7 @@ impl Formatter {
 
     pub fn get_cur_indent(&mut self) -> usize {
         if !self.indent_stack.is_empty() {
-            self.indent_stack[self.indent_stack.len()-1]
+            self.indent_stack[self.indent_stack.len() - 1]
         } else {
             0
         }
@@ -151,24 +210,23 @@ impl Formatter {
 
     pub fn reset_indent(&mut self, i: usize) {
         if !self.indent_stack.is_empty() {
-            let idx = self.indent_stack.len()-1;
+            let idx = self.indent_stack.len() - 1;
             self.indent_stack[idx] = i;
         }
     }
 
     pub fn indent_paren(&mut self) {
-        let current_indent =
-            if !self.indent_stack.is_empty() {
-                self.indent_stack[self.indent_stack.len() - 1]
-            } else {
-                0
-            };
+        let current_indent = if !self.indent_stack.is_empty() {
+            self.indent_stack[self.indent_stack.len() - 1]
+        } else {
+            0
+        };
         self.indent_stack.push(current_indent + 2);
     }
 
     pub fn retire_indent(&mut self) {
         if !self.indent_stack.is_empty() {
-            self.indent_stack.remove(self.indent_stack.len()-1);
+            self.indent_stack.remove(self.indent_stack.len() - 1);
         }
     }
 
@@ -219,7 +277,10 @@ impl Formatter {
                 if self.getting_form_name == 1 && !ch.is_ascii_whitespace() {
                     self.getting_form_name = 2;
                     self.form_name.push(ch);
-                } else if self.getting_form_name == 2 && ch.is_ascii_whitespace() || ch == b'(' || ch == b')' {
+                } else if self.getting_form_name == 2 && ch.is_ascii_whitespace()
+                    || ch == b'('
+                    || ch == b')'
+                {
                     self.getting_form_name = 0;
                     self.got_form_on_line = self.cur_line;
                 } else {
@@ -229,10 +290,13 @@ impl Formatter {
 
             if self.start_paren_level == 1 && !self.def_started {
                 self.def_started = true;
-                self.definition_starts.push(self.result.len());
+                self.definition_starts.push(self.work_lines.len());
             }
 
-            let should_reset_indent = self.getting_form_name == 0 && self.form_name == "if".as_bytes().to_vec() && !ch.is_ascii_whitespace() && !self.reset_form_indent;
+            let should_reset_indent = self.getting_form_name == 0
+                && self.form_name == "if".as_bytes().to_vec()
+                && !ch.is_ascii_whitespace()
+                && !self.reset_form_indent;
             if string_bs {
                 string_bs = false;
                 continue;
@@ -276,7 +340,6 @@ impl Formatter {
                     self.reset_form_indent = true;
                     self.reset_indent(line_indent + i);
                 }
-
             }
 
             if ch == b';' {
@@ -299,63 +362,48 @@ impl Formatter {
 
         line = trim_ascii_end(&line);
 
-        if semis == 1 && self.last_single_line_comment == 0 {
-            self.last_single_line_comment = semi_loc;
-        } else if semis != 1 {
-            self.last_single_line_comment = 0;
+        if semis == 1 && line.len() > 0 {
+            // Handle single semicolon alignment in the post pass
+            semis = 0;
+            self.comment = Some(comment);
+            comment = Vec::new();
+        } else {
+            self.comment = None;
         }
 
-        match (semis, semis > 1) {
-            (1, _) => {
+        if semis > 0 {
+            if semis < 3 {
                 self.indent(line_indent);
-                for co in line.iter() {
-                    self.output_char(*co);
-                }
-                if semi_loc > self.last_single_line_comment {
-                    self.output_char(b'\n');
-                }
-                while self.out_col < self.last_single_line_comment {
-                    self.output_char(b' ');
-                }
+            }
+            for _i in 0..semis {
                 self.output_char(b';');
-                for co in comment.iter() {
-                    self.output_char(*co);
-                }
             }
-            (_, true) => {
-                if semis == 2 {
-                    self.indent(line_indent);
-                }
-                for _i in 0..semis {
-                    self.output_char(b';');
-                }
-                for co in comment.iter() {
-                    self.output_char(*co);
-                }
-                if !line.is_empty() {
-                    // Code after comment in this scenario
-                    self.output_char(b'\n');
-                    self.indent(line_indent);
-                    for co in line.iter() {
-                        self.output_char(*co);
-                    }
-                }
+            for co in comment.iter() {
+                self.output_char(*co);
             }
-            _ => {
+            if !line.is_empty() {
+                // Code after comment in this scenario
+                self.output_char(b'\n');
                 self.indent(line_indent);
                 for co in line.iter() {
                     self.output_char(*co);
                 }
+            }
+        } else {
+            self.indent(line_indent);
+            for co in line.iter() {
+                self.output_char(*co);
             }
         }
 
         self.output_char(b'\n');
+
         // Insert a line after every definition ends, and record it in extra
         // def lines.
         if max_paren_level > 1 && self.paren_level == 1 {
             // A definition ended.
             self.def_started = false;
-            self.extra_def_lines.push(self.result.len());
+            self.extra_def_lines.push(self.work_lines.len());
         }
     }
 
@@ -370,7 +418,8 @@ impl Formatter {
 
 fn main() {
     for filename in env::args().skip(1) {
-        let filedata = fs::read(filename.clone()).unwrap_or_else(|_| panic!("could not read file {}", filename));
+        let filedata = fs::read(filename.clone())
+            .unwrap_or_else(|_| panic!("could not read file {}", filename));
         let mut formatter = Formatter::new();
 
         for ch in filedata.iter() {
@@ -378,10 +427,13 @@ fn main() {
         }
         formatter.finish();
 
-        let mut f = fs::File::create(format!("{}.new", filename)).unwrap_or_else(|_| panic!("could not open file {}", filename));
+        let mut f = fs::File::create(format!("{}.new", filename))
+            .unwrap_or_else(|_| panic!("could not open file {}", filename));
         for line in formatter.result.iter() {
-            f.write_all(line).unwrap_or_else(|_| panic!("could not write file {}", filename));
-            f.write_all("\n".as_bytes()).unwrap_or_else(|_| panic!("could not write file {}", filename));
+            f.write_all(line)
+                .unwrap_or_else(|_| panic!("could not write file {}", filename));
+            f.write_all("\n".as_bytes())
+                .unwrap_or_else(|_| panic!("could not write file {}", filename));
         }
     }
 }
