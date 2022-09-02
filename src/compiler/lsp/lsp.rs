@@ -684,7 +684,7 @@ fn find_scope_stack(
     }
 }
 
-fn get_positional_text(lines: &ParsedDoc, position: &Position) -> Option<Vec<u8>> {
+fn get_positional_text(lines: &DocData, position: &Position) -> Option<Vec<u8>> {
     let pl = position.line as usize;
     if pl < lines.text.len() {
         if position.character == 0 {
@@ -698,8 +698,8 @@ fn get_positional_text(lines: &ParsedDoc, position: &Position) -> Option<Vec<u8>
     }
 }
 
-fn is_identifier(v: Vec<u8>) -> bool {
-    
+fn is_identifier(v: &Vec<u8>) -> bool {
+    v.iter().all(|x| !(*x == b'(' || *x == b')' || x.is_ascii_whitespace()))
 }
 
 impl LSPServiceProvider {
@@ -708,8 +708,12 @@ impl LSPServiceProvider {
         F: FnOnce(&DocData, &ParseOutput) -> Option<G>
     {
         self.ensure_parsed_document(uristring);
-        if let (Some(d), Some(ParseResult::Completed(p))) = (self.get_doc(uristring), self.get_parsed(uristring)) {
-            f(d, p)
+        if let (Some(d), Some(p)) = (self.get_doc(uristring), self.get_parsed(uristring)) {
+            if let ParseResult::Completed(o) = p.result {
+                f(&d, &o)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -879,10 +883,10 @@ impl LSPServiceProvider {
             params.text_document_position.text_document.uri.to_string();
 
         self.with_doc_and_parsed(&uristring, |doc,output| {
-            self.get_positional_text(
-                &uristring,
+            get_positional_text(
+                doc,
                 &params.text_document_position.position
-            ).and_then(|cpl| {
+            ).map(|cpl| {
                 let mut found_scopes = Vec::new();
                 let pos = params.text_document_position.position;
                 let want_position = Srcloc::new(
@@ -908,11 +912,12 @@ impl LSPServiceProvider {
                             }
                         }).filter_map(|(l,n)| {
                             if l.line > 0 && l.col > 0 {
-                                self.get_positional_text(&uristring, &Position {
+                                get_positional_text(doc, &Position {
                                     line: (l.line - 1) as u32,
                                     character: l.col as u32
                                 }).filter(is_identifier).
-                                    unwrap_or_else(|| n.clone())
+                                    map(Some).
+                                    unwrap_or_else(|| Some(n.clone()))
                             } else {
                                 Some(n.clone())
                             }
@@ -939,8 +944,9 @@ impl LSPServiceProvider {
                 let result = serde_json::to_value(&result).unwrap();
                 let resp = Response { id, result: Some(result), error: None };
                 res.push(Message::Response(resp));
-            })
-        }).unwrap_or_else(|| Ok(vec![])).map(|res| Ok(res))
+            });
+            Some(res)
+        }).map(|res| Ok(res)).unwrap_or_else(|| Ok(vec![]))
     }
 
     pub fn handle_message(&mut self, msg: &Message) -> Result<Vec<Message>, String> {
