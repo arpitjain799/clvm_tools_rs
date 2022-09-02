@@ -45,7 +45,8 @@ use clvm_tools_rs::compiler::frontend::frontend;
 use clvm_tools_rs::compiler::lsp::{
     TOKEN_TYPES,
     TOKEN_MODIFIERS,
-    LSPServiceProvider
+    LSPServiceProvider,
+    LSPServiceMessageHandler
 };
 use clvm_tools_rs::compiler::sexp::{SExp, parse_sexp};
 use clvm_tools_rs::compiler::srcloc::Srcloc;

@@ -17,10 +17,8 @@ use crate::compiler::comptypes::{
     CompilerOpts,
     PrimaryCodegen
 };
-use crate::compiler::lsp::lsp::{
-    DocData,
-    stringify_doc
-};
+use crate::compiler::lsp::patch::stringify_doc;
+use crate::compiler::lsp::types::DocData;
 use crate::compiler::sexp::SExp;
 use crate::compiler::srcloc::Srcloc;
 

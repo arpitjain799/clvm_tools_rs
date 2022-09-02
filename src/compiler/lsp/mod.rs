@@ -1,7 +1,12 @@
-pub mod lsp;
+pub mod completion;
 pub mod compopts;
+pub mod lsp;
+pub mod parse;
+pub mod patch;
+pub mod semtok;
+pub mod types;
 
-pub use lsp::{
+pub use super::lsp::types::{
     TK_PARAMETER_IDX,
     TK_VARIABLE_IDX,
     TK_FUNCTION_IDX,
@@ -18,3 +23,4 @@ pub use lsp::{
     TOKEN_MODIFIERS,
     LSPServiceProvider
 };
+pub use super::lsp::lsp::LSPServiceMessageHandler;

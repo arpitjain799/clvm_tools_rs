@@ -1,18 +1,15 @@
 use crate::compiler::lsp::{
     LSPServiceProvider,
+    LSPServiceMessageHandler,
     TK_FUNCTION_IDX,
     TK_DEFINITION_BIT
 };
-use crate::compiler::comptypes::{CompileForm, CompileErr};
-use crate::compiler::frontend::frontend;
 
-use serde_json::{Value, to_value, from_str};
 use lsp_server::{
     Message,
     Notification,
     Request,
-    RequestId,
-    Response
+    RequestId
 };
 use lsp_types::{
     CompletionItem,
