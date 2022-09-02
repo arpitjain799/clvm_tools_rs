@@ -102,8 +102,8 @@ pub struct DocData {
 pub struct ParseScope {
     region: Srcloc,
     kind: ScopeKind,
-    variables: HashSet<String>,
-    functions: HashSet<String>,
+    variables: HashSet<SExp>,
+    functions: HashSet<SExp>,
     containing: Vec<ParseScope>
 }
 
@@ -197,7 +197,7 @@ fn grab_scope_range(text: &[Rc<Vec<u8>>], loc: Srcloc) -> String {
         };
 
     eprintln!("loc.line {} end_line {}", loc.line, end_line);
-    if loc.line < end_line - 1 {
+    if end_line > 0 && loc.line < end_line - 1 {
         for l in text[loc.line..end_line - 1].iter() {
             res.push(b'\n');
             let iline = l.clone();
@@ -207,7 +207,7 @@ fn grab_scope_range(text: &[Rc<Vec<u8>>], loc: Srcloc) -> String {
             }
         }
     }
-    
+
     let eline = text[end_line].clone();
     let end_borrowed: &Vec<u8> = eline.borrow();
 
@@ -219,10 +219,10 @@ fn grab_scope_range(text: &[Rc<Vec<u8>>], loc: Srcloc) -> String {
     decode_string(&res)
 }
 
-fn make_arg_set(set: &mut HashSet<String>, args: Rc<SExp>) {
+fn make_arg_set(set: &mut HashSet<SExp>, args: Rc<SExp>) {
     match args.borrow() {
         SExp::Atom(l,a) => {
-            set.insert(decode_string(&a));
+            set.insert(SExp::Atom(l.clone(),a.clone()));
         },
         SExp::Cons(l,a,b) => {
             make_arg_set(set, a.clone());
@@ -274,13 +274,13 @@ fn recover_scopes(ourfile: &String, text: &[Rc<Vec<u8>>], fe: &CompileForm) -> P
 
         match h {
             HelperForm::Defun(i,d) => {
-                toplevel_funs.insert(decode_string(&d.name));
+                toplevel_funs.insert(SExp::Atom(d.loc.clone(), d.name.clone()));
             },
             HelperForm::Defmacro(m) => {
-                toplevel_funs.insert(decode_string(&m.name));
+                toplevel_funs.insert(SExp::Atom(m.loc.clone(), m.name.clone()));
             },
             HelperForm::Defconstant(l,n,c) => {
-                toplevel_args.insert(decode_string(&n));
+                toplevel_args.insert(SExp::Atom(l.clone(), n.clone()));
             }
         }
 
@@ -320,7 +320,6 @@ impl ParsedDoc {
                 frontend(opts.clone(), &parsed).as_ref().map(|fe| {
                     let parsed = ParseOutput {
                         compiled: fe.clone(),
-                        // Todo: fill out
                         scopes: recover_scopes(file, srctext, fe)
                     };
                     ParsedDoc {
@@ -685,7 +684,37 @@ fn find_scope_stack(
     }
 }
 
+fn get_positional_text(lines: &ParsedDoc, position: &Position) -> Option<Vec<u8>> {
+    let pl = position.line as usize;
+    if pl < lines.text.len() {
+        if position.character == 0 {
+            None
+        } else {
+            let line = lines.text[pl].clone();
+            find_ident(line.clone(), position.character)
+        }
+    } else {
+        None
+    }
+}
+
+fn is_identifier(v: Vec<u8>) -> bool {
+    
+}
+
 impl LSPServiceProvider {
+    fn with_doc_and_parsed<F,G>(&mut self, uristring: &String, f: F) -> Option<G>
+    where
+        F: FnOnce(&DocData, &ParseOutput) -> Option<G>
+    {
+        self.ensure_parsed_document(uristring);
+        if let (Some(d), Some(ParseResult::Completed(p))) = (self.get_doc(uristring), self.get_parsed(uristring)) {
+            f(d, p)
+        } else {
+            None
+        }
+    }
+
     fn get_doc(&self, uristring: &String) -> Option<DocData> {
         let cell: &RefCell<HashMap<String, DocData>> = self.document_collection.borrow();
         let coll: Ref<HashMap<String, DocData>> = cell.borrow();
@@ -695,7 +724,7 @@ impl LSPServiceProvider {
     pub fn get_parsed(&self, uristring: &String) -> Option<ParsedDoc> {
         let cell: &RefCell<HashMap<String, ParsedDoc>> = self.parsed_documents.borrow();
         let coll: Ref<HashMap<String, ParsedDoc>> = cell.borrow();
-        (&coll).get(uristring).cloned()
+        coll.get(uristring).cloned()
     }
 
     fn save_doc(&self, uristring: String, dd: DocData) {
@@ -723,24 +752,6 @@ impl LSPServiceProvider {
             repl.insert(uristring, p);
             repl
         });
-    }
-
-    fn get_positional_text(&mut self, uri: &String, position: &Position) -> Option<Vec<u8>> {
-        eprintln!("get positional text: {:?}", position);
-        self.get_doc(uri).and_then(|lines| {
-            let pl = position.line as usize;
-            if pl < lines.text.len() {
-                Some(lines.text[pl].clone())
-            } else {
-                None
-            }
-        }).and_then(|line| {
-            if position.character == 0 {
-                None
-            } else {
-                find_ident(line.clone(), position.character)
-            }
-        })
     }
 
     fn apply_document_patch(&mut self, uristring: &String, patches: &Vec<TextDocumentContentChangeEvent>) {
@@ -866,13 +877,12 @@ impl LSPServiceProvider {
         let mut res = Vec::new();
         let uristring =
             params.text_document_position.text_document.uri.to_string();
-        self.ensure_parsed_document(&uristring);
 
-        if let (Some(cpl), Some(parsed)) = (
-            self.get_positional_text(&uristring, &params.text_document_position.position),
-            self.get_parsed(&uristring)
-        ) {
-            if let ParseResult::Completed(output) = parsed.result {
+        self.with_doc_and_parsed(&uristring, |doc,output| {
+            self.get_positional_text(
+                &uristring,
+                &params.text_document_position.position
+            ).and_then(|cpl| {
                 let mut found_scopes = Vec::new();
                 let pos = params.text_document_position.position;
                 let want_position = Srcloc::new(
@@ -885,19 +895,43 @@ impl LSPServiceProvider {
                     &output.scopes,
                     &want_position
                 );
-                eprintln!("scopes: {:?}", found_scopes);
                 let mut result_items = Vec::new();
-                if found_scopes.len() == 1 {
-                } else {
-                    for s in found_scopes.iter() {
-                        for sym in s.variables.iter() {
-                            result_items.push(CompletionItem {
-                                label: sym.clone(),
-                                ..Default::default()
-                            });
-                        }
+
+                // Handle variable completions.
+                for s in found_scopes {
+                    let viable_completions =
+                        s.variables.iter().filter_map(|sym| {
+                            if let SExp::Atom(l,n) = sym {
+                                Some((l,n))
+                            } else {
+                                None
+                            }
+                        }).filter_map(|(l,n)| {
+                            if l.line > 0 && l.col > 0 {
+                                self.get_positional_text(&uristring, &Position {
+                                    line: (l.line - 1) as u32,
+                                    character: l.col as u32
+                                }).filter(is_identifier).
+                                    unwrap_or_else(|| n.clone())
+                            } else {
+                                Some(n.clone())
+                            }
+                        }).filter(|real_name| real_name.starts_with(&cpl));
+
+                    for real_name in viable_completions {
+                        result_items.push(CompletionItem {
+                            label: decode_string(&real_name),
+                            ..Default::default()
+                        });
+                    }
+
+                    // Break if we reached a function boundary since there
+                    // are no closures here.
+                    if matches!(s.kind, ScopeKind::Function) {
+                        break;
                     }
                 }
+
                 let result = CompletionResponse::List(CompletionList {
                     is_incomplete: false,
                     items: result_items
@@ -905,10 +939,8 @@ impl LSPServiceProvider {
                 let result = serde_json::to_value(&result).unwrap();
                 let resp = Response { id, result: Some(result), error: None };
                 res.push(Message::Response(resp));
-            }
-        }
-
-        Ok(res)
+            })
+        }).unwrap_or_else(|| Ok(vec![])).map(|res| Ok(res))
     }
 
     pub fn handle_message(&mut self, msg: &Message) -> Result<Vec<Message>, String> {
@@ -976,7 +1008,7 @@ impl LSPServiceProvider {
                     let resp = Response { id, result: Some(result), error: None };
                     res.push(Message::Response(resp));
                 } else if let Ok((id, params)) = cast::<Completion>(req.clone()) {
-                    self.handle_completion_request(id, &params);
+                    return self.handle_completion_request(id, &params);
                 } else {
                     eprintln!("unknown request {:?}", req);
                 };

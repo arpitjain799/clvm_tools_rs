@@ -148,15 +148,16 @@ fn run_lsp(
 ) -> Result<Vec<Message>, String> {
     let mut res = Vec::new();
     for m in messages.iter() {
-        res.append(&mut lsp.handle_message(m)?);
+        let mut new_msgs = lsp.handle_message(m)?;
+        res.append(&mut new_msgs);
     }
     Ok(res)
 }
 
 #[test]
-fn test_completion() {
+fn test_completion_from_argument_single_level() {
     let mut lsp = LSPServiceProvider::new();
-    let file = "file:test.cl".to_string();
+    let file = "file:///test.cl".to_string();
     let open_msg = make_did_open_message(&file, 1, indoc!{"
 (mod (A) ;;; COLLATZ conjecture
 
@@ -166,12 +167,12 @@ fn test_completion() {
   (defun-inline odd (X) (logand X 1))
                 ;; Actual collatz function
   ;; determines number of step til 1
-  (defun collatz (N X)
+  (defun collatz (N X zoom)
     (if (= X 1) ; We got 1
       N ; Return the number of steps
       (let ((incN (+ N 1))) ; Next N
         (if (odd X) ; Is it odd?
-          (collatz in (+ 1 (* 3 X))) ; Odd? 3 X + 1
+          (collatz zoo (+ 1 (* 3 X))) ; Odd? 3 X + 1
           (collatz incN (/ X 2)) ; Even? X / 2
           )
         )
@@ -183,9 +184,8 @@ fn test_completion() {
         &file, 2, Position { line: 13, character: 21 }
     );
     let out_msgs = run_lsp(&mut lsp, &vec![open_msg, complete_msg]).unwrap();
-    let parsed = lsp.get_parsed(&file).unwrap();
-    eprintln!("parsed {:?}", parsed);
     assert_eq!(out_msgs.len() > 0, true);
     let completion_result = decode_completion_response(&out_msgs[0]).unwrap();
     assert_eq!(completion_result.len() > 0, true);
+    assert_eq!(completion_result[0].label, "zoom");
 }
