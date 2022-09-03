@@ -4,12 +4,15 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use lsp_server::{
+    Message,
     RequestId,
-    Response
+    Response,
+    ResponseError
 };
 use lsp_types::{
     SemanticToken,
-    SemanticTokens
+    SemanticTokens,
+    SemanticTokensParams
 };
 
 use crate::compiler::comptypes::{
@@ -28,6 +31,8 @@ use crate::compiler::lsp::{
     TK_DEFINITION_BIT,
     TK_READONLY_BIT
 };
+use crate::compiler::lsp::parse::ParseResult;
+use crate::compiler::lsp::types::LSPServiceProvider;
 use crate::compiler::sexp::{SExp, decode_string};
 use crate::compiler::srcloc::Srcloc;
 
@@ -65,6 +70,14 @@ impl Ord for SemanticTokenSortable {
     fn cmp(&self, other: &Self) -> Ordering {
         self.partial_cmp(other).unwrap()
     }
+}
+
+pub trait LSPSemtokRequestHandler {
+    fn handle_semantic_tokens(
+        &mut self,
+        id: RequestId,
+        params: &SemanticTokensParams
+    ) -> Result<Vec<Message>, String>;
 }
 
 fn collect_arg_tokens(
@@ -317,5 +330,43 @@ pub fn do_semantic_tokens(
         id,
         error: None,
         result: Some(serde_json::to_value(result_tokens).unwrap())
+    }
+}
+
+impl LSPSemtokRequestHandler for LSPServiceProvider {
+    fn handle_semantic_tokens(
+        &mut self,
+        id: RequestId,
+        params: &SemanticTokensParams
+    ) -> Result<Vec<Message>, String> {
+        let mut res = Vec::new();
+
+        eprintln!("got semantic token request #{}: for file {}", id, params.text_document.uri.to_string());
+        let uristring = params.text_document.uri.to_string();
+
+        self.ensure_parsed_document(&uristring);
+
+        if let Some(parsed) = self.get_parsed(&uristring) {
+            match &parsed.result {
+                ParseResult::Completed(frontend) => {
+                    let mut our_goto_defs = BTreeMap::new();
+                    let resp = do_semantic_tokens(id, &uristring, &mut our_goto_defs, &frontend.compiled);
+                    self.goto_defs.insert(uristring.clone(), our_goto_defs);
+                    res.push(Message::Response(resp));
+                },
+                ParseResult::WithError(error) => {
+                    let resp = Response { id, result: None, error: Some(ResponseError {
+                        code: 1,
+                        data: None,
+                        message: format!("{}: {}", error.0.to_string(), error.1)
+                    }) };
+                    res.push(Message::Response(resp));
+                }
+            }
+        } else {
+            eprintln!("no compile output :-(");
+        }
+
+        Ok(res)
     }
 }

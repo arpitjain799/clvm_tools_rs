@@ -1,39 +1,7 @@
 use std::cmp::Ordering;
-use std::borrow::Borrow;
-use std::collections::{HashMap, BTreeMap};
 use std::error::Error;
-use std::rc::Rc;
 
-use lazy_static::lazy_static;
-use serde_json::value::{Value, to_value};
-
-use lsp_server::ResponseError;
 use lsp_types::OneOf;
-use lsp_types::{
-    request::GotoDefinition,
-    request::SemanticTokensFullRequest,
-    notification::DidOpenTextDocument,
-    ClientCapabilities,
-    CompletionOptions,
-    DidOpenTextDocumentParams,
-    GotoDefinitionResponse,
-    InitializeParams,
-    Location,
-    Position,
-    Range,
-    SemanticToken,
-    SemanticTokenModifier,
-    SemanticTokens,
-    SemanticTokensFullOptions,
-    SemanticTokensLegend,
-    SemanticTokensOptions,
-    SemanticTokensServerCapabilities,
-    SemanticTokenType,
-    ServerCapabilities,
-    TextDocumentSyncCapability,
-    TextDocumentSyncKind,
-    WorkDoneProgressOptions,
-};
 
 use lsp_server::{Connection, ExtractError, Message, Request, RequestId, Response};
 
