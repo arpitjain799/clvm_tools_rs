@@ -1,7 +1,20 @@
 use std::cmp::Ordering;
 use std::error::Error;
 
-use lsp_types::OneOf;
+use lsp_types::{
+    ClientCapabilities,
+    CompletionOptions,
+    InitializeParams,
+    OneOf,
+    SemanticTokensLegend,
+    SemanticTokensFullOptions,
+    SemanticTokensOptions,
+    SemanticTokensServerCapabilities,
+    ServerCapabilities,
+    TextDocumentSyncCapability,
+    TextDocumentSyncKind,
+    WorkDoneProgressOptions,
+};
 
 use lsp_server::{Connection, ExtractError, Message, Request, RequestId, Response};
 

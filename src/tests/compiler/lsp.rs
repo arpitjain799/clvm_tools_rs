@@ -104,11 +104,6 @@ fn get_msg_params(msg: &Message) -> String {
 }
 
 #[test]
-fn smoke() {
-    let lsp = LSPServiceProvider::new();
-}
-
-#[test]
 fn can_receive_did_open_file_and_give_semantic_tokens() {
     let mut lsp = LSPServiceProvider::new();
     let file = "file:test.cl".to_string();
