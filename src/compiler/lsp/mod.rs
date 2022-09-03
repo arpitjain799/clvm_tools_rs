@@ -1,6 +1,6 @@
 pub mod completion;
 pub mod compopts;
-pub mod lsp;
+pub mod handler;
 pub mod parse;
 pub mod patch;
 pub mod semtok;
@@ -23,4 +23,4 @@ pub use super::lsp::types::{
     TOKEN_MODIFIERS,
     LSPServiceProvider
 };
-pub use super::lsp::lsp::LSPServiceMessageHandler;
+pub use super::lsp::handler::LSPServiceMessageHandler;
