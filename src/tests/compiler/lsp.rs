@@ -28,6 +28,10 @@ use lsp_types::{
     WorkDoneProgressParams,
 };
 
+use crate::compiler::lsp::patch::split_text;
+use crate::compiler::lsp::parse::is_first_in_list;
+use crate::compiler::lsp::types::DocData;
+
 fn make_did_open_message(uri: &String, v: i32, body: String) -> Message {
     Message::Notification(Notification {
         method: "textDocument/didOpen".to_string(),
@@ -180,4 +184,47 @@ fn test_completion_from_argument_single_level() {
     let completion_result = decode_completion_response(&out_msgs[0]).unwrap();
     assert_eq!(completion_result.len() > 0, true);
     assert_eq!(completion_result[0].label, "zoom");
+}
+
+#[test]
+fn test_completion_from_argument_function() {
+    let mut lsp = LSPServiceProvider::new();
+    let file = "file:///test.cl".to_string();
+    let open_msg = make_did_open_message(&file, 1, indoc!{"
+(mod (A) ;;; COLLATZ conjecture
+  (defun-inline odd (X) (logand X 1))
+  (+ (od) 2)
+  )"}.to_string());
+    let complete_msg = make_completion_request_msg(
+        &file, 2, Position { line: 2, character: 8 }
+    );
+    let out_msgs = run_lsp(&mut lsp, &vec![open_msg, complete_msg]).unwrap();
+    assert_eq!(out_msgs.len() > 0, true);
+    let completion_result = decode_completion_response(&out_msgs[0]).unwrap();
+    assert_eq!(completion_result.len() > 0, true);
+    assert_eq!(completion_result[0].label, "odd");
+}
+
+#[test]
+fn test_first_in_list() {
+    let file = "file:///test.cl".to_string();
+    let file_data = "( test1 test2)".to_string();
+    let doc = DocData { text: split_text(&file_data) };
+    let pos = Position {
+        line: 0,
+        character: 5
+    };
+    assert_eq!(is_first_in_list(&doc, &pos), true);
+}
+
+#[test]
+fn test_not_first_in_list() {
+    let file = "file:///test.cl".to_string();
+    let file_data = "( test1 test2)".to_string();
+    let doc = DocData { text: split_text(&file_data) };
+    let pos = Position {
+        line: 0,
+        character: 10
+    };
+    assert_eq!(is_first_in_list(&doc, &pos), false);
 }

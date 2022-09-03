@@ -15,16 +15,116 @@ use lsp_types::{
 
 use crate::compiler::lsp::LSPServiceProvider;
 use crate::compiler::lsp::parse::{
+    ParseScope,
     ScopeKind,
     find_scope_stack,
     get_positional_text,
-    is_identifier
+    is_identifier,
+    is_first_in_list
 };
+use crate::compiler::lsp::types::DocData;
 use crate::compiler::sexp::{SExp, decode_string};
 use crate::compiler::srcloc::Srcloc;
 
 pub trait LSPCompletionRequestHandler {
-    fn handle_completion_request(&mut self, id: RequestId, params: &CompletionParams) -> Result<Vec<Message>, String>;
+    fn handle_completion_request(
+        &mut self,
+        id: RequestId,
+        params: &CompletionParams
+    ) -> Result<Vec<Message>, String>;
+}
+
+fn complete_variable_name(
+    res: &mut Vec<Message>,
+    id: RequestId,
+    doc: &DocData,
+    found_scopes: &Vec<ParseScope>,
+    cpl: &Vec<u8>,
+) {
+    let mut result_items = Vec::new();
+
+    for s in found_scopes {
+        let viable_completions =
+            s.variables.iter().filter_map(|sym| {
+                if let SExp::Atom(l,n) = sym {
+                    Some((l,n))
+                } else {
+                    None
+                }
+            }).filter_map(|(l,n)| {
+                if l.line > 0 && l.col > 0 {
+                    get_positional_text(doc, &Position {
+                        line: (l.line - 1) as u32,
+                        character: l.col as u32
+                    }).filter(is_identifier).
+                        map(Some).
+                        unwrap_or_else(|| Some(n.clone()))
+                } else {
+                    Some(n.clone())
+                }
+            }).filter(|real_name| real_name.starts_with(&cpl));
+
+        for real_name in viable_completions {
+            result_items.push(CompletionItem {
+                label: decode_string(&real_name),
+                ..Default::default()
+            });
+        }
+
+        // Break if we reached a function boundary since there
+        // are no closures here.
+        if matches!(s.kind, ScopeKind::Function) {
+            break;
+        }
+    }
+
+    let result = CompletionResponse::List(CompletionList {
+        is_incomplete: false,
+        items: result_items
+    });
+    let result = serde_json::to_value(&result).unwrap();
+    let resp = Response { id, result: Some(result), error: None };
+    res.push(Message::Response(resp));
+}
+
+fn complete_function_name(
+    res: &mut Vec<Message>,
+    id: RequestId,
+    doc: &DocData,
+    scopes: &Vec<ParseScope>,
+    cpl: &Vec<u8>
+) {
+    let mut result_items = Vec::new();
+
+    if scopes.is_empty() {
+        return;
+    }
+
+    let viable_completions =
+        scopes[scopes.len()-1].functions.iter().
+        filter_map(|sexp| {
+            if let SExp::Atom(_,name) = sexp {
+                Some(name.clone())
+            } else {
+                None
+            }
+        }).
+        filter(|real_name| real_name.starts_with(&cpl));
+
+    for real_name in viable_completions {
+        result_items.push(CompletionItem {
+            label: decode_string(&real_name),
+            ..Default::default()
+        });
+    }
+
+    let result = CompletionResponse::List(CompletionList {
+        is_incomplete: false,
+        items: result_items
+    });
+    let result = serde_json::to_value(&result).unwrap();
+    let resp = Response { id, result: Some(result), error: None };
+    res.push(Message::Response(resp));
 }
 
 // Completions:
@@ -67,51 +167,25 @@ impl LSPCompletionRequestHandler for LSPServiceProvider {
                     &output.scopes,
                     &want_position
                 );
-                let mut result_items = Vec::new();
 
                 // Handle variable completions.
-                for s in found_scopes {
-                    let viable_completions =
-                        s.variables.iter().filter_map(|sym| {
-                            if let SExp::Atom(l,n) = sym {
-                                Some((l,n))
-                            } else {
-                                None
-                            }
-                        }).filter_map(|(l,n)| {
-                            if l.line > 0 && l.col > 0 {
-                                get_positional_text(doc, &Position {
-                                    line: (l.line - 1) as u32,
-                                    character: l.col as u32
-                                }).filter(is_identifier).
-                                    map(Some).
-                                    unwrap_or_else(|| Some(n.clone()))
-                            } else {
-                                Some(n.clone())
-                            }
-                        }).filter(|real_name| real_name.starts_with(&cpl));
-
-                    for real_name in viable_completions {
-                        result_items.push(CompletionItem {
-                            label: decode_string(&real_name),
-                            ..Default::default()
-                        });
-                    }
-
-                    // Break if we reached a function boundary since there
-                    // are no closures here.
-                    if matches!(s.kind, ScopeKind::Function) {
-                        break;
-                    }
+                if is_first_in_list(doc, &params.text_document_position.position) {
+                    complete_function_name(
+                        &mut res,
+                        id,
+                        doc,
+                        &found_scopes,
+                        &cpl
+                    );
+                } else {
+                    complete_variable_name(
+                        &mut res,
+                        id,
+                        doc,
+                        &found_scopes,
+                        &cpl
+                    );
                 }
-
-                let result = CompletionResponse::List(CompletionList {
-                    is_incomplete: false,
-                    items: result_items
-                });
-                let result = serde_json::to_value(&result).unwrap();
-                let resp = Response { id, result: Some(result), error: None };
-                res.push(Message::Response(resp));
             });
             Some(res)
         }).map(|res| Ok(res)).unwrap_or_else(|| Ok(vec![]))

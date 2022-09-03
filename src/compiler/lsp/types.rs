@@ -11,6 +11,7 @@ use lsp_server::{
 };
 
 use lsp_types::{
+    Position,
     SemanticTokenModifier,
     SemanticTokenType
 };
@@ -74,6 +75,53 @@ where
 #[derive(Debug, Clone)]
 pub struct DocData {
     pub text: Vec<Rc<Vec<u8>>>,
+}
+
+impl DocData {
+    pub fn nth_line_ref(&self, line: usize) -> Option<&Vec<u8>> {
+        if line < self.text.len() {
+            let borrowed: &Vec<u8> = self.text[line].borrow();
+            Some(borrowed)
+        } else {
+            None
+        }
+    }
+
+    // Given a position go back one character, returning the character
+    // and the new position if they exist.
+    pub fn get_prev_position(&self, position: &Position) -> Option<(u8, Position)> {
+        if position.character == 0 && position.line > 0 && ((position.line - 1) as usize) < self.text.len() {
+            let nextline = position.line - 1;
+            self.get_prev_position(&Position {
+                line: nextline,
+                character: self.text[nextline as usize].len() as u32
+            })
+        } else {
+            self.nth_line_ref(position.line as usize).and_then(|line| {
+                if position.character > 0 && (position.character as usize) <= line.len() {
+                    let prev_char = position.character - 1;
+                    let the_char = line[prev_char as usize];
+                    Some((the_char, Position {
+                        line: position.line,
+                        character: prev_char
+                    }))
+                } else {
+                    None
+                }
+            })
+        }
+    }
+
+    // Given a position, get the pointed-to character.
+    pub fn get_at_position(&self, position: &Position) -> Option<u8> {
+        self.nth_line_ref(position.line as usize).and_then(|line| {
+            if (position.character as usize) < line.len() {
+                Some(line[position.character as usize])
+            } else {
+                None
+            }
+        })
+    }
 }
 
 pub struct LSPServiceProvider {

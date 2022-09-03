@@ -111,6 +111,42 @@ pub fn find_ident(line: Rc<Vec<u8>>, char_at: u32) -> Option<Vec<u8>> {
     Some(ident_vec)
 }
 
+// A position points to "first in list" if reversing past all alphanumerics
+// then all spaces yields a character other than '('.
+pub fn is_first_in_list(lines: &DocData, position: &Position) -> bool {
+    let mut current_char = b' ';
+    let mut pos_walk = position.clone();
+
+    // Reverse past this identifier's start.
+    while let Some((ch, p)) = lines.get_prev_position(&pos_walk) {
+        current_char = ch;
+
+        if ch.is_ascii_whitespace() || ch == b'(' || ch == b')' {
+            break;
+        }
+
+        pos_walk = p;
+    }
+
+    // We ran into ( early.
+    if current_char == b'(' {
+        return true;
+    }
+
+    // Reverse past spaces.
+    while let Some((ch, p)) = lines.get_prev_position(&pos_walk) {
+        current_char = ch;
+
+        if !ch.is_ascii_whitespace() {
+            break;
+        }
+
+        pos_walk = p;
+    }
+
+    return current_char == b'(';
+}
+
 pub fn get_positional_text(lines: &DocData, position: &Position) -> Option<Vec<u8>> {
     let pl = position.line as usize;
     if pl < lines.text.len() {
@@ -189,7 +225,13 @@ fn grab_scope_range(text: &[Rc<Vec<u8>>], loc: Srcloc) -> String {
         }
     }
 
-    let eline = text[end_line].clone();
+    let eline =
+        if end_line < text.len() {
+            text[end_line].clone()
+        } else {
+            Rc::new(vec![])
+        };
+
     let end_borrowed: &Vec<u8> = eline.borrow();
 
     res.push(b'\n');
