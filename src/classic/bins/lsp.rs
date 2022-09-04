@@ -90,7 +90,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
             range: None,
             full: Some(SemanticTokensFullOptions::Delta {delta: Some(true)})
         })),
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::INCREMENTAL)),
         completion_provider: Some(CompletionOptions {
             resolve_provider: Some(true),
 //             trigger_characters: Some(completion_start),
