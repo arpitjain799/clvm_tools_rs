@@ -35,59 +35,78 @@ impl LSPServiceProviderApplyDocumentPatch for LSPServiceProvider {
                 return;
             }
 
-            // Try to do an efficient job of patching the old document content.
             let mut doc_copy = dd.text.clone();
+
+            // Try to do an efficient job of patching the old document content.
             for p in patches.iter() {
                 if let Some(r) = p.range {
                     let split_data = split_text(&p.text);
-                    let replaced_line = 0;
-                    let rstart_line = r.start.line as usize;
-                    let rend_line = r.end.line as usize;
-                    let rstart_char = r.start.character as usize;
-                    let rend_char = r.end.character as usize;
-                    let original_end_line = rend_line;
-                    for (i, l) in split_data.iter().enumerate() {
-                        let match_line = rstart_line + i;
-                        let begin_this_line =
-                            if rstart_line == i {
-                                rstart_char
-                            } else {
-                                0
-                            };
-                        let end_this_line =
-                            if match_line == rend_line {
-                                rend_char
-                            } else {
-                                doc_copy[match_line].len()
-                            };
-                        let (prefix, mut suffix) =
-                            if match_line == rstart_line {
-                                ((&doc_copy[match_line])[0..begin_this_line].to_vec(), Vec::new())
-                            } else if match_line == rend_line {
-                                (Vec::new(), (&doc_copy[match_line])[end_this_line..].to_vec())
-                            } else {
-                                (Vec::new(), Vec::new())
-                            };
-                        let new_line =
-                            if prefix.is_empty() && suffix.is_empty() {
-                                // Whole line
-                                l.clone()
-                            } else {
-                                // Partial line
-                                let mut vec_copy = prefix.clone();
-                                let line_borrowed: &Vec<u8> = l.borrow();
-                                vec_copy.append(&mut line_borrowed.clone());
-                                vec_copy.append(&mut suffix);
-                                Rc::new(vec_copy)
-                            };
-
-                        if match_line >= original_end_line {
-                            // Insert the new line
-                            doc_copy.insert(match_line, new_line);
+                    let mut prelude_start =
+                        if r.start.line > 0 {
+                            dd.text.iter().take((r.start.line - 1) as usize).collect()
                         } else {
-                            // Overwrite line
-                            doc_copy[match_line] = new_line;
+                            vec![]
+                        };
+                    let mut suffix_after =
+                        if (r.end.line as usize) < dd.text.len() - 1 {
+                            dd.text.iter().skip((r.end.line + 1) as usize).collect()
+                        } else {
+                            vec![]
+                        };
+                    let mut line_prefix =
+                        if (r.start.line as usize) < dd.text.len() {
+                            let line_ref: &Vec<u8> =
+                                dd.text[r.start.line as usize].borrow();
+                            line_ref.iter().take(r.start.character as usize).copied().collect()
+                        } else {
+                            vec![]
+                        };
+                    let mut line_suffix =
+                        if (r.end.line as usize) < dd.text.len() {
+                            let line_ref: &Vec<u8> =
+                                dd.text[r.end.line as usize].borrow();
+                            line_ref.iter().skip(r.end.character as usize).copied().collect()
+                        } else {
+                            vec![]
+                        };
+                    let split_input = split_text(&p.text);
+                    // Assemble the result:
+                    // prelude_start lines
+                    // line_prelude + split_input[0]
+                    // split_input[1..len - 2]
+                    // split_input[len - 1] + line_suffix
+                    // suffix_after
+                    doc_copy.clear();
+                    for line in prelude_start.iter() {
+                        let line_borrow: &Vec<u8> = (*line).borrow();
+                        doc_copy.push(Rc::new(line_borrow.clone()));
+                    }
+
+                    if split_input.is_empty() {
+                        line_prefix.append(&mut line_suffix);
+                    } else if split_input.len() == 1 {
+                        let input_line: &Vec<u8> = split_input[0].borrow();
+                        let mut copied_vec: Vec<u8> = input_line.iter().copied().collect();
+                        line_prefix.append(&mut copied_vec);
+                        line_prefix.append(&mut line_suffix);
+                        doc_copy.push(Rc::new(line_prefix));
+                    } else {
+                        let first_input_line: &Vec<u8> = split_input[0].borrow();
+                        line_prefix.append(&mut first_input_line.clone());
+                        doc_copy.push(Rc::new(line_prefix));
+                        for in_line in split_input.iter().skip(1).take(split_input.len() - 2) {
+                            let input_line: &Vec<u8> = in_line.borrow();
+                            doc_copy.push(Rc::new(input_line.clone()));
                         }
+                        let last_input_line: &Vec<u8> = split_input[split_input.len() - 1].borrow();
+                        let mut last_input = last_input_line.clone();
+                        last_input.append(&mut line_suffix);
+                        doc_copy.push(Rc::new(last_input));
+                    }
+
+                    for line in suffix_after.iter() {
+                        let line_borrow: &Vec<u8> = (*line).borrow();
+                        doc_copy.push(Rc::new(line_borrow.clone()));
                     }
                 } else {
                     doc_copy = split_text(&p.text)

@@ -15,20 +15,24 @@ use lsp_types::{
     CompletionItem,
     CompletionParams,
     CompletionResponse,
+    DidChangeTextDocumentParams,
     DidOpenTextDocumentParams,
     PartialResultParams,
     Position,
+    Range,
     SemanticToken,
     SemanticTokens,
     SemanticTokensParams,
+    TextDocumentContentChangeEvent,
     TextDocumentIdentifier,
     TextDocumentItem,
     TextDocumentPositionParams,
     Url,
+    VersionedTextDocumentIdentifier,
     WorkDoneProgressParams,
 };
 
-use crate::compiler::lsp::patch::split_text;
+use crate::compiler::lsp::patch::{split_text, stringify_doc};
 use crate::compiler::lsp::parse::is_first_in_list;
 use crate::compiler::lsp::types::DocData;
 
@@ -78,6 +82,34 @@ fn make_completion_request_msg(uri: &String, rid: i32, position: Position) -> Me
                 partial_result_token: None,
             },
             context: None
+        }).unwrap()
+    })
+}
+
+struct TestChange {
+    pub start: Position,
+    pub end: Position,
+    pub insert: String
+}
+
+fn make_document_patch(uri: &String, changes: &[TestChange]) -> Message {
+    Message::Notification(Notification {
+        method: "textDocument/didChange".to_string(),
+        params: serde_json::to_value(DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier {
+                version: 1,
+                uri: Url::parse(&uri).unwrap()
+            },
+            content_changes: changes.iter().map(|tc| {
+                TextDocumentContentChangeEvent {
+                    range_length: None,
+                    range: Some(Range {
+                        start: tc.start.clone(),
+                        end: tc.end.clone(),
+                    }),
+                    text: tc.insert.clone()
+                }
+            }).collect()
         }).unwrap()
     })
 }
@@ -227,4 +259,30 @@ fn test_not_first_in_list() {
         character: 10
     };
     assert_eq!(is_first_in_list(&doc, &pos), false);
+}
+
+#[test]
+fn test_patch_document_1() {
+    let mut lsp = LSPServiceProvider::new();
+    let file = "file:///test.cl".to_string();
+    let file_data = "(test1\n)".to_string();
+    let doc = DocData { text: split_text(&file_data) };
+    let open_msg = make_did_open_message(&file, 1, file_data.to_string());
+    let change_msg = make_document_patch(
+        &file,
+        &[TestChange {
+            start: Position {
+                line: 0,
+                character: 5
+            },
+            end: Position {
+                line: 1,
+                character: 0
+            },
+            insert: " 1".to_string()
+        }]
+    );
+    let _ = run_lsp(&mut lsp, &vec![open_msg, change_msg]).unwrap();
+    let doc = lsp.get_doc(&file).unwrap();
+    assert_eq!(stringify_doc(&doc.text).unwrap(), "(test 1)\n");
 }
