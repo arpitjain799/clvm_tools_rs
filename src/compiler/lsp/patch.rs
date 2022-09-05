@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use lsp_types::TextDocumentContentChangeEvent;
 
+use crate::compiler::sexp::decode_string;
 use crate::compiler::lsp::LSPServiceProvider;
 use crate::compiler::lsp::parse::DocVecByteIter;
 use crate::compiler::lsp::types::DocData;
@@ -37,7 +38,7 @@ impl PatchableDocument for DocData {
                 let split_data = split_text(&p.text);
                 let mut prelude_start =
                     if r.start.line > 0 {
-                        self.text.iter().take((r.start.line - 1) as usize).collect()
+                        self.text.iter().take(r.start.line as usize).collect()
                     } else {
                         vec![]
                     };
@@ -63,6 +64,15 @@ impl PatchableDocument for DocData {
                     } else {
                         vec![]
                     };
+
+                for (i, l) in prelude_start.iter().enumerate() {
+                    eprintln!("P {}: {}", i, decode_string(&l));
+                }
+
+                for (i, l) in suffix_after.iter().enumerate() {
+                    eprintln!("S {}: {}", i, decode_string(&l));
+                }
+
                 let split_input = split_text(&p.text);
                 // Assemble the result:
                 // prelude_start lines
@@ -70,6 +80,7 @@ impl PatchableDocument for DocData {
                 // split_input[1..len - 2]
                 // split_input[len - 1] + line_suffix
                 // suffix_after
+
                 doc_copy.clear();
                 for line in prelude_start.iter() {
                     let line_borrow: &Vec<u8> = (*line).borrow();
