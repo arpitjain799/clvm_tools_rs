@@ -134,7 +134,6 @@ impl LSPServiceProviderApplyDocumentPatch for LSPServiceProvider {
             }
 
             let new_doc = dd.apply_patch(&patches);
-            eprintln!("apply document patch: {}", stringify_doc(&new_doc.text).unwrap_or_else(|_| "*error*".to_string()));
             self.save_doc(uristring.clone(), new_doc);
         }
     }

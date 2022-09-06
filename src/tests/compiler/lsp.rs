@@ -308,3 +308,27 @@ fn test_patch_document_2() {
     eprintln!("edited: {}", stringify_doc(&doc.text).unwrap());
     assert_eq!(stringify_doc(&doc.text).unwrap(), "(mod (A) ;;; COLLATZ conjecture\n\n;; set language standard\n  (include *standard-cl-22*)\n;; Determine if number is odd\n  (defun-inline odd (X) (logand X 1))\n                ;; Actual collatz function\n  ;; determines number of step til 1\n  (defun collatz (N X zook)\n    (if (= X 1) ; We got 1\n      N ; Return the number of steps\n      (let ((incN (+ N 1))) ; Next N\n        (if (odd X) ; Is it odd?\n          (collatz z (+ 1 (* 3 X))) ; Odd? 3 X + 1\n          (collatz incN (/ X 2)) ; Even? X / 2\n          )\n        )\n      )\n    )\n  (collatz 0 A) ; Run it\n  )\n");
 }
+
+#[test]
+fn test_patch_document_3() {
+    let mut lsp = LSPServiceProvider::new();
+    let file = "file:///test.cl".to_string();
+    let content = "(test\n  1\n  2\n  3)".to_string();
+    let changes = vec![
+        TextDocumentContentChangeEvent {
+            range_length: None,
+            range: Some(Range {
+                start: Position {
+                    character: 0, line: 1
+                },
+                end: Position {
+                    character: 0, line: 2
+                }
+            }),
+            text: "  *\n".to_string()
+        }
+    ];
+    let doc = (DocData { text: split_text(&content) }).apply_patch(&changes);
+    eprintln!("edited: {}", stringify_doc(&doc.text).unwrap());
+    assert_eq!(stringify_doc(&doc.text).unwrap(), "(test\n  *\n  2\n  3)\n");
+}
