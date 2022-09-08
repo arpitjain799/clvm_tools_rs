@@ -1,4 +1,5 @@
 use std::borrow::Borrow;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use lsp_types::TextDocumentContentChangeEvent;
@@ -6,14 +7,14 @@ use lsp_types::TextDocumentContentChangeEvent;
 use crate::compiler::sexp::decode_string;
 use crate::compiler::lsp::LSPServiceProvider;
 use crate::compiler::lsp::parse::DocVecByteIter;
-use crate::compiler::lsp::types::DocData;
+use crate::compiler::lsp::types::{DocData, DocPatch, DocRange};
 
 pub trait PatchableDocument {
-    fn apply_patch(&self, patches: &Vec<TextDocumentContentChangeEvent>) -> Self;
+    fn apply_patch(&self, patches: &[TextDocumentContentChangeEvent]) -> Self;
 }
 
 pub trait LSPServiceProviderApplyDocumentPatch {
-    fn apply_document_patch(&mut self, uristring: &String, patches: &Vec<TextDocumentContentChangeEvent>);
+    fn apply_document_patch(&mut self, uristring: &String, patches: &[TextDocumentContentChangeEvent]);
 }
 
 pub fn split_text(td: &String) -> Vec<Rc<Vec<u8>>> {
@@ -27,7 +28,7 @@ pub fn stringify_doc(d: &Vec<Rc<Vec<u8>>>) -> Result<String, String> {
 }
 
 impl PatchableDocument for DocData {
-    fn apply_patch(&self, patches: &Vec<TextDocumentContentChangeEvent>) -> Self {
+    fn apply_patch(&self, patches: &[TextDocumentContentChangeEvent]) -> Self {
         let mut last_line = 1;
         let mut last_col = 1;
         let mut doc_copy = self.text.clone();
@@ -122,18 +123,40 @@ impl PatchableDocument for DocData {
     }
 }
 
+fn add_pending_patches(lsp: &mut LSPServiceProvider, uristring: &String, patches: &[TextDocumentContentChangeEvent]) {
+    let insert_patches = |set: &mut Vec<DocPatch>| {
+        for p in patches.iter() {
+            if let Some(r) = p.range {
+                set.push(DocPatch { range: DocRange::from_range(&r), text: p.text.clone() });
+            }
+        }
+    };
+
+    if let Some(set) = lsp.pending_patches.get(uristring) {
+        let mut with_new_patch = set.clone();
+        insert_patches(&mut with_new_patch);
+        lsp.pending_patches.insert(uristring.clone(), with_new_patch.to_vec());
+    } else {
+        let mut new_patch = Vec::new();
+        insert_patches(&mut new_patch);
+        lsp.pending_patches.insert(uristring.clone(), new_patch);
+    }
+}
+
 impl LSPServiceProviderApplyDocumentPatch for LSPServiceProvider {
-    fn apply_document_patch(&mut self, uristring: &String, patches: &Vec<TextDocumentContentChangeEvent>) {
+    fn apply_document_patch(&mut self, uristring: &String, patches: &[TextDocumentContentChangeEvent]) {
         if let Some(dd) = self.get_doc(uristring) {
             if patches.len() == 1 && patches[0].range.is_none() {
                 // We can short circuit a full document rewrite.
+                // There are no hanging patches as a result.
                 self.save_doc(uristring.clone(), DocData {
                     text: split_text(&patches[0].text)
                 });
                 return;
             }
 
-            let new_doc = dd.apply_patch(&patches);
+            let new_doc = dd.apply_patch(patches);
+            add_pending_patches(self, uristring, &patches);
             self.save_doc(uristring.clone(), new_doc);
         }
     }

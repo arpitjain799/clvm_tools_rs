@@ -467,7 +467,7 @@ fn match_op_name_4(
     }
 }
 
-fn compile_helperform(
+pub fn compile_helperform(
     opts: Rc<dyn CompilerOpts>,
     body: Rc<SExp>,
 ) -> Result<Option<HelperForm>, CompileErr> {

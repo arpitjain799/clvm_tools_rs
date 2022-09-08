@@ -227,6 +227,24 @@ impl CompileForm {
             Rc::new(list_to_cons(self.loc.clone(), &sexp_forms)),
         ))
     }
+
+    pub fn replace_helpers(&self, helpers: &[HelperForm]) -> CompileForm {
+        let mut new_names = HashSet::new();
+        for h in helpers.iter() {
+            new_names.insert(h.name());
+        }
+        let mut new_helpers: Vec<HelperForm> = self.helpers.iter().filter(|h| {
+            !new_names.contains(h.name())
+        }).cloned().collect();
+        new_helpers.append(&mut helpers.to_vec());
+
+        CompileForm {
+            loc: self.loc.clone(),
+            args: self.args.clone(),
+            helpers: new_helpers,
+            exp: self.exp.clone()
+        }
+    }
 }
 
 impl HelperForm {

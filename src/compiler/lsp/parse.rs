@@ -1,9 +1,10 @@
 use std::borrow::Borrow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use lsp_types::Position;
 
+use crate::compiler::clvm::sha256tree_from_atom;
 use crate::compiler::comptypes::{
     CompileErr,
     CompileForm,
@@ -13,7 +14,12 @@ use crate::compiler::comptypes::{
 use crate::compiler::frontend::frontend;
 use crate::compiler::sexp::{SExp, decode_string, parse_sexp};
 use crate::compiler::srcloc::Srcloc;
-use crate::compiler::lsp::types::DocData;
+use crate::compiler::lsp::patch::stringify_doc;
+use crate::compiler::lsp::types::{
+    DocData,
+    DocPosition,
+    DocRange
+};
 
 #[derive(Debug, Clone)]
 pub enum ScopeKind {
@@ -35,7 +41,9 @@ pub struct ParseScope {
 #[derive(Debug, Clone)]
 pub struct ParseOutput {
     pub compiled: CompileForm,
-    pub scopes: ParseScope
+    pub simple_ranges: Vec<DocRange>,
+    pub scopes: ParseScope,
+    pub hashes: HashSet<Vec<u8>>
 }
 
 #[derive(Debug, Clone)]
@@ -46,7 +54,6 @@ pub enum ParseResult {
 
 #[derive(Debug, Clone)]
 pub struct ParsedDoc {
-    pub parses: Vec<u32>,
     pub result: ParseResult,
 }
 
@@ -178,50 +185,52 @@ pub fn find_scope_stack(
     }
 }
 
-fn grab_scope_range(text: &[Rc<Vec<u8>>], loc: Srcloc) -> String {
-    let eloc = loc.ending();
+pub fn grab_scope_doc_range(text: &[Rc<Vec<u8>>], range: &DocRange, space_for_range: bool) -> Vec<u8> {
     let mut res = Vec::new();
 
-    if (loc.line - 1) >= text.len() {
-        return "".to_string();
+    let loc = &range.start;
+    let eloc = &range.end;
+
+    if space_for_range {
+        for i in 0..loc.line {
+            res.push(b'\n');
+        }
+        for i in 0..loc.character {
+            res.push(b' ');
+        }
     }
 
     // First line
-    let tline = text[loc.line - 1].clone();
+    let tline = text[loc.line as usize].clone();
     let text_borrowed: &Vec<u8> = tline.borrow();
 
     if eloc.line == loc.line {
         // Only line
-        for ch in text_borrowed.iter().take(eloc.col).skip(loc.col - 1) {
+        for ch in text_borrowed.iter().take(eloc.character as usize).skip(loc.character as usize) {
             res.push(*ch);
         }
-    } else {
-        for ch in text_borrowed.iter().skip(loc.col - 1) {
-            res.push(*ch);
-        }
+
+        return res;
     }
 
-    for ch in text_borrowed.iter() {
+    for ch in text_borrowed.iter().skip(loc.character as usize) {
         res.push(*ch);
     }
 
     // Inside lines.
     let end_line =
-        if eloc.line - 1 > text.len() {
+        if (eloc.line as usize) > text.len() {
             text.len()
         } else {
-            eloc.line - 1
+            eloc.line as usize
         };
 
-    eprintln!("loc.line {} end_line {}", loc.line, end_line);
-    if end_line > 0 && loc.line < end_line - 1 {
-        for l in text[loc.line..end_line - 1].iter() {
-            res.push(b'\n');
-            let iline = l.clone();
-            let il: &Vec<u8> = iline.borrow();
-            for ch in il.iter() {
-                res.push(*ch);
-            }
+    for l in text.iter().take(end_line).skip((loc.line + 1) as usize) {
+        res.push(b'\n');
+        let iline = l.clone();
+        let il: &Vec<u8> = iline.borrow();
+        for ch in il.iter() {
+            res.push(*ch);
         }
     }
 
@@ -235,11 +244,22 @@ fn grab_scope_range(text: &[Rc<Vec<u8>>], loc: Srcloc) -> String {
     let end_borrowed: &Vec<u8> = eline.borrow();
 
     res.push(b'\n');
-    for ch in end_borrowed.iter().take(eloc.col - 1) {
+    for ch in end_borrowed.iter().take(eloc.character as usize) {
         res.push(*ch);
     }
 
-    decode_string(&res)
+    res
+}
+
+fn grab_scope_range(text: &[Rc<Vec<u8>>], loc: Srcloc) -> String {
+    let eloc = loc.ending();
+    let mut res: Vec<u8> = Vec::new();
+
+    if (loc.line - 1) >= text.len() {
+        return "".to_string();
+    }
+
+    decode_string(&grab_scope_doc_range(text, &DocRange::from_srcloc(loc), false))
 }
 
 fn make_arg_set(set: &mut HashSet<SExp>, args: Rc<SExp>) {
@@ -285,7 +305,7 @@ fn make_helper_scope(h: &HelperForm) -> Option<ParseScope> {
     })
 }
 
-fn recover_scopes(ourfile: &String, text: &[Rc<Vec<u8>>], fe: &CompileForm) -> ParseScope {
+pub fn recover_scopes(ourfile: &String, text: &[Rc<Vec<u8>>], fe: &CompileForm) -> ParseScope {
     let mut toplevel_args = HashSet::new();
     let mut toplevel_funs = HashSet::new();
     let mut contained = Vec::new();
@@ -293,8 +313,6 @@ fn recover_scopes(ourfile: &String, text: &[Rc<Vec<u8>>], fe: &CompileForm) -> P
     make_arg_set(&mut toplevel_args, fe.args.clone());
 
     for h in fe.helpers.iter() {
-        eprintln!("helper {} has this range in the code: {}", h.to_sexp().to_string(), grab_scope_range(text, h.loc()));
-
         match h {
             HelperForm::Defun(i,d) => {
                 toplevel_funs.insert(SExp::Atom(d.loc.clone(), d.name.clone()));
@@ -327,10 +345,55 @@ fn recover_scopes(ourfile: &String, text: &[Rc<Vec<u8>>], fe: &CompileForm) -> P
     }
 }
 
+pub fn make_simple_ranges(srctext: &[Rc<Vec<u8>>]) -> Vec<DocRange> {
+    let mut ranges = Vec::new();
+    let mut start = None;
+    let mut inside_range = false;
+    let mut level = 0;
+    let mut line = 0;
+    let mut character = 0;
+
+    for i in DocVecByteIter::new(srctext) {
+        if i == b'(' {
+            if level == 0 {
+                inside_range = true;
+            } else if level == 1 && start.is_none() {
+                start = Some(DocPosition { line, character });
+            }
+
+            level += 1;
+        } else if i == b')' {
+            // We expect to contain only one toplevel list, so other ends
+            // are probably a misparse.
+            if level > 0 {
+                level -= 1;
+
+                if level == 1 {
+                    if let Some(s) = start.clone() {
+                        ranges.push(DocRange {
+                            start: s,
+                            end: DocPosition { line, character: character + 1 }
+                        });
+                        start = None;
+                    }
+                }
+            }
+        }
+
+        if i == b'\n' {
+            line += 1;
+            character = 0;
+        } else {
+            character += 1;
+        }
+    }
+
+    ranges
+}
+
 impl ParsedDoc {
     pub fn empty() -> Self {
         ParsedDoc {
-            parses: vec![],
             result: ParseResult::WithError(CompileErr(Srcloc::start(&"*none*".to_string()), "no file".to_string()))
         }
     }
@@ -341,23 +404,29 @@ impl ParsedDoc {
             map_err(|e| { CompileErr(e.0.clone(), "parse error".to_string()) }).
             map(|parsed| {
                 frontend(opts.clone(), &parsed).as_ref().map(|fe| {
+                    let simple_ranges = make_simple_ranges(srctext);
+                    let mut hashes = HashSet::new();
+                    for r in simple_ranges.iter() {
+                        let text = grab_scope_doc_range(srctext, &r, false);
+                        let hash = sha256tree_from_atom(&text);
+                        hashes.insert(hash);
+                    }
                     let parsed = ParseOutput {
                         compiled: fe.clone(),
+                        simple_ranges: simple_ranges,
+                        hashes,
                         scopes: recover_scopes(file, srctext, fe)
                     };
                     ParsedDoc {
-                        parses: Vec::new(),
                         result: ParseResult::Completed(parsed)
                     }
                 }).unwrap_or_else(|e| {
                     ParsedDoc {
-                        parses: Vec::new(),
                         result: ParseResult::WithError(e.clone())
                     }
                 })
             }).unwrap_or_else(|e| {
                 ParsedDoc {
-                    parses: Vec::new(),
                     result: ParseResult::WithError(e)
                 }
             })

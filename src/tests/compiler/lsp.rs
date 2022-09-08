@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::compiler::lsp::{
     LSPServiceProvider,
     LSPServiceMessageHandler,
@@ -32,9 +34,22 @@ use lsp_types::{
     WorkDoneProgressParams,
 };
 
+use crate::compiler::compiler::DefaultCompilerOpts;
+use crate::compiler::frontend::frontend;
+use crate::compiler::sexp::parse_sexp;
+use crate::compiler::srcloc::Srcloc;
 use crate::compiler::lsp::patch::{PatchableDocument, split_text, stringify_doc};
-use crate::compiler::lsp::parse::is_first_in_list;
-use crate::compiler::lsp::types::DocData;
+use crate::compiler::lsp::parse::{
+    ParseOutput,
+    is_first_in_list,
+    make_simple_ranges,
+    recover_scopes
+};
+use crate::compiler::lsp::types::{
+    DocData,
+    DocPosition,
+    DocRange,
+};
 
 fn make_did_open_message(uri: &String, v: i32, body: String) -> Message {
     Message::Notification(Notification {
@@ -311,7 +326,6 @@ fn test_patch_document_2() {
 
 #[test]
 fn test_patch_document_3() {
-    let mut lsp = LSPServiceProvider::new();
     let file = "file:///test.cl".to_string();
     let content = "(test\n  1\n  2\n  3)".to_string();
     let changes = vec![
@@ -331,4 +345,43 @@ fn test_patch_document_3() {
     let doc = (DocData { text: split_text(&content) }).apply_patch(&changes);
     eprintln!("edited: {}", stringify_doc(&doc.text).unwrap());
     assert_eq!(stringify_doc(&doc.text).unwrap(), "(test\n  *\n  2\n  3)\n");
+}
+
+#[test]
+fn test_simple_ranges() {
+    let file = "file:///test.cl".to_string();
+    let content = "(mod ()\n  (defun F (X)\n    ()\n    )\n  (F 3)\n  )".to_string();
+    let simple_ranges = make_simple_ranges(&split_text(&content));
+    assert_eq!(simple_ranges, vec![
+        DocRange {
+            start: DocPosition {
+                line: 0,
+                character: 5
+            },
+            end: DocPosition {
+                line: 0,
+                character: 7
+            }
+        },
+        DocRange {
+            start: DocPosition {
+                line: 1,
+                character: 2,
+            },
+            end: DocPosition {
+                line: 3,
+                character: 5
+            }
+        },
+        DocRange {
+            start: DocPosition {
+                line: 4,
+                character: 2
+            },
+            end: DocPosition {
+                line: 4,
+                character: 7
+            }
+        }
+    ]);
 }

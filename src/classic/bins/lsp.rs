@@ -66,8 +66,6 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     eprintln!("start initialization");
     let (id, params) = connection.initialize_start()?;
 
-    let init_params: InitializeParams = serde_json::from_value(params).unwrap();
-    let client_capabilities: ClientCapabilities = init_params.capabilities;
     let mut completion_start = Vec::new();
     for i in 65..65+27 {
         completion_start.push(i as u8);
