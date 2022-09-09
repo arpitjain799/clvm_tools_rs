@@ -20,7 +20,10 @@ use lsp_types::{
 
 use crate::compiler::clvm::sha256tree_from_atom;
 use crate::compiler::compiler::DefaultCompilerOpts;
-use crate::compiler::frontend::compile_helperform;
+use crate::compiler::frontend::{
+    compile_bodyform,
+    compile_helperform
+};
 use crate::compiler::comptypes::{
     BodyForm,
     CompileForm,
@@ -264,8 +267,8 @@ pub struct LSPServiceProvider {
 }
 
 pub struct ReparsedHelper {
-    hash: Vec<u8>,
-    parsed: HelperForm
+    pub hash: Vec<u8>,
+    pub parsed: HelperForm
 }
 
 pub struct ReparsedModule {
@@ -278,10 +281,9 @@ pub fn reparse_subset(
     opts: Rc<dyn CompilerOpts>,
     doc: &[Rc<Vec<u8>>],
     uristring: &String,
-    ranges: &Vec<DocRange>,
+    simple_ranges: &Vec<DocRange>,
     compiled: &CompileForm,
-    used_hashes: &HashSet<Vec<u8>>,
-    simple_scopes: &Vec<DocPatch>
+    used_hashes: &HashSet<Vec<u8>>
 ) -> ReparsedModule {
     let mut result = ReparsedModule {
         args: compiled.args.clone(),
@@ -293,11 +295,12 @@ pub fn reparse_subset(
     // prefix for it.
     // We can take the last phrase and if it's not a helper, we can use it as
     // the end of the document.
+    let mut took_args = false;
 
     // Capture the simple ranges, then check each one's hash
     // if the hash isn't present in the helpers we have, we need to run the
     // frontend on it.
-    for r in make_simple_ranges(doc).iter() {
+    for (i, r) in simple_ranges.iter().enumerate() {
         let text = grab_scope_doc_range(doc, &r, false);
         eprintln!("helper text {}", decode_string(&text));
         let hash = sha256tree_from_atom(&text);
@@ -311,7 +314,18 @@ pub fn reparse_subset(
                             hash,
                             parsed: helper.clone()
                         });
-                    }
+                    } else {
+                        if i == simple_ranges.len() - 1 {
+                            if let Ok(body) =
+                                compile_bodyform(parsed[0].clone())
+                            {
+                                result.exp = Rc::new(body);
+                            }
+                        } else if !took_args {
+                            result.args = parsed[0].clone();
+                            took_args = true;
+                        }
+                    };
                 }
             }
         }
@@ -385,8 +399,7 @@ impl LSPServiceProvider {
                     uristring,
                     &ranges,
                     &output.compiled,
-                    &output.hashes,
-                    &patches,
+                    &output.hashes
                 );
 
                 let mut new_hashes = output.hashes.clone();
@@ -398,6 +411,8 @@ impl LSPServiceProvider {
                     new_helpers.helpers.iter().map(|h| h.parsed.clone()).collect();
                 let mut new_compile =
                     output.compiled.replace_helpers(&extracted_helpers);
+                new_compile.args = new_helpers.args.clone();
+                new_compile.exp = new_helpers.exp.clone();
 
                 self.save_parse(uristring.clone(), ParsedDoc {
                     result: ParseResult::Completed(ParseOutput {

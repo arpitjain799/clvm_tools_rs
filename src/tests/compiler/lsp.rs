@@ -1,3 +1,5 @@
+use regex::Regex;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::compiler::lsp::{
@@ -35,8 +37,12 @@ use lsp_types::{
 };
 
 use crate::compiler::compiler::DefaultCompilerOpts;
+use crate::compiler::comptypes::{
+    BodyForm,
+    CompileForm
+};
 use crate::compiler::frontend::frontend;
-use crate::compiler::sexp::parse_sexp;
+use crate::compiler::sexp::{SExp, parse_sexp};
 use crate::compiler::srcloc::Srcloc;
 use crate::compiler::lsp::patch::{PatchableDocument, split_text, stringify_doc};
 use crate::compiler::lsp::parse::{
@@ -49,6 +55,7 @@ use crate::compiler::lsp::types::{
     DocData,
     DocPosition,
     DocRange,
+    reparse_subset
 };
 
 fn make_did_open_message(uri: &String, v: i32, body: String) -> Message {
@@ -384,4 +391,48 @@ fn test_simple_ranges() {
             }
         }
     ]);
+}
+
+// Remove renamed scope info so we can compare.
+fn chop_scopes(s: &str) -> String {
+    let re = Regex::new("_\\$_[0-9]+").unwrap();
+    re.replace_all(&s, "").to_string()
+}
+
+#[test]
+fn test_reparse_subset() {
+    let file = "file:///test.cl".to_string();
+    let opts = Rc::new(DefaultCompilerOpts::new(&file));
+    let content = "(mod (X) (defun F (X) (+ X 1)) (F X))".to_string();
+    let parsed =
+        parse_sexp(Srcloc::start(&file), content.as_bytes().iter().copied()).unwrap();
+    let frontend = frontend(opts.clone(), &parsed).unwrap();
+    let text = split_text(&content);
+    let ranges = make_simple_ranges(&text);
+    let used_hashes = HashSet::new();
+    let l = Srcloc::start(&file);
+    let crap_compile = CompileForm {
+        loc: l.clone(),
+        args: Rc::new(SExp::Nil(l.clone())),
+        helpers: vec![],
+        exp: Rc::new(BodyForm::Quoted(SExp::Nil(l.clone())))
+    };
+    let reparsed = reparse_subset(
+        opts,
+        &text,
+        &file,
+        &ranges,
+        &crap_compile,
+        &used_hashes
+    );
+    let new_compile = CompileForm {
+        loc: Srcloc::start(&file),
+        args: reparsed.args.clone(),
+        helpers: reparsed.helpers.iter().map(|x| x.parsed.clone()).collect(),
+        exp: reparsed.exp.clone()
+    };
+    assert_eq!(
+        chop_scopes(&frontend.to_sexp().to_string()),
+        chop_scopes(&new_compile.to_sexp().to_string())
+    );
 }
