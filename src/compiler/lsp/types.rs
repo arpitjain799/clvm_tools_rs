@@ -33,6 +33,7 @@ use crate::compiler::comptypes::{
 use crate::compiler::sexp::{
     SExp,
     decode_string,
+    enlist,
     parse_sexp
 };
 use crate::compiler::srcloc::Srcloc;
@@ -296,6 +297,80 @@ pub fn reparse_subset(
     // We can take the last phrase and if it's not a helper, we can use it as
     // the end of the document.
     let mut took_args = false;
+
+    if simple_ranges.len() == 0 {
+        // There's nothing to be gained by trying to do incremental.
+        todo!();
+    } else {
+        // Find out if there's a single atom before the first identified
+        // expression.
+        let docstart = Srcloc::start(&uristring);
+        let prefix_start = DocPosition { line: 0, character: 0 };
+        let prefix_range = DocRange {
+            start: prefix_start.clone(),
+            end: simple_ranges[0].start.clone()
+        };
+        let mut prefix_text = grab_scope_doc_range(doc, &prefix_range, false);
+        // TODO hash prefix to prevent reparsing.
+        prefix_text.push(b')');
+        if let Some(prefix_parse) =
+            parse_sexp(docstart, prefix_text.iter().copied()).ok().
+            and_then(|s| {
+                if s.len() == 0 {
+                    None
+                } else {
+                    s[0].proper_list()
+                }
+            })
+        {
+            if prefix_parse.len() > 0 {
+                result.args = Rc::new(prefix_parse[prefix_parse.len()-1].clone());
+            }
+        }
+
+        // Find out of there's a single atom after the last identified atom.
+        let suffix_start = simple_ranges[simple_ranges.len()-1].end.clone();
+        let suffix_range = DocRange {
+            start: suffix_start.clone(),
+            end: DocPosition { line: doc.len() as u32, character: 0 }
+        };
+        let mut suffix_text = grab_scope_doc_range(doc, &suffix_range, false);
+        // TODO hash suffix to prevent reparsing.
+
+        let mut break_end = suffix_text.len();
+
+        // Ensure we can parse to the right locations in the source file.
+        // Since our parser can handle a list of parsed objects, remove the
+        // final paren.
+
+        // Find last )
+        for (i, ch) in suffix_text.iter().enumerate() {
+            if *ch == b')' {
+                break_end = i;
+            }
+        }
+
+        suffix_text = suffix_text.iter().take(break_end).copied().collect();
+
+        if let Some(suffix_parse) =
+            parse_sexp(
+                Srcloc::new(
+                    Rc::new(uristring.clone()),
+                    (suffix_start.line + 1) as usize,
+                    (suffix_start.character + 1) as usize
+                ),
+                suffix_text.iter().copied()
+            ).ok()
+        {
+            if suffix_parse.len() > 0 {
+                if let Ok(body) =
+                    compile_bodyform(suffix_parse[suffix_parse.len()-1].clone())
+                {
+                    result.exp = Rc::new(body);
+                }
+            }
+        }
+    }
 
     // Capture the simple ranges, then check each one's hash
     // if the hash isn't present in the helpers we have, we need to run the

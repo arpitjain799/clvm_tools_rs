@@ -400,10 +400,48 @@ fn chop_scopes(s: &str) -> String {
 }
 
 #[test]
-fn test_reparse_subset() {
+fn test_reparse_subset_1() {
     let file = "file:///test.cl".to_string();
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
     let content = "(mod (X) (defun F (X) (+ X 1)) (F X))".to_string();
+    let parsed =
+        parse_sexp(Srcloc::start(&file), content.as_bytes().iter().copied()).unwrap();
+    let frontend = frontend(opts.clone(), &parsed).unwrap();
+    let text = split_text(&content);
+    let ranges = make_simple_ranges(&text);
+    let used_hashes = HashSet::new();
+    let l = Srcloc::start(&file);
+    let crap_compile = CompileForm {
+        loc: l.clone(),
+        args: Rc::new(SExp::Nil(l.clone())),
+        helpers: vec![],
+        exp: Rc::new(BodyForm::Quoted(SExp::Nil(l.clone())))
+    };
+    let reparsed = reparse_subset(
+        opts,
+        &text,
+        &file,
+        &ranges,
+        &crap_compile,
+        &used_hashes
+    );
+    let new_compile = CompileForm {
+        loc: Srcloc::start(&file),
+        args: reparsed.args.clone(),
+        helpers: reparsed.helpers.iter().map(|x| x.parsed.clone()).collect(),
+        exp: reparsed.exp.clone()
+    };
+    assert_eq!(
+        chop_scopes(&frontend.to_sexp().to_string()),
+        chop_scopes(&new_compile.to_sexp().to_string())
+    );
+}
+
+#[test]
+fn test_reparse_subset_2() {
+    let file = "file:///test.cl".to_string();
+    let opts = Rc::new(DefaultCompilerOpts::new(&file));
+    let content = "(mod X (defun F (X) (+ X 1)) (F X))".to_string();
     let parsed =
         parse_sexp(Srcloc::start(&file), content.as_bytes().iter().copied()).unwrap();
     let frontend = frontend(opts.clone(), &parsed).unwrap();
