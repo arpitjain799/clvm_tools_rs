@@ -267,6 +267,7 @@ pub struct LSPServiceProvider {
     pub pending_patches: HashMap<String, Vec<DocPatch>>,
 }
 
+#[derive(Debug)]
 pub struct ReparsedHelper {
     pub hash: Vec<u8>,
     pub parsed: HelperForm
