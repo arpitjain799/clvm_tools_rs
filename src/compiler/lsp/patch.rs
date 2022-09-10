@@ -123,26 +123,6 @@ impl PatchableDocument for DocData {
     }
 }
 
-fn add_pending_patches(lsp: &mut LSPServiceProvider, uristring: &String, patches: &[TextDocumentContentChangeEvent]) {
-    let insert_patches = |set: &mut Vec<DocPatch>| {
-        for p in patches.iter() {
-            if let Some(r) = p.range {
-                set.push(DocPatch { range: DocRange::from_range(&r), text: p.text.clone() });
-            }
-        }
-    };
-
-    if let Some(set) = lsp.pending_patches.get(uristring) {
-        let mut with_new_patch = set.clone();
-        insert_patches(&mut with_new_patch);
-        lsp.pending_patches.insert(uristring.clone(), with_new_patch.to_vec());
-    } else {
-        let mut new_patch = Vec::new();
-        insert_patches(&mut new_patch);
-        lsp.pending_patches.insert(uristring.clone(), new_patch);
-    }
-}
-
 impl LSPServiceProviderApplyDocumentPatch for LSPServiceProvider {
     fn apply_document_patch(&mut self, uristring: &String, patches: &[TextDocumentContentChangeEvent]) {
         if let Some(dd) = self.get_doc(uristring) {
@@ -156,7 +136,6 @@ impl LSPServiceProviderApplyDocumentPatch for LSPServiceProvider {
             }
 
             let new_doc = dd.apply_patch(patches);
-            add_pending_patches(self, uristring, &patches);
             self.save_doc(uristring.clone(), new_doc);
         }
     }

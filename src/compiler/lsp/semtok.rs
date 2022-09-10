@@ -31,7 +31,6 @@ use crate::compiler::lsp::{
     TK_DEFINITION_BIT,
     TK_READONLY_BIT
 };
-use crate::compiler::lsp::parse::ParseResult;
 use crate::compiler::lsp::types::LSPServiceProvider;
 use crate::compiler::sexp::{SExp, decode_string};
 use crate::compiler::srcloc::Srcloc;
@@ -346,25 +345,11 @@ impl LSPSemtokRequestHandler for LSPServiceProvider {
 
         self.ensure_parsed_document(&uristring);
 
-        if let Some(parsed) = self.get_parsed(&uristring) {
-            match &parsed.result {
-                ParseResult::Completed(frontend) => {
-                    let mut our_goto_defs = BTreeMap::new();
-                    let resp = do_semantic_tokens(id, &uristring, &mut our_goto_defs, &frontend.compiled);
-                    self.goto_defs.insert(uristring.clone(), our_goto_defs);
-                    res.push(Message::Response(resp));
-                },
-                ParseResult::WithError(error) => {
-                    let resp = Response { id, result: None, error: Some(ResponseError {
-                        code: 1,
-                        data: None,
-                        message: format!("{}: {}", error.0.to_string(), error.1)
-                    }) };
-                    res.push(Message::Response(resp));
-                }
-            }
-        } else {
-            eprintln!("no compile output :-(");
+        if let Some(frontend) = self.get_parsed(&uristring) {
+            let mut our_goto_defs = BTreeMap::new();
+            let resp = do_semantic_tokens(id, &uristring, &mut our_goto_defs, &frontend.compiled);
+            self.goto_defs.insert(uristring.clone(), our_goto_defs);
+            res.push(Message::Response(resp));
         }
 
         Ok(res)

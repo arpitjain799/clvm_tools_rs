@@ -26,6 +26,7 @@ use crate::compiler::frontend::{
 };
 use crate::compiler::comptypes::{
     BodyForm,
+    CompileErr,
     CompileForm,
     CompilerOpts,
     HelperForm
@@ -40,8 +41,8 @@ use crate::compiler::srcloc::Srcloc;
 use crate::compiler::lsp::compopts::LSPCompilerOpts;
 use crate::compiler::lsp::parse::{
     ParsedDoc,
-    ParseOutput,
-    ParseResult,
+    ParseScope,
+    ScopeKind,
     grab_scope_doc_range,
     make_simple_ranges,
     recover_scopes
@@ -264,7 +265,6 @@ pub struct LSPServiceProvider {
     // These aren't shared.
     pub parsed_documents: HashMap<String, ParsedDoc>,
     pub goto_defs: HashMap<String, BTreeMap<SemanticTokenSortable, Srcloc>>,
-    pub pending_patches: HashMap<String, Vec<DocPatch>>,
 }
 
 #[derive(Debug)]
@@ -276,6 +276,8 @@ pub struct ReparsedHelper {
 pub struct ReparsedModule {
     pub args: Rc<SExp>,
     pub helpers: Vec<ReparsedHelper>,
+    pub errors: Vec<CompileErr>,
+    pub unparsed: HashSet<Vec<u8>>,
     pub exp: Rc<BodyForm>
 }
 
@@ -289,7 +291,9 @@ pub fn reparse_subset(
 ) -> ReparsedModule {
     let mut result = ReparsedModule {
         args: compiled.args.clone(),
+        errors: Vec::new(),
         helpers: Vec::new(),
+        unparsed: HashSet::new(),
         exp: compiled.exp.clone()
     };
 
@@ -384,44 +388,97 @@ pub fn reparse_subset(
             if let Ok(parsed) =
                 parse_sexp(Srcloc::new(Rc::new(uristring.clone()), (r.start.line + 1) as usize, (r.start.character + 1) as usize), text.iter().copied())
             {
-                if let Ok(h) = compile_helperform(opts.clone(), parsed[0].clone()) {
-                    if let Some(helper) = h.as_ref() {
-                        result.helpers.push(ReparsedHelper {
-                            hash,
-                            parsed: helper.clone()
-                        });
-                    } else {
-                        if i == simple_ranges.len() - 1 {
-                            if let Ok(body) =
-                                compile_bodyform(parsed[0].clone())
-                            {
-                                result.exp = Rc::new(body);
+                match compile_helperform(opts.clone(), parsed[0].clone()) {
+                    Ok(h) => {
+                        if let Some(helper) = h.as_ref() {
+                            result.helpers.push(ReparsedHelper {
+                                hash,
+                                parsed: helper.clone()
+                            });
+                        } else {
+                            if i == simple_ranges.len() - 1 {
+                                if let Ok(body) =
+                                    compile_bodyform(parsed[0].clone())
+                                {
+                                    result.exp = Rc::new(body);
+                                }
+                            } else if !took_args {
+                                result.args = parsed[0].clone();
+                                took_args = true;
                             }
-                        } else if !took_args {
-                            result.args = parsed[0].clone();
-                            took_args = true;
                         }
-                    };
+                    },
+                    Err(e) => {
+                        result.errors.push(e.clone());
+                    }
                 }
             }
+        } else {
+            result.unparsed.insert(hash);
         }
     }
 
     result
 }
 
+pub fn combine_new_with_old_parse(
+    uristring: &String,
+    text: &[Rc<Vec<u8>>],
+    parsed: &ParsedDoc,
+    reparse: &ReparsedModule
+) -> ParsedDoc {
+    let mut new_hashes = reparse.unparsed.clone();
+    // An exclusive collection from names to hashes.
+    // This will let us eliminate functions that have disappeared or renamed.
+    let mut new_pointers = HashMap::new();
+
+    for new_helper in reparse.helpers.iter() {
+        new_hashes.insert(new_helper.hash.clone());
+        new_pointers.insert(new_helper.parsed.name().clone(), new_helper.hash.clone());
+    }
+
+    let extracted_helpers: Vec<HelperForm> =
+        reparse.helpers.iter().map(|h| h.parsed.clone()).collect();
+
+    let mut new_compile =
+        parsed.compiled.replace_helpers(&extracted_helpers);
+
+    new_compile.args = reparse.args.clone();
+    new_compile.exp = reparse.exp.clone();
+
+    let mut to_remove_helpers = HashSet::new();
+    for (k,v) in parsed.name_to_hash.iter() {
+        // For any name that isn't already in new_pointers (newly parsed) or
+        // that doesn't have a corresponding hash in erparsed.unparsed, we
+        // should delete that helper and its pointer.
+        if new_pointers.get(k).is_none() {
+            if !reparse.unparsed.contains(v) {
+                // This is a pointer to something that isn't in the source file
+                // anymore.
+                to_remove_helpers.insert(k.clone());
+            } else {
+                new_pointers.insert(k.clone(), v.clone());
+            }
+        }
+    }
+
+    ParsedDoc {
+        compiled: new_compile.remove_helpers(&to_remove_helpers),
+        errors: reparse.errors.clone(),
+        scopes: recover_scopes(uristring, &text, &new_compile),
+        name_to_hash: new_pointers,
+        hashes: new_hashes,
+    }
+}
+
 impl LSPServiceProvider {
     pub fn with_doc_and_parsed<F,G>(&mut self, uristring: &String, f: F) -> Option<G>
     where
-        F: FnOnce(&DocData, &ParseOutput) -> Option<G>
+        F: FnOnce(&DocData, &ParsedDoc) -> Option<G>
     {
         self.ensure_parsed_document(uristring);
         if let (Some(d), Some(p)) = (self.get_doc(uristring), self.get_parsed(uristring)) {
-            if let ParseResult::Completed(o) = p.result {
-                f(&d, &o)
-            } else {
-                None
-            }
+            f(&d, &p)
         } else {
             None
         }
@@ -459,49 +516,23 @@ impl LSPServiceProvider {
         let opts = Rc::new(LSPCompilerOpts::new(uristring.clone(), self.document_collection.clone()));
 
         if let Some(doc) = self.get_doc(uristring) {
-            let prior_parse = self.parsed_documents.get(uristring);
-            if let (Some(pending_patches), Some(ParseResult::Completed(output))) =
-                ( self.pending_patches.get(uristring),
-                  prior_parse.as_ref().map(|d| &d.result)
-                )
-            {
-                let mut patches: Vec<DocPatch> = pending_patches.iter().cloned().collect();
-                self.pending_patches.remove(uristring);
-
-                let ranges = make_simple_ranges(&doc.text);
-                let new_helpers = reparse_subset(
-                    opts.clone(),
-                    &doc.text,
-                    uristring,
-                    &ranges,
-                    &output.compiled,
-                    &output.hashes
-                );
-
-                let mut new_hashes = output.hashes.clone();
-                for new_helper in new_helpers.helpers.iter() {
-                    new_hashes.insert(new_helper.hash.clone());
-                }
-
-                let extracted_helpers: Vec<HelperForm> =
-                    new_helpers.helpers.iter().map(|h| h.parsed.clone()).collect();
-                let mut new_compile =
-                    output.compiled.replace_helpers(&extracted_helpers);
-                new_compile.args = new_helpers.args.clone();
-                new_compile.exp = new_helpers.exp.clone();
-
-                self.save_parse(uristring.clone(), ParsedDoc {
-                    result: ParseResult::Completed(ParseOutput {
-                        compiled: new_compile.clone(),
-                        simple_ranges: ranges,
-                        hashes: new_hashes,
-                        scopes: recover_scopes(uristring, &doc.text, &new_compile)
-                    })
+            let startloc = Srcloc::start(uristring);
+            let output =
+                self.parsed_documents.get(uristring).cloned().unwrap_or_else(|| {
+                    ParsedDoc::new(startloc)
                 });
-            } else if prior_parse.is_none() {
-                let parsed = ParsedDoc::new(opts, uristring, &doc.text);
-                self.save_parse(uristring.clone(), parsed);
-            }
+            let ranges = make_simple_ranges(&doc.text);
+            let new_helpers = reparse_subset(
+                opts.clone(),
+                &doc.text,
+                uristring,
+                &ranges,
+                &output.compiled,
+                &output.hashes
+            );
+            self.save_parse(uristring.clone(), combine_new_with_old_parse(
+                uristring, &doc.text, &output, &new_helpers
+            ));
         }
     }
 
@@ -511,7 +542,6 @@ impl LSPServiceProvider {
 
             parsed_documents: HashMap::new(),
             goto_defs: HashMap::new(),
-            pending_patches: HashMap::new()
         }
     }
 

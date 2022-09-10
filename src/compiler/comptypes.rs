@@ -228,6 +228,15 @@ impl CompileForm {
         ))
     }
 
+    pub fn remove_helpers(&self, names: &HashSet<Vec<u8>>) -> CompileForm {
+        CompileForm {
+            loc: self.loc.clone(),
+            args: self.args.clone(),
+            helpers: self.helpers.iter().filter(|h| !names.contains(h.name())).cloned().collect(),
+            exp: self.exp.clone()
+        }
+    }
+
     pub fn replace_helpers(&self, helpers: &[HelperForm]) -> CompileForm {
         let mut new_names = HashSet::new();
         for h in helpers.iter() {

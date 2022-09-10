@@ -46,7 +46,7 @@ use crate::compiler::sexp::{SExp, parse_sexp};
 use crate::compiler::srcloc::Srcloc;
 use crate::compiler::lsp::patch::{PatchableDocument, split_text, stringify_doc};
 use crate::compiler::lsp::parse::{
-    ParseOutput,
+    ParsedDoc,
     is_first_in_list,
     make_simple_ranges,
     recover_scopes
@@ -55,6 +55,7 @@ use crate::compiler::lsp::types::{
     DocData,
     DocPosition,
     DocRange,
+    combine_new_with_old_parse,
     reparse_subset
 };
 
@@ -480,8 +481,6 @@ fn test_reparse_subset_3() {
     let file = "file:///test.cl".to_string();
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
     let content = "(mod X (defun F (X) (+ X 1)) X)".to_string();
-    let parsed =
-        parse_sexp(Srcloc::start(&file), content.as_bytes().iter().copied()).unwrap();
     let text = split_text(&content);
     let ranges = make_simple_ranges(&text);
     let used_hashes = HashSet::new();
@@ -510,5 +509,52 @@ fn test_reparse_subset_3() {
     assert_eq!(
         "(X (defun F (X) (+ X 1)) X)",
         chop_scopes(&new_compile.to_sexp().to_string())
+    );
+}
+
+#[test]
+fn test_reparse_subset_4() {
+    let file = "file:///test.cl".to_string();
+    let opts = Rc::new(DefaultCompilerOpts::new(&file));
+    let content1 = "(mod X (defun F (X) (+ X 1)) X)".to_string();
+    let text1 = split_text(&content1);
+    let ranges1 = make_simple_ranges(&text1);
+    let used_hashes1 = HashSet::new();
+    let l = Srcloc::start(&file);
+    let start = ParsedDoc::new(l.clone());
+    let reparsed1 = reparse_subset(
+        opts.clone(),
+        &text1,
+        &file,
+        &ranges1,
+        &start.compiled,
+        &used_hashes1
+    );
+    let combined1 = combine_new_with_old_parse(
+        &file,
+        &text1,
+        &start,
+        &reparsed1
+    );
+    let content2 = "(mod X (defun G (X) (+ X 1)) X)".to_string();
+    let text2 = split_text(&content2);
+    let ranges2 = make_simple_ranges(&text2);
+    let reparsed2 = reparse_subset(
+        opts,
+        &text2,
+        &file,
+        &ranges2,
+        &combined1.compiled,
+        &combined1.hashes
+    );
+    let combined2 = combine_new_with_old_parse(
+        &file,
+        &text2,
+        &combined1,
+        &reparsed2
+    );
+    assert_eq!(
+        "(X (defun G (X) (+ X 1)) X)",
+        chop_scopes(&combined2.compiled.to_sexp().to_string())
     );
 }

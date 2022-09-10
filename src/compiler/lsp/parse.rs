@@ -6,6 +6,7 @@ use lsp_types::Position;
 
 use crate::compiler::clvm::sha256tree_from_atom;
 use crate::compiler::comptypes::{
+    BodyForm,
     CompileErr,
     CompileForm,
     CompilerOpts,
@@ -39,22 +40,36 @@ pub struct ParseScope {
 }
 
 #[derive(Debug, Clone)]
-pub struct ParseOutput {
+pub struct ParsedDoc {
     pub compiled: CompileForm,
-    pub simple_ranges: Vec<DocRange>,
+    pub errors: Vec<CompileErr>,
     pub scopes: ParseScope,
+    pub name_to_hash: HashMap<Vec<u8>, Vec<u8>>,
     pub hashes: HashSet<Vec<u8>>
 }
 
-#[derive(Debug, Clone)]
-pub enum ParseResult {
-    WithError(CompileErr),
-    Completed(ParseOutput)
-}
-
-#[derive(Debug, Clone)]
-pub struct ParsedDoc {
-    pub result: ParseResult,
+impl ParsedDoc {
+    pub fn new(startloc: Srcloc) -> Self {
+        let nil = SExp::Nil(startloc.clone());
+        ParsedDoc {
+            hashes: HashSet::new(),
+            name_to_hash: HashMap::new(),
+            errors: vec![],
+            scopes: ParseScope {
+                region: startloc.clone(),
+                kind: ScopeKind::Module,
+                variables: HashSet::new(),
+                functions: HashSet::new(),
+                containing: vec![],
+            },
+            compiled: CompileForm {
+                loc: startloc.clone(),
+                args: Rc::new(nil.clone()),
+                helpers: vec![],
+                exp: Rc::new(BodyForm::Quoted(nil))
+            }
+        }
+    }
 }
 
 pub struct DocVecByteIter<'a> {
@@ -389,46 +404,4 @@ pub fn make_simple_ranges(srctext: &[Rc<Vec<u8>>]) -> Vec<DocRange> {
     }
 
     ranges
-}
-
-impl ParsedDoc {
-    pub fn empty() -> Self {
-        ParsedDoc {
-            result: ParseResult::WithError(CompileErr(Srcloc::start(&"*none*".to_string()), "no file".to_string()))
-        }
-    }
-
-    pub fn new(opts: Rc<dyn CompilerOpts>, file: &String, srctext: &[Rc<Vec<u8>>]) -> Self {
-        let srcloc = Srcloc::start(file);
-        parse_sexp(srcloc, DocVecByteIter::new(srctext)).
-            map_err(|e| { CompileErr(e.0.clone(), "parse error".to_string()) }).
-            map(|parsed| {
-                frontend(opts.clone(), &parsed).as_ref().map(|fe| {
-                    let simple_ranges = make_simple_ranges(srctext);
-                    let mut hashes = HashSet::new();
-                    for r in simple_ranges.iter() {
-                        let text = grab_scope_doc_range(srctext, &r, false);
-                        let hash = sha256tree_from_atom(&text);
-                        hashes.insert(hash);
-                    }
-                    let parsed = ParseOutput {
-                        compiled: fe.clone(),
-                        simple_ranges: simple_ranges,
-                        hashes,
-                        scopes: recover_scopes(file, srctext, fe)
-                    };
-                    ParsedDoc {
-                        result: ParseResult::Completed(parsed)
-                    }
-                }).unwrap_or_else(|e| {
-                    ParsedDoc {
-                        result: ParseResult::WithError(e.clone())
-                    }
-                })
-            }).unwrap_or_else(|e| {
-                ParsedDoc {
-                    result: ParseResult::WithError(e)
-                }
-            })
-    }
 }
