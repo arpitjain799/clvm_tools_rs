@@ -278,7 +278,29 @@ pub struct ReparsedModule {
     pub helpers: Vec<ReparsedHelper>,
     pub errors: Vec<CompileErr>,
     pub unparsed: HashSet<Vec<u8>>,
-    pub exp: Rc<BodyForm>
+    pub exp: Rc<BodyForm>,
+    pub includes: HashMap<Vec<u8>, Vec<u8>>
+}
+
+pub fn parse_include(
+    opts: Rc<dyn CompilerOpts>,
+    sexp: Rc<SExp>
+) -> Option<Vec<u8>> {
+    sexp.proper_list().and_then(|l| {
+        if l.len() != 2 {
+            return None;
+        }
+
+        if let (SExp::Atom(_,incl), SExp::Atom(_,fname)) =
+            (l[0].borrow(), l[1].borrow())
+        {
+            if incl == b"include" {
+                return Some(fname.clone());
+            }
+        }
+
+        None
+    })
 }
 
 pub fn reparse_subset(
@@ -293,8 +315,9 @@ pub fn reparse_subset(
         args: compiled.args.clone(),
         errors: Vec::new(),
         helpers: Vec::new(),
+        includes: HashMap::new(),
         unparsed: HashSet::new(),
-        exp: compiled.exp.clone()
+        exp: compiled.exp.clone(),
     };
 
     // if it's a module, we can patch the prefix in, otherwise make a (mod ()
@@ -305,7 +328,7 @@ pub fn reparse_subset(
 
     if simple_ranges.len() == 0 {
         // There's nothing to be gained by trying to do incremental.
-        todo!();
+        return result;
     } else {
         // Find out if there's a single atom before the first identified
         // expression.
@@ -395,6 +418,10 @@ pub fn reparse_subset(
                                 hash,
                                 parsed: helper.clone()
                             });
+                        } else if let Some(include) =
+                            parse_include(opts.clone(), parsed[0].clone())
+                        {
+                            result.includes.insert(hash.clone(), include.clone());
                         } else {
                             if i == simple_ranges.len() - 1 {
                                 if let Ok(body) =
@@ -431,6 +458,7 @@ pub fn combine_new_with_old_parse(
     // An exclusive collection from names to hashes.
     // This will let us eliminate functions that have disappeared or renamed.
     let mut new_pointers = HashMap::new();
+    let mut new_includes = reparse.includes.clone();
 
     for new_helper in reparse.helpers.iter() {
         new_hashes.insert(new_helper.hash.clone());
@@ -462,12 +490,21 @@ pub fn combine_new_with_old_parse(
         }
     }
 
+    for (h,i) in parsed.includes.iter() {
+        // Any hash that's included in neither the old hashes nor the ignored
+        // hashes should be discarded.
+        if reparse.unparsed.contains(h) {
+            new_includes.insert(h.clone(), i.clone());
+        }
+    }
+
     ParsedDoc {
         compiled: new_compile.remove_helpers(&to_remove_helpers),
         errors: reparse.errors.clone(),
         scopes: recover_scopes(uristring, &text, &new_compile),
         name_to_hash: new_pointers,
         hashes: new_hashes,
+        includes: new_includes
     }
 }
 

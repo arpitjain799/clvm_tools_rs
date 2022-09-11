@@ -39,7 +39,8 @@ use lsp_types::{
 use crate::compiler::compiler::DefaultCompilerOpts;
 use crate::compiler::comptypes::{
     BodyForm,
-    CompileForm
+    CompileForm,
+    CompilerOpts
 };
 use crate::compiler::frontend::frontend;
 use crate::compiler::sexp::{SExp, parse_sexp};
@@ -400,161 +401,104 @@ fn chop_scopes(s: &str) -> String {
     re.replace_all(&s, "").to_string()
 }
 
+fn run_reparse_steps(
+    loc: Srcloc,
+    opts: Rc<dyn CompilerOpts>,
+    file: &String,
+    text_inputs: &[String]
+) -> ParsedDoc {
+    let mut doc = ParsedDoc::new(loc.clone());
+
+    for content in text_inputs.iter() {
+        let text = split_text(&content);
+        let ranges = make_simple_ranges(&text);
+        let l = Srcloc::start(&file);
+        let reparsed = reparse_subset(
+            opts.clone(),
+            &text,
+            &file,
+            &ranges,
+            &doc.compiled,
+            &doc.hashes
+        );
+        doc = combine_new_with_old_parse(
+            &file,
+            &text,
+            &doc,
+            &reparsed
+        );
+    }
+
+    doc
+}
+
 #[test]
 fn test_reparse_subset_1() {
     let file = "file:///test.cl".to_string();
+    let loc = Srcloc::start(&file);
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
-    let content = "(mod (X) (defun F (X) (+ X 1)) (F X))".to_string();
-    let parsed =
-        parse_sexp(Srcloc::start(&file), content.as_bytes().iter().copied()).unwrap();
-    let frontend = frontend(opts.clone(), &parsed).unwrap();
-    let text = split_text(&content);
-    let ranges = make_simple_ranges(&text);
-    let used_hashes = HashSet::new();
-    let l = Srcloc::start(&file);
-    let crap_compile = CompileForm {
-        loc: l.clone(),
-        args: Rc::new(SExp::Nil(l.clone())),
-        helpers: vec![],
-        exp: Rc::new(BodyForm::Quoted(SExp::Nil(l.clone())))
-    };
-    let reparsed = reparse_subset(
-        opts,
-        &text,
+    let combined = run_reparse_steps(
+        loc,
+        opts.clone(),
         &file,
-        &ranges,
-        &crap_compile,
-        &used_hashes
+        &["(mod X (defun F (X) (+ X 1)) (F X))".to_string()]
     );
-    let new_compile = CompileForm {
-        loc: Srcloc::start(&file),
-        args: reparsed.args.clone(),
-        helpers: reparsed.helpers.iter().map(|x| x.parsed.clone()).collect(),
-        exp: reparsed.exp.clone()
-    };
     assert_eq!(
-        chop_scopes(&frontend.to_sexp().to_string()),
-        chop_scopes(&new_compile.to_sexp().to_string())
+        "(X (defun F (X) (+ X 1)) (F X))",
+        chop_scopes(&combined.compiled.to_sexp().to_string())
     );
 }
 
 #[test]
 fn test_reparse_subset_2() {
     let file = "file:///test.cl".to_string();
+    let loc = Srcloc::start(&file);
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
-    let content = "(mod X (defun F (X) (+ X 1)) (F X))".to_string();
-    let parsed =
-        parse_sexp(Srcloc::start(&file), content.as_bytes().iter().copied()).unwrap();
-    let frontend = frontend(opts.clone(), &parsed).unwrap();
-    let text = split_text(&content);
-    let ranges = make_simple_ranges(&text);
-    let used_hashes = HashSet::new();
-    let l = Srcloc::start(&file);
-    let crap_compile = CompileForm {
-        loc: l.clone(),
-        args: Rc::new(SExp::Nil(l.clone())),
-        helpers: vec![],
-        exp: Rc::new(BodyForm::Quoted(SExp::Nil(l.clone())))
-    };
-    let reparsed = reparse_subset(
-        opts,
-        &text,
+    let combined = run_reparse_steps(
+        loc,
+        opts.clone(),
         &file,
-        &ranges,
-        &crap_compile,
-        &used_hashes
+        &["(mod X (defun F (X) (+ X 1)) X)".to_string()]
     );
-    let new_compile = CompileForm {
-        loc: Srcloc::start(&file),
-        args: reparsed.args.clone(),
-        helpers: reparsed.helpers.iter().map(|x| x.parsed.clone()).collect(),
-        exp: reparsed.exp.clone()
-    };
     assert_eq!(
-        chop_scopes(&frontend.to_sexp().to_string()),
-        chop_scopes(&new_compile.to_sexp().to_string())
+        "(X (defun F (X) (+ X 1)) X)",
+        chop_scopes(&combined.compiled.to_sexp().to_string())
     );
 }
 
 #[test]
 fn test_reparse_subset_3() {
     let file = "file:///test.cl".to_string();
+    let loc = Srcloc::start(&file);
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
-    let content = "(mod X (defun F (X) (+ X 1)) X)".to_string();
-    let text = split_text(&content);
-    let ranges = make_simple_ranges(&text);
-    let used_hashes = HashSet::new();
-    let l = Srcloc::start(&file);
-    let crap_compile = CompileForm {
-        loc: l.clone(),
-        args: Rc::new(SExp::Nil(l.clone())),
-        helpers: vec![],
-        exp: Rc::new(BodyForm::Quoted(SExp::Nil(l.clone())))
-    };
-    let reparsed = reparse_subset(
-        opts,
-        &text,
+    let combined2 = run_reparse_steps(
+        loc,
+        opts.clone(),
         &file,
-        &ranges,
-        &crap_compile,
-        &used_hashes
+        &["(mod X (defun F (X) (+ X 1)) X)".to_string(),
+          "(mod X (defun G (X) (+ X 1)) X)".to_string()
+        ]
     );
-    eprintln!("reparsed.helpers {:?}", reparsed.helpers);
-    let new_compile = CompileForm {
-        loc: Srcloc::start(&file),
-        args: reparsed.args.clone(),
-        helpers: reparsed.helpers.iter().map(|x| x.parsed.clone()).collect(),
-        exp: reparsed.exp.clone()
-    };
     assert_eq!(
-        "(X (defun F (X) (+ X 1)) X)",
-        chop_scopes(&new_compile.to_sexp().to_string())
+        "(X (defun G (X) (+ X 1)) X)",
+        chop_scopes(&combined2.compiled.to_sexp().to_string())
     );
 }
 
 #[test]
 fn test_reparse_subset_4() {
     let file = "file:///test.cl".to_string();
+    let loc = Srcloc::start(&file);
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
-    let content1 = "(mod X (defun F (X) (+ X 1)) X)".to_string();
-    let text1 = split_text(&content1);
-    let ranges1 = make_simple_ranges(&text1);
-    let used_hashes1 = HashSet::new();
-    let l = Srcloc::start(&file);
-    let start = ParsedDoc::new(l.clone());
-    let reparsed1 = reparse_subset(
+    let combined2 = run_reparse_steps(
+        loc,
         opts.clone(),
-        &text1,
         &file,
-        &ranges1,
-        &start.compiled,
-        &used_hashes1
-    );
-    let combined1 = combine_new_with_old_parse(
-        &file,
-        &text1,
-        &start,
-        &reparsed1
-    );
-    let content2 = "(mod X (defun G (X) (+ X 1)) X)".to_string();
-    let text2 = split_text(&content2);
-    let ranges2 = make_simple_ranges(&text2);
-    let reparsed2 = reparse_subset(
-        opts,
-        &text2,
-        &file,
-        &ranges2,
-        &combined1.compiled,
-        &combined1.hashes
-    );
-    let combined2 = combine_new_with_old_parse(
-        &file,
-        &text2,
-        &combined1,
-        &reparsed2
+        &["(mod X (include test.clib) (defun F (X) (+ X 1)) X)".to_string()
+        ]
     );
     assert_eq!(
-        "(X (defun G (X) (+ X 1)) X)",
+        "(X (defun F (X) (+ X 1)) X)",
         chop_scopes(&combined2.compiled.to_sexp().to_string())
     );
 }

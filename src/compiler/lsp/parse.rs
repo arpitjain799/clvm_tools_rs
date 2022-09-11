@@ -45,7 +45,8 @@ pub struct ParsedDoc {
     pub errors: Vec<CompileErr>,
     pub scopes: ParseScope,
     pub name_to_hash: HashMap<Vec<u8>, Vec<u8>>,
-    pub hashes: HashSet<Vec<u8>>
+    pub hashes: HashSet<Vec<u8>>,
+    pub includes: HashMap<Vec<u8>, Vec<u8>>
 }
 
 impl ParsedDoc {
@@ -54,6 +55,7 @@ impl ParsedDoc {
         ParsedDoc {
             hashes: HashSet::new(),
             name_to_hash: HashMap::new(),
+            includes: HashMap::new(),
             errors: vec![],
             scopes: ParseScope {
                 region: startloc.clone(),
