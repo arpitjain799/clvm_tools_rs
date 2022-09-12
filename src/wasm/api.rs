@@ -24,6 +24,8 @@ use crate::compiler::compiler::{
     extract_program_and_env, path_to_function, rewrite_in_program, DefaultCompilerOpts,
 };
 use crate::compiler::comptypes::CompileErr;
+use crate::compiler::lsp::LSPServiceProvider;
+use crate::compiler::lsp::handler::LSPServiceMessageHandler;
 use crate::compiler::prims;
 use crate::compiler::repl::Repl;
 use crate::compiler::runtypes::RunFailure;
@@ -58,6 +60,9 @@ thread_local! {
         return RefCell::new(HashMap::new());
     };
     static REPLS: RefCell<HashMap<i32, JsRepl>> = {
+        return RefCell::new(HashMap::new());
+    };
+    static LSP_SERVERS: RefCell<HashMap<i32, RefCell<LSPServiceProvider>>> = {
         return RefCell::new(HashMap::new());
     };
 }
@@ -482,4 +487,55 @@ pub fn sexp_to_string(v: &JsValue) -> JsValue {
     sexp_from_js_object(loc, v)
         .map(|s| JsValue::from_str(&s.to_string()))
         .unwrap_or_else(|| create_clvm_runner_err("unable to convert to value".to_string()))
+}
+
+#[wasm_bindgen]
+pub fn create_lsp_service() -> i32 {
+    let new_id = get_next_id();
+    LSP_SERVERS.with(|servers| {
+        servers.replace_with(|servers| {
+            let mut work_services = HashMap::new();
+            swap(&mut work_services, servers);
+            work_services.insert(
+                new_id,
+                RefCell::new(LSPServiceProvider::new())
+            );
+            work_services
+        })
+    });
+    new_id
+}
+
+#[wasm_bindgen]
+pub fn destroy_lsp_service(lsp: i32) {
+    LSP_SERVERS.with(|servers| {
+        servers.replace_with(|servers| {
+            let mut work_services = HashMap::new();
+            swap(&mut work_services, servers);
+            work_services.remove(&lsp);
+            work_services
+        })
+    });
+}
+
+#[wasm_bindgen]
+pub fn lsp_service_handle_msg(lsp_id: i32, msg: String) -> Vec<JsValue> {
+    let mut res = Vec::new();
+    LSP_SERVERS
+        .with(|services| {
+            let service = services.borrow();
+            if let Some(service_cell) = service.get(&lsp_id) {
+                let mut s_borrowed = service_cell.borrow_mut();
+                let s = s_borrowed.deref_mut();
+                let outmsgs = s.handle_message_from_string(msg);
+                for m in outmsgs.iter() {
+                    if let Ok(r) = serde_json::to_value(m) {
+                        res.push(JsValue::from_str(&r.to_string()));
+                    } else {
+                        panic!("unable to convert message {:?} to json", m);
+                    }
+                }
+            }
+        });
+    res
 }

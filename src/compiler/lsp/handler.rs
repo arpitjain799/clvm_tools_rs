@@ -13,7 +13,7 @@ use lsp_types::{
     Range
 };
 
-use lsp_server::{Message, RequestId, Response};
+use lsp_server::{ErrorCode, Message, RequestId, Response};
 
 use crate::compiler::lsp::completion::LSPCompletionRequestHandler;
 use crate::compiler::lsp::patch::{
@@ -30,6 +30,7 @@ use crate::compiler::srcloc::Srcloc;
 
 pub trait LSPServiceMessageHandler {
     fn handle_message(&mut self, msg: &Message) -> Result<Vec<Message>, String>;
+    fn handle_message_from_string(&mut self, msg: String) -> Result<Vec<Message>, String>;
 }
 
 impl LSPServiceProvider {
@@ -79,7 +80,38 @@ impl LSPServiceProvider {
 
 impl LSPServiceMessageHandler for LSPServiceProvider {
     fn handle_message(&mut self, msg: &Message) -> Result<Vec<Message>, String> {
-        eprintln!("got msg: {:?}", msg);
+        // Handle initialization.
+        if self.waiting_for_init {
+            if let Message::Request(req) = msg {
+                if req.method == "initialize" {
+                    self.waiting_for_init = false;
+                    let server_capabilities = LSPServiceProvider::get_capabilities();
+
+                    let initialize_data = serde_json::json!({
+                        "capabilities": server_capabilities,
+                        "serverInfo": {
+                            "name": "chialisp-lsp",
+                            "version": "0.1"
+                        }
+                    });
+
+                    let resp = Response::new_ok(
+                        req.id.clone(),
+                        initialize_data
+                    );
+
+                    return Ok(vec![Message::Response(resp)]);
+                } else {
+                    let resp = Response::new_err(
+                        req.id.clone(),
+                        ErrorCode::ServerNotInitialized as i32,
+                        format!("expected initialize request, got {:?}", req)
+                    );
+                    return Ok(vec![Message::Response(resp)]);
+                }
+            }
+        }
+
         match msg {
             Message::Request(req) => {
                 if let Ok((id, params)) = cast::<SemanticTokensFullRequest>(req.clone()) {
@@ -123,5 +155,13 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
         }
 
         Ok(vec![])
+    }
+
+    fn handle_message_from_string(&mut self, msg: String) -> Result<Vec<Message>, String> {
+        if let Ok(input_msg) = serde_json::from_str::<Message>(&msg) {
+            self.handle_message(&input_msg)
+        } else {
+            Err("Could not decode as json message".to_string())
+        }
     }
 }

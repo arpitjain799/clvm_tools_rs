@@ -2,18 +2,8 @@ use std::cmp::Ordering;
 use std::error::Error;
 
 use lsp_types::{
-    ClientCapabilities,
-    CompletionOptions,
     InitializeParams,
-    OneOf,
-    SemanticTokensLegend,
-    SemanticTokensFullOptions,
-    SemanticTokensOptions,
-    SemanticTokensServerCapabilities,
-    ServerCapabilities,
-    TextDocumentSyncCapability,
-    TextDocumentSyncKind,
-    WorkDoneProgressOptions,
+    ClientCapabilities
 };
 
 use lsp_server::{Connection, ExtractError, Message, Request, RequestId, Response};
@@ -33,8 +23,7 @@ use clvm_tools_rs::compiler::sexp::{SExp, parse_sexp};
 use clvm_tools_rs::compiler::srcloc::Srcloc;
 
 fn main_loop(
-    connection: Connection,
-    params: serde_json::Value,
+    connection: Connection
 ) -> Result<(), Box<dyn Error + Sync + Send>> {
     let mut lsp_provider = LSPServiceProvider::new();
 
@@ -63,53 +52,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
 
     // Run the server
-    eprintln!("start initialization");
-    let (id, params) = connection.initialize_start()?;
-
-    let mut completion_start = Vec::new();
-    for i in 65..65+27 {
-        completion_start.push(i as u8);
-    }
-    for i in 97..97+27 {
-        completion_start.push(i as u8);
-    }
-    let server_capabilities = ServerCapabilities {
-        // Specify capabilities from the set:
-        // https://docs.rs/lsp-types/latest/lsp_types/struct.ServerCapabilities.html
-        definition_provider: Some(OneOf::Left(true)),
-        semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
-            work_done_progress_options: WorkDoneProgressOptions {
-                work_done_progress: Some(false)
-            },
-            legend: SemanticTokensLegend {
-                token_types: TOKEN_TYPES.clone(),
-                token_modifiers: TOKEN_MODIFIERS.clone(),
-            },
-            range: None,
-            full: Some(SemanticTokensFullOptions::Delta {delta: Some(true)})
-        })),
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::INCREMENTAL)),
-        completion_provider: Some(CompletionOptions {
-            resolve_provider: Some(true),
-//             trigger_characters: Some(completion_start),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-
-    let initialize_data = serde_json::json!({
-        "capabilities": server_capabilities,
-        "serverInfo": {
-            "name": "lsp-server-test",
-            "version": "0.1"
-        }
-    });
-
-    eprintln!("end initialization sending? {}", initialize_data.to_string());
-    connection.initialize_finish(id, initialize_data.clone())?;
-
-    eprintln!("done init");
-    main_loop(connection, initialize_data)?;
+    main_loop(connection)?;
     io_threads.join()?;
 
     // Shut down gracefully.

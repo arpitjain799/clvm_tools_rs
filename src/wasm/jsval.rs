@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType};
 use crate::compiler::sexp::SExp;
-use crate::compiler::srcloc::Srcloc;
+use crate::compiler::srcloc::{Srcloc, Until};
 use crate::util::Number;
 
 use wasm_bindgen::prelude::*;
@@ -45,15 +45,15 @@ pub fn js_from_location(l: Srcloc) -> JsValue {
         js_pair(JsValue::from_str("col"), JsValue::from_f64(l.col as f64)),
     );
     match l.until {
-        Some((tl, tc)) => {
+        Some(u) => {
             let til_array = Array::new();
             til_array.set(
                 0,
-                js_pair(JsValue::from_str("line"), JsValue::from_f64(tl as f64)),
+                js_pair(JsValue::from_str("line"), JsValue::from_f64(u.line as f64)),
             );
             til_array.set(
                 1,
-                js_pair(JsValue::from_str("col"), JsValue::from_f64(tc as f64)),
+                js_pair(JsValue::from_str("col"), JsValue::from_f64(u.col as f64)),
             );
             loc_array.set(
                 3,
@@ -145,7 +145,8 @@ fn location(o: &Object) -> Option<Srcloc> {
             col: c,
             until: get_property(o, "until")
                 .and_then(|lo| Object::try_from(&lo).map(|o| o.clone()))
-                .and_then(|lo| location_lc_pair(&lo)),
+                .and_then(|lo| location_lc_pair(&lo))
+                .map(|(ll, lc)| Until { line: ll, col: lc })
         })
 }
 

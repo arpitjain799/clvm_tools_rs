@@ -20,7 +20,19 @@ use lsp_types::{
     Range,
     SemanticTokenModifier,
     SemanticTokenType,
-    Url
+    Url,
+
+    OneOf,
+
+    CompletionOptions,
+    SemanticTokensLegend,
+    SemanticTokensFullOptions,
+    SemanticTokensOptions,
+    SemanticTokensServerCapabilities,
+    ServerCapabilities,
+    TextDocumentSyncCapability,
+    TextDocumentSyncKind,
+    WorkDoneProgressOptions,
 };
 
 use crate::compiler::comptypes::{
@@ -246,6 +258,9 @@ impl Ord for HelperWithDocRange {
 }
 
 pub struct LSPServiceProvider {
+    // Waiting for init msg.
+    pub waiting_for_init: bool,
+
     // Let document collection be sharable due to the need to capture it for
     // use in compiler opts.
     pub document_collection: Rc<RefCell<HashMap<String, DocData>>>,
@@ -356,8 +371,35 @@ impl LSPServiceProvider {
         }
     }
 
+    pub fn get_capabilities() -> ServerCapabilities {
+        ServerCapabilities {
+            // Specify capabilities from the set:
+            // https://docs.rs/lsp-types/latest/lsp_types/struct.ServerCapabilities.html
+            definition_provider: Some(OneOf::Left(true)),
+            semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
+                work_done_progress_options: WorkDoneProgressOptions {
+                    work_done_progress: Some(false)
+                },
+                legend: SemanticTokensLegend {
+                    token_types: TOKEN_TYPES.clone(),
+                    token_modifiers: TOKEN_MODIFIERS.clone(),
+                },
+                range: None,
+                full: Some(SemanticTokensFullOptions::Delta {delta: Some(true)})
+            })),
+            text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::INCREMENTAL)),
+            completion_provider: Some(CompletionOptions {
+                resolve_provider: Some(true),
+                //             trigger_characters: Some(completion_start),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
     pub fn new() -> Self {
         LSPServiceProvider {
+            waiting_for_init: true,
             document_collection: Rc::new(RefCell::new(HashMap::new())),
 
             parsed_documents: HashMap::new(),
