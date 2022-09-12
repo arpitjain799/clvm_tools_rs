@@ -1,5 +1,4 @@
 use std::borrow::Borrow;
-use std::collections::HashSet;
 use std::rc::Rc;
 
 use lsp_types::TextDocumentContentChangeEvent;
@@ -7,7 +6,7 @@ use lsp_types::TextDocumentContentChangeEvent;
 use crate::compiler::sexp::decode_string;
 use crate::compiler::lsp::LSPServiceProvider;
 use crate::compiler::lsp::parse::DocVecByteIter;
-use crate::compiler::lsp::types::{DocData, DocPatch, DocRange};
+use crate::compiler::lsp::types::DocData;
 
 pub trait PatchableDocument {
     fn apply_patch(&self, patches: &[TextDocumentContentChangeEvent]) -> Self;

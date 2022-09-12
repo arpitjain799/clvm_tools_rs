@@ -1,5 +1,4 @@
 use regex::Regex;
-use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::compiler::lsp::{
@@ -37,27 +36,22 @@ use lsp_types::{
 };
 
 use crate::compiler::compiler::DefaultCompilerOpts;
-use crate::compiler::comptypes::{
-    BodyForm,
-    CompileForm,
-    CompilerOpts
-};
-use crate::compiler::frontend::frontend;
-use crate::compiler::sexp::{SExp, parse_sexp};
+use crate::compiler::comptypes::CompilerOpts;
 use crate::compiler::srcloc::Srcloc;
 use crate::compiler::lsp::patch::{PatchableDocument, split_text, stringify_doc};
 use crate::compiler::lsp::parse::{
     ParsedDoc,
     is_first_in_list,
-    make_simple_ranges,
-    recover_scopes
+    make_simple_ranges
+};
+use crate::compiler::lsp::reparse::{
+    combine_new_with_old_parse,
+    reparse_subset
 };
 use crate::compiler::lsp::types::{
     DocData,
     DocPosition,
-    DocRange,
-    combine_new_with_old_parse,
-    reparse_subset
+    DocRange
 };
 
 fn make_did_open_message(uri: &String, v: i32, body: String) -> Message {
@@ -106,34 +100,6 @@ fn make_completion_request_msg(uri: &String, rid: i32, position: Position) -> Me
                 partial_result_token: None,
             },
             context: None
-        }).unwrap()
-    })
-}
-
-struct TestChange {
-    pub start: Position,
-    pub end: Position,
-    pub insert: String
-}
-
-fn make_document_patch(uri: &String, changes: &[TestChange]) -> Message {
-    Message::Notification(Notification {
-        method: "textDocument/didChange".to_string(),
-        params: serde_json::to_value(DidChangeTextDocumentParams {
-            text_document: VersionedTextDocumentIdentifier {
-                version: 1,
-                uri: Url::parse(&uri).unwrap()
-            },
-            content_changes: changes.iter().map(|tc| {
-                TextDocumentContentChangeEvent {
-                    range_length: None,
-                    range: Some(Range {
-                        start: tc.start.clone(),
-                        end: tc.end.clone(),
-                    }),
-                    text: tc.insert.clone()
-                }
-            }).collect()
         }).unwrap()
     })
 }

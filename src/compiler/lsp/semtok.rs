@@ -6,8 +6,7 @@ use std::rc::Rc;
 use lsp_server::{
     Message,
     RequestId,
-    Response,
-    ResponseError
+    Response
 };
 use lsp_types::{
     SemanticToken,

@@ -4,18 +4,14 @@ use std::rc::Rc;
 
 use lsp_types::Position;
 
-use crate::compiler::clvm::sha256tree_from_atom;
 use crate::compiler::comptypes::{
     BodyForm,
     CompileErr,
     CompileForm,
-    CompilerOpts,
     HelperForm
 };
-use crate::compiler::frontend::frontend;
-use crate::compiler::sexp::{SExp, decode_string, parse_sexp};
+use crate::compiler::sexp::{SExp, decode_string};
 use crate::compiler::srcloc::Srcloc;
-use crate::compiler::lsp::patch::stringify_doc;
 use crate::compiler::lsp::types::{
     DocData,
     DocPosition,

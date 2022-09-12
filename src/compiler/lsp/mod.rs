@@ -3,6 +3,7 @@ pub mod compopts;
 pub mod handler;
 pub mod parse;
 pub mod patch;
+pub mod reparse;
 pub mod semtok;
 pub mod types;
 
