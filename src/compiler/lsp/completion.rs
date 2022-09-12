@@ -146,9 +146,10 @@ fn complete_function_name(
 // Otherwise show variable completions.
 impl LSPCompletionRequestHandler for LSPServiceProvider {
     fn handle_completion_request(&mut self, id: RequestId, params: &CompletionParams) -> Result<Vec<Message>, String> {
-        let mut res = Vec::new();
         let uristring =
             params.text_document_position.text_document.uri.to_string();
+
+        let mut res = self.parse_document_and_output_errors(&uristring);
 
         self.with_doc_and_parsed(&uristring, |doc,output| {
             get_positional_text(

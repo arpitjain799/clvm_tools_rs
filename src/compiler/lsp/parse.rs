@@ -38,7 +38,7 @@ pub struct ParseScope {
 #[derive(Debug, Clone)]
 pub struct ParsedDoc {
     pub compiled: CompileForm,
-    pub errors: Vec<CompileErr>,
+    pub errors: HashMap<Vec<u8>, CompileErr>,
     pub scopes: ParseScope,
     pub name_to_hash: HashMap<Vec<u8>, Vec<u8>>,
     pub hashes: HashSet<Vec<u8>>,
@@ -52,7 +52,7 @@ impl ParsedDoc {
             hashes: HashSet::new(),
             name_to_hash: HashMap::new(),
             includes: HashMap::new(),
-            errors: vec![],
+            errors: HashMap::new(),
             scopes: ParseScope {
                 region: startloc.clone(),
                 kind: ScopeKind::Module,

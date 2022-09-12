@@ -18,7 +18,6 @@ use lsp_types::{
     CompletionItem,
     CompletionParams,
     CompletionResponse,
-    DidChangeTextDocumentParams,
     DidOpenTextDocumentParams,
     PartialResultParams,
     Position,
@@ -31,7 +30,6 @@ use lsp_types::{
     TextDocumentItem,
     TextDocumentPositionParams,
     Url,
-    VersionedTextDocumentIdentifier,
     WorkDoneProgressParams,
 };
 

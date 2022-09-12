@@ -474,25 +474,26 @@ pub fn compile_helperform(
     let l = location_span(body.loc(), body.clone());
     let plist = body.proper_list();
 
-    match plist.and_then(|pl| match_op_name_4(body.clone(), &pl)) {
-        Some((op_name, nl, name, args, body)) => {
-            if *op_name == "defconstant".as_bytes().to_vec() {
-                return compile_defconstant(l, name.to_vec(), args.clone()).map(|x| Some(x));
-            } else if *op_name == "defmacro".as_bytes().to_vec() {
-                return compile_defmacro(opts, l, nl, name.to_vec(), args.clone(), body.clone())
-                    .map(|x| Some(x));
-            } else if *op_name == "defun".as_bytes().to_vec() {
-                return compile_defun(l, nl, false, name.to_vec(), args.clone(), body.clone())
-                    .map(|x| Some(x));
-            } else if *op_name == "defun-inline".as_bytes().to_vec() {
-                return compile_defun(l, nl, true, name.to_vec(), args.clone(), body.clone())
-                    .map(|x| Some(x));
-            }
+    if let Some((op_name, nl, name, args, body)) =
+        body.proper_list().and_then(|pl| match_op_name_4(body.clone(), &pl))
+    {
+        if *op_name == "defconstant".as_bytes().to_vec() {
+            compile_defconstant(l, name.to_vec(), args.clone()).map(|x| Some(x))
+        } else if *op_name == "defmacro".as_bytes().to_vec() {
+            compile_defmacro(opts, l, nl, name.to_vec(), args.clone(), body.clone())
+                .map(|x| Some(x))
+        } else if *op_name == "defun".as_bytes().to_vec() {
+            compile_defun(l, nl, false, name.to_vec(), args.clone(), body.clone())
+                .map(|x| Some(x))
+        } else if *op_name == "defun-inline".as_bytes().to_vec() {
+            compile_defun(l, nl, true, name.to_vec(), args.clone(), body.clone())
+                .map(|x| Some(x))
+        } else {
+            Err(CompileErr(body.loc(), "unknown keyword in helper".to_string()))
         }
-        _ => {}
+    } else {
+        Err(CompileErr(body.loc(), "Helper wasn't in the proper form".to_string()))
     }
-
-    Ok(None)
 }
 
 fn compile_mod_(

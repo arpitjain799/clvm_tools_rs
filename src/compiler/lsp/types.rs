@@ -7,15 +7,20 @@ use std::rc::Rc;
 
 use lsp_server::{
     ExtractError,
+    Notification,
+    Message,
     Request,
     RequestId
 };
 
 use lsp_types::{
+    Diagnostic,
     Position,
+    PublishDiagnosticsParams,
     Range,
     SemanticTokenModifier,
-    SemanticTokenType
+    SemanticTokenType,
+    Url
 };
 
 use crate::compiler::comptypes::{
@@ -251,11 +256,47 @@ pub struct LSPServiceProvider {
 }
 
 impl LSPServiceProvider {
+    pub fn parse_document_and_output_errors(&mut self, uristring: &String) -> Vec<Message> {
+        let mut res = Vec::new();
+
+        self.ensure_parsed_document(&uristring);
+        if let Some(p) = self.get_parsed(uristring) {
+            let mut errors = Vec::new();
+
+            for (_, error) in p.errors.iter() {
+                eprintln!("error {:?}", error);
+                errors.push(Diagnostic {
+                    range: DocRange::from_srcloc(error.0.clone()).to_range(),
+                    severity: None,
+                    code: None,
+                    code_description: None,
+                    source: Some("chialisp".to_string()),
+                    message: error.1.clone(),
+                    tags: None,
+                    related_information: None,
+                    data: None
+                });
+            }
+
+            if !errors.is_empty() {
+                res.push(Message::Notification(Notification {
+                    method: "textDocument/publishDiagnostics".to_string(),
+                    params: serde_json::to_value(PublishDiagnosticsParams {
+                        uri: Url::parse(&uristring).unwrap(),
+                        version: None,
+                        diagnostics: errors
+                    }).unwrap()
+                }));
+            }
+        }
+
+        res
+    }
+
     pub fn with_doc_and_parsed<F,G>(&mut self, uristring: &String, f: F) -> Option<G>
     where
         F: FnOnce(&DocData, &ParsedDoc) -> Option<G>
     {
-        self.ensure_parsed_document(uristring);
         if let (Some(d), Some(p)) = (self.get_doc(uristring), self.get_parsed(uristring)) {
             f(&d, &p)
         } else {

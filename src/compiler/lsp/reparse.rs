@@ -2,7 +2,7 @@ use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use crate::compiler::clvm::sha256tree_from_atom;
+use crate::compiler::clvm::{sha256tree, sha256tree_from_atom};
 use crate::compiler::comptypes::{
     BodyForm,
     CompileErr,
@@ -39,7 +39,7 @@ pub struct ReparsedHelper {
 pub struct ReparsedModule {
     pub args: Rc<SExp>,
     pub helpers: Vec<ReparsedHelper>,
-    pub errors: Vec<CompileErr>,
+    pub errors: HashMap<Vec<u8>, CompileErr>,
     pub unparsed: HashSet<Vec<u8>>,
     pub exp: Rc<BodyForm>,
     pub includes: HashMap<Vec<u8>, Vec<u8>>
@@ -76,7 +76,7 @@ pub fn reparse_subset(
 ) -> ReparsedModule {
     let mut result = ReparsedModule {
         args: compiled.args.clone(),
-        errors: Vec::new(),
+        errors: HashMap::new(),
         helpers: Vec::new(),
         includes: HashMap::new(),
         unparsed: HashSet::new(),
@@ -88,6 +88,8 @@ pub fn reparse_subset(
     // We can take the last phrase and if it's not a helper, we can use it as
     // the end of the document.
     let mut took_args = false;
+    let mut took_exp = false;
+    let mut have_mod = false;
 
     if simple_ranges.len() == 0 {
         // There's nothing to be gained by trying to do incremental.
@@ -114,8 +116,26 @@ pub fn reparse_subset(
                 }
             })
         {
+            let mut form_error_start = 0;
             if prefix_parse.len() > 0 {
-                result.args = Rc::new(prefix_parse[prefix_parse.len()-1].clone());
+                if let SExp::Atom(_,m) = prefix_parse[0].borrow() {
+                    have_mod = m == b"mod";
+                    form_error_start = 2;
+                }
+                if have_mod && prefix_parse.len() == 2 {
+                    took_args = true;
+                    result.args = Rc::new(prefix_parse[prefix_parse.len()-1].clone());
+                }
+            }
+
+            for p in prefix_parse.iter().skip(form_error_start) {
+                result.errors.insert(
+                    sha256tree(Rc::new(p.clone())),
+                    CompileErr(
+                        p.loc(),
+                        "bad form".to_string()
+                    )
+                );
             }
         }
 
@@ -157,6 +177,7 @@ pub fn reparse_subset(
                 if let Ok(body) =
                     compile_bodyform(suffix_parse[suffix_parse.len()-1].clone())
                 {
+                    took_exp = true;
                     result.exp = Rc::new(body);
                 }
             }
@@ -166,14 +187,35 @@ pub fn reparse_subset(
     // Capture the simple ranges, then check each one's hash
     // if the hash isn't present in the helpers we have, we need to run the
     // frontend on it.
+    let start_parsing_forms = if took_args { 0 } else { 1 };
+    let parse_as_body = if have_mod && !took_exp { simple_ranges.len() - 1 } else { simple_ranges.len() };
+
     for (i, r) in simple_ranges.iter().enumerate() {
         let text = grab_scope_doc_range(doc, &r, false);
-        eprintln!("helper text {}", decode_string(&text));
+        eprintln!("{} {} {} helper text {}", i, start_parsing_forms, parse_as_body, decode_string(&text));
         let hash = sha256tree_from_atom(&text);
         if !used_hashes.contains(&hash) {
             if let Ok(parsed) =
                 parse_sexp(Srcloc::new(Rc::new(uristring.clone()), (r.start.line + 1) as usize, (r.start.character + 1) as usize), text.iter().copied())
             {
+                if i < start_parsing_forms {
+                    result.args = parsed[0].clone();
+                    continue;
+                } else if i == parse_as_body {
+                    match compile_bodyform(parsed[0].clone()) {
+                        Ok(body) => { result.exp = Rc::new(body); },
+                        Err(e) => {
+                            result.errors.insert(hash.clone(), e.clone());
+                        }
+                    }
+                    continue;
+                } else if let Some(include) =
+                    parse_include(opts.clone(), parsed[0].clone())
+                {
+                    result.includes.insert(hash.clone(), include.clone());
+                    continue;
+                }
+
                 match compile_helperform(opts.clone(), parsed[0].clone()) {
                     Ok(h) => {
                         if let Some(helper) = h.as_ref() {
@@ -181,25 +223,19 @@ pub fn reparse_subset(
                                 hash,
                                 parsed: helper.clone()
                             });
-                        } else if let Some(include) =
-                            parse_include(opts.clone(), parsed[0].clone())
-                        {
-                            result.includes.insert(hash.clone(), include.clone());
                         } else {
-                            if i == simple_ranges.len() - 1 {
-                                if let Ok(body) =
-                                    compile_bodyform(parsed[0].clone())
-                                {
-                                    result.exp = Rc::new(body);
-                                }
-                            } else if !took_args {
-                                result.args = parsed[0].clone();
-                                took_args = true;
-                            }
+                            result.errors.insert(
+                                hash.clone(),
+                                CompileErr(
+                                    parsed[0].loc(),
+                                    "impossible helper form".to_string()
+                                )
+                            );
                         }
                     },
                     Err(e) => {
-                        result.errors.push(e.clone());
+                        eprintln!("compile_helperform error {:?}", e);
+                        result.errors.insert(hash.clone(), e.clone());
                     }
                 }
             }

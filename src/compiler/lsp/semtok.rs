@@ -337,12 +337,9 @@ impl LSPSemtokRequestHandler for LSPServiceProvider {
         id: RequestId,
         params: &SemanticTokensParams
     ) -> Result<Vec<Message>, String> {
-        let mut res = Vec::new();
-
         eprintln!("got semantic token request #{}: for file {}", id, params.text_document.uri.to_string());
         let uristring = params.text_document.uri.to_string();
-
-        self.ensure_parsed_document(&uristring);
+        let mut res = self.parse_document_and_output_errors(&uristring);
 
         if let Some(frontend) = self.get_parsed(&uristring) {
             let mut our_goto_defs = BTreeMap::new();
