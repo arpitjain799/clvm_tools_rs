@@ -397,9 +397,9 @@ impl LSPServiceProvider {
         }
     }
 
-    pub fn new() -> Self {
+    pub fn new(configured: bool) -> Self {
         LSPServiceProvider {
-            waiting_for_init: true,
+            waiting_for_init: !configured,
             document_collection: Rc::new(RefCell::new(HashMap::new())),
 
             parsed_documents: HashMap::new(),

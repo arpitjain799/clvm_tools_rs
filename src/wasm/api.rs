@@ -498,7 +498,7 @@ pub fn create_lsp_service() -> i32 {
             swap(&mut work_services, servers);
             work_services.insert(
                 new_id,
-                RefCell::new(LSPServiceProvider::new())
+                RefCell::new(LSPServiceProvider::new(false))
             );
             work_services
         })

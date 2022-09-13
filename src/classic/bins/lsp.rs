@@ -25,7 +25,7 @@ use clvm_tools_rs::compiler::srcloc::Srcloc;
 fn main_loop(
     connection: Connection
 ) -> Result<(), Box<dyn Error + Sync + Send>> {
-    let mut lsp_provider = LSPServiceProvider::new();
+    let mut lsp_provider = LSPServiceProvider::new(false);
 
     eprintln!("starting example main loop");
     for msg in &connection.receiver {
