@@ -1,4 +1,4 @@
-let clvm_tools_rs = require('../../mock-test/build/clvm_tools_rs.js');
+let clvm_tools_rs = require('../build/clvm_tools_rs.js');
 let process = require('process');
 
 // clean 1:1 8-bit encoding.
@@ -89,4 +89,4 @@ stdin_reader.deliver_msg = function(m) {
             process.stdout.write(message);
         }
     }
-}
+};
