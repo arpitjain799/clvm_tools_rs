@@ -207,6 +207,42 @@ fn test_completion_from_argument_single_level() {
 }
 
 #[test]
+fn test_completion_from_argument_top_level_only_expected() {
+    let mut lsp = LSPServiceProvider::new(true);
+    let file = "file:///test.cl".to_string();
+    let open_msg = make_did_open_message(&file, 1, indoc!{"
+(mod (X1) ;;; COLLATZ conjecture
+
+;; set language standard
+  (include *standard-cl-22*)
+;; Determine if number is odd
+  (defun-inline odd (X2) (logand X2 1))
+                ;; Actual collatz function
+  ;; determines number of step til 1
+  (defun collatz (N X3)
+    (if (= X3 1) ; We got 1
+      N ; Return the number of steps
+      (let ((incN (+ N 1))) ; Next N
+        (if (odd X3) ; Is it odd?
+          (collatz zoo (+ 1 (* 3 X3))) ; Odd? 3 X + 1
+          (collatz incN (/ X3 2)) ; Even? X / 2
+          )
+        )
+      )
+    )
+  (collatz 0 X) ; Run it
+  )            "}.to_string());
+    let complete_msg = make_completion_request_msg(
+        &file, 2, Position { line: 19, character: 14 }
+    );
+    let out_msgs = run_lsp(&mut lsp, &vec![open_msg, complete_msg]).unwrap();
+    assert_eq!(out_msgs.len() > 0, true);
+    let completion_result = decode_completion_response(&out_msgs[0]).unwrap();
+    assert_eq!(completion_result.len() == 1, true);
+    assert_eq!(completion_result[0].label, "X1");
+}
+
+#[test]
 fn test_completion_from_argument_function() {
     let mut lsp = LSPServiceProvider::new(true);
     let file = "file:///test.cl".to_string();
