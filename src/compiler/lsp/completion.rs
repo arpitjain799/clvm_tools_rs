@@ -38,8 +38,8 @@ fn complete_variable_name(
     res: &mut Vec<Message>,
     id: RequestId,
     doc: &DocData,
-    found_scopes: &Vec<ParseScope>,
-    cpl: &Vec<u8>,
+    found_scopes: &[ParseScope],
+    cpl: &[u8],
 ) {
     let mut result_items = Vec::new();
 
@@ -56,13 +56,13 @@ fn complete_variable_name(
                     get_positional_text(doc, &Position {
                         line: (l.line - 1) as u32,
                         character: l.col as u32
-                    }).filter(is_identifier).
+                    }).filter(|l| is_identifier(l)).
                         map(Some).
                         unwrap_or_else(|| Some(n.clone()))
                 } else {
                     Some(n.clone())
                 }
-            }).filter(|real_name| real_name.starts_with(&cpl));
+            }).filter(|real_name| real_name.starts_with(cpl));
 
         for real_name in viable_completions {
             result_items.push(CompletionItem {
@@ -90,9 +90,8 @@ fn complete_variable_name(
 fn complete_function_name(
     res: &mut Vec<Message>,
     id: RequestId,
-    doc: &DocData,
-    scopes: &Vec<ParseScope>,
-    cpl: &Vec<u8>
+    scopes: &[ParseScope],
+    cpl: &[u8]
 ) {
     let mut result_items = Vec::new();
 
@@ -109,7 +108,7 @@ fn complete_function_name(
                 None
             }
         }).
-        filter(|real_name| real_name.starts_with(&cpl));
+        filter(|real_name| real_name.starts_with(cpl));
 
     for real_name in viable_completions {
         result_items.push(CompletionItem {
@@ -152,10 +151,10 @@ impl LSPCompletionRequestHandler for LSPServiceProvider {
         let mut res = self.parse_document_and_output_errors(&uristring);
 
         self.with_doc_and_parsed(&uristring, |doc,output| {
-            get_positional_text(
+            if let Some(cpl) = get_positional_text(
                 doc,
                 &params.text_document_position.position
-            ).map(|cpl| {
+            ) {
                 let mut found_scopes = Vec::new();
                 let pos = params.text_document_position.position;
                 let want_position = Srcloc::new(
@@ -174,7 +173,6 @@ impl LSPCompletionRequestHandler for LSPServiceProvider {
                     complete_function_name(
                         &mut res,
                         id,
-                        doc,
                         &found_scopes,
                         &cpl
                     );
@@ -187,9 +185,9 @@ impl LSPCompletionRequestHandler for LSPServiceProvider {
                         &cpl
                     );
                 }
-            });
+            }
             Some(res)
-        }).map(|res| Ok(res)).unwrap_or_else(|| Ok(vec![]))
+        }).map(Ok).unwrap_or_else(|| Ok(vec![]))
     }
 }
 

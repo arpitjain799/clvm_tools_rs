@@ -1,26 +1,11 @@
-use std::cmp::Ordering;
 use std::error::Error;
 
-use lsp_types::{
-    InitializeParams,
-    ClientCapabilities
-};
+use lsp_server::{Connection, Message};
 
-use lsp_server::{Connection, ExtractError, Message, Request, RequestId, Response};
-
-use clvm_tools_rs::compiler::compiler::DefaultCompilerOpts;
-use clvm_tools_rs::compiler::comptypes::{
-    BodyForm, CompileErr, CompilerOpts, CompileForm, HelperForm, LetFormKind
-};
-use clvm_tools_rs::compiler::frontend::frontend;
 use clvm_tools_rs::compiler::lsp::{
-    TOKEN_TYPES,
-    TOKEN_MODIFIERS,
     LSPServiceProvider,
     LSPServiceMessageHandler
 };
-use clvm_tools_rs::compiler::sexp::{SExp, parse_sexp};
-use clvm_tools_rs::compiler::srcloc::Srcloc;
 
 fn main_loop(
     connection: Connection
@@ -30,12 +15,12 @@ fn main_loop(
     eprintln!("starting example main loop");
     for msg in &connection.receiver {
         if let Message::Request(req) = &msg {
-            if connection.handle_shutdown(&req)? {
+            if connection.handle_shutdown(req)? {
                 return Ok(());
             }
         }
 
-        let out_msgs = lsp_provider.handle_message(&msg).map_err(|e| Box::<dyn Error + Send + Sync>::from(e))?;
+        let out_msgs = lsp_provider.handle_message(&msg).map_err(Box::<dyn Error + Send + Sync>::from)?;
         for o in out_msgs.into_iter() {
             connection.sender.send(o)?;
         }

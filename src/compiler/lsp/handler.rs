@@ -74,7 +74,7 @@ impl LSPServiceProvider {
         let resp = Response { id, result: Some(result), error: None };
         res.push(Message::Response(resp));
 
-        return Ok(res)
+        Ok(res)
     }
 }
 

@@ -31,7 +31,7 @@ use crate::compiler::lsp::{
     TK_READONLY_BIT
 };
 use crate::compiler::lsp::types::LSPServiceProvider;
-use crate::compiler::sexp::{SExp, decode_string};
+use crate::compiler::sexp::SExp;
 use crate::compiler::srcloc::Srcloc;
 
 #[derive(Clone, Debug)]
@@ -190,7 +190,7 @@ fn process_body_code(
             });
         },
         BodyForm::Call(_, args) => {
-            if args.len() == 0 {
+            if args.is_empty() {
                 return;
             }
 
@@ -244,7 +244,7 @@ fn process_body_code(
 
 pub fn do_semantic_tokens(
     id: RequestId,
-    uristring: &String,
+    uristring: &str,
     goto_def: &mut BTreeMap<SemanticTokenSortable, Srcloc>,
     frontend: &CompileForm
 ) -> Response {
@@ -252,8 +252,7 @@ pub fn do_semantic_tokens(
     let varcollection = HashMap::new();
     for form in frontend.helpers.iter() {
         match form {
-            HelperForm::Defun(l,defun) => {
-                eprintln!("helperform range {}: {}", decode_string(&defun.name), defun.loc.to_string());
+            HelperForm::Defun(_,defun) => {
                 let mut argcollection = HashMap::new();
                 collected_tokens.push(SemanticTokenSortable {
                     loc: defun.nl.clone(),
@@ -272,6 +271,27 @@ pub fn do_semantic_tokens(
                     &varcollection,
                     frontend,
                     defun.body.clone()
+                );
+            },
+            HelperForm::Defmacro(mac) => {
+                let mut argcollection = HashMap::new();
+                collected_tokens.push(SemanticTokenSortable {
+                    loc: mac.nl.clone(),
+                    token_type: TK_FUNCTION_IDX,
+                    token_mod: 1 << TK_DEFINITION_BIT
+                });
+                collect_arg_tokens(
+                    &mut collected_tokens,
+                    &mut argcollection,
+                    mac.args.clone()
+                );
+                process_body_code(
+                    &mut collected_tokens,
+                    goto_def,
+                    &argcollection,
+                    &varcollection,
+                    frontend,
+                    mac.program.exp.clone()
                 );
             },
             _ => { }
@@ -337,7 +357,7 @@ impl LSPSemtokRequestHandler for LSPServiceProvider {
         id: RequestId,
         params: &SemanticTokensParams
     ) -> Result<Vec<Message>, String> {
-        eprintln!("got semantic token request #{}: for file {}", id, params.text_document.uri.to_string());
+        eprintln!("got semantic token request #{}: for file {}", id, params.text_document.uri);
         let uristring = params.text_document.uri.to_string();
         let mut res = self.parse_document_and_output_errors(&uristring);
 

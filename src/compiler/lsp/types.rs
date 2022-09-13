@@ -35,9 +35,6 @@ use lsp_types::{
     WorkDoneProgressOptions,
 };
 
-use crate::compiler::comptypes::{
-    HelperForm
-};
 use crate::compiler::srcloc::Srcloc;
 use crate::compiler::lsp::compopts::LSPCompilerOpts;
 use crate::compiler::lsp::parse::{
@@ -234,8 +231,7 @@ impl DocData {
 
 #[derive(Debug, Clone)]
 struct HelperWithDocRange {
-    pub loc: DocRange,
-    pub h: HelperForm
+    pub loc: DocRange
 }
 
 impl PartialEq for HelperWithDocRange {
@@ -271,10 +267,10 @@ pub struct LSPServiceProvider {
 }
 
 impl LSPServiceProvider {
-    pub fn parse_document_and_output_errors(&mut self, uristring: &String) -> Vec<Message> {
+    pub fn parse_document_and_output_errors(&mut self, uristring: &str) -> Vec<Message> {
         let mut res = Vec::new();
 
-        self.ensure_parsed_document(&uristring);
+        self.ensure_parsed_document(uristring);
         if let Some(p) = self.get_parsed(uristring) {
             let mut errors = Vec::new();
 
@@ -297,7 +293,7 @@ impl LSPServiceProvider {
                 res.push(Message::Notification(Notification {
                     method: "textDocument/publishDiagnostics".to_string(),
                     params: serde_json::to_value(PublishDiagnosticsParams {
-                        uri: Url::parse(&uristring).unwrap(),
+                        uri: Url::parse(uristring).unwrap(),
                         version: None,
                         diagnostics: errors
                     }).unwrap()
@@ -308,7 +304,7 @@ impl LSPServiceProvider {
         res
     }
 
-    pub fn with_doc_and_parsed<F,G>(&mut self, uristring: &String, f: F) -> Option<G>
+    pub fn with_doc_and_parsed<F,G>(&mut self, uristring: &str, f: F) -> Option<G>
     where
         F: FnOnce(&DocData, &ParsedDoc) -> Option<G>
     {
@@ -319,13 +315,13 @@ impl LSPServiceProvider {
         }
     }
 
-    pub fn get_doc(&self, uristring: &String) -> Option<DocData> {
+    pub fn get_doc(&self, uristring: &str) -> Option<DocData> {
         let cell: &RefCell<HashMap<String, DocData>> = self.document_collection.borrow();
         let coll: Ref<HashMap<String, DocData>> = cell.borrow();
-        (&coll).get(uristring).map(|x| x.clone())
+        (&coll).get(uristring).cloned()
     }
 
-    pub fn get_parsed(&self, uristring: &String) -> Option<ParsedDoc> {
+    pub fn get_parsed(&self, uristring: &str) -> Option<ParsedDoc> {
         self.parsed_documents.get(uristring).cloned()
     }
 
@@ -344,11 +340,11 @@ impl LSPServiceProvider {
         self.parsed_documents.insert(uristring, p);
     }
 
-    pub fn ensure_parsed_document<'a>(
+    pub fn ensure_parsed_document(
         &mut self,
-        uristring: &String
+        uristring: &str
     ) {
-        let opts = Rc::new(LSPCompilerOpts::new(uristring.clone(), self.document_collection.clone()));
+        let opts = Rc::new(LSPCompilerOpts::new(uristring, self.document_collection.clone()));
 
         if let Some(doc) = self.get_doc(uristring) {
             let startloc = Srcloc::start(uristring);
@@ -358,14 +354,14 @@ impl LSPServiceProvider {
                 });
             let ranges = make_simple_ranges(&doc.text);
             let new_helpers = reparse_subset(
-                opts.clone(),
+                opts,
                 &doc.text,
                 uristring,
                 &ranges,
                 &output.compiled,
                 &output.hashes
             );
-            self.save_parse(uristring.clone(), combine_new_with_old_parse(
+            self.save_parse(uristring.to_owned(), combine_new_with_old_parse(
                 uristring, &doc.text, &output, &new_helpers
             ));
         }
@@ -407,7 +403,7 @@ impl LSPServiceProvider {
         }
     }
 
-    pub fn get_file(&self, filename: &String) -> Result<String, String> {
+    pub fn get_file(&self, filename: &str) -> Result<String, String> {
         self.get_doc(filename).map(|d| stringify_doc(&d.text)).unwrap_or_else(|| Err(format!("don't have file {}", filename)))
     }
 }

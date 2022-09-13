@@ -263,7 +263,6 @@ fn test_completion_from_argument_function() {
 
 #[test]
 fn test_first_in_list() {
-    let file = "file:///test.cl".to_string();
     let file_data = "( test1 test2)".to_string();
     let doc = DocData { text: split_text(&file_data) };
     let pos = Position {
@@ -275,7 +274,6 @@ fn test_first_in_list() {
 
 #[test]
 fn test_not_first_in_list() {
-    let file = "file:///test.cl".to_string();
     let file_data = "( test1 test2)".to_string();
     let doc = DocData { text: split_text(&file_data) };
     let pos = Position {
@@ -287,8 +285,6 @@ fn test_not_first_in_list() {
 
 #[test]
 fn test_patch_document_1() {
-    let mut lsp = LSPServiceProvider::new(true);
-    let file = "file:///test.cl".to_string();
     let content = "(mod (A) ;;; COLLATZ conjecture\n\n;; set language standard\n  (include *standard-cl-22*)\n;; Determine if number is odd\n  (defun-inline odd (X) (logand X 1))\n                ;; Actual collatz function\n  ;; determines number of step til 1\n  (defun collatz (N X zook)\n    (if (= X 1) ; We got 1\n      N ; Return the number of steps\n      (let ((incN (+ N 1))) ; Next N\n        (if (odd X) ; Is it odd?\n          (collatz incN (+ 1 (* 3 X))) ; Odd? 3 X + 1\n          (collatz incN (/ X 2)) ; Even? X / 2\n          )\n        )\n      )\n    )\n  (collatz 0 A) ; Run it\n  )".to_string();
     let changes = vec![
         TextDocumentContentChangeEvent {
@@ -311,8 +307,6 @@ fn test_patch_document_1() {
 
 #[test]
 fn test_patch_document_2() {
-    let mut lsp = LSPServiceProvider::new(true);
-    let file = "file:///test.cl".to_string();
     let content = "(mod (A) ;;; COLLATZ conjecture\n\n;; set language standard\n  (include *standard-cl-22*)\n;; Determine if number is odd\n  (defun-inline odd (X) (logand X 1))\n                ;; Actual collatz function\n  ;; determines number of step til 1\n  (defun collatz (N X zook)\n    (if (= X 1) ; We got 1\n      N ; Return the number of steps\n      (let ((incN (+ N 1))) ; Next N\n        (if (odd X) ; Is it odd?\n          (collatz  (+ 1 (* 3 X))) ; Odd? 3 X + 1\n          (collatz incN (/ X 2)) ; Even? X / 2\n          )\n        )\n      )\n    )\n  (collatz 0 A) ; Run it\n  )".to_string();
     let changes = vec![
         TextDocumentContentChangeEvent {
@@ -335,7 +329,6 @@ fn test_patch_document_2() {
 
 #[test]
 fn test_patch_document_3() {
-    let file = "file:///test.cl".to_string();
     let content = "(test\n  1\n  2\n  3)".to_string();
     let changes = vec![
         TextDocumentContentChangeEvent {
@@ -358,7 +351,6 @@ fn test_patch_document_3() {
 
 #[test]
 fn test_simple_ranges() {
-    let file = "file:///test.cl".to_string();
     let content = "(mod ()\n  (defun F (X)\n    ()\n    )\n  (F 3)\n  )".to_string();
     let simple_ranges = make_simple_ranges(&split_text(&content));
     assert_eq!(simple_ranges, vec![
@@ -412,7 +404,6 @@ fn run_reparse_steps(
     for content in text_inputs.iter() {
         let text = split_text(&content);
         let ranges = make_simple_ranges(&text);
-        let l = Srcloc::start(&file);
         let reparsed = reparse_subset(
             opts.clone(),
             &text,

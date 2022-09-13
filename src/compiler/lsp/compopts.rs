@@ -68,9 +68,9 @@ impl CompilerOpts for LSPCompilerOpts {
         self.prim_map.clone()
     }
 
-    fn set_search_paths(&self, dirs: &Vec<String>) -> Rc<dyn CompilerOpts> {
+    fn set_search_paths(&self, dirs: &[String]) -> Rc<dyn CompilerOpts> {
         let mut copy = self.clone();
-        copy.include_dirs = dirs.clone();
+        copy.include_dirs = dirs.to_owned();
         Rc::new(copy)
     }
     fn set_in_defun(&self, new_in_defun: bool) -> Rc<dyn CompilerOpts> {
@@ -141,16 +141,16 @@ impl CompilerOpts for LSPCompilerOpts {
         symbol_table: &mut HashMap<String, String>,
     ) -> Result<SExp, CompileErr> {
         let me = Rc::new(self.clone());
-        eprintln!("compile_program {}", sexp.to_string());
-        compile_pre_forms(allocator, runner, me, &vec![sexp.clone()], symbol_table)
+        eprintln!("compile_program {}", sexp);
+        compile_pre_forms(allocator, runner, me, &[sexp], symbol_table)
     }
 }
 
 impl LSPCompilerOpts {
-    pub fn new(filename: String, docs: Rc<RefCell<HashMap<String, DocData>>>) -> Self {
+    pub fn new(filename: &str, docs: Rc<RefCell<HashMap<String, DocData>>>) -> Self {
         LSPCompilerOpts {
             include_dirs: vec![".".to_string()],
-            filename: filename,
+            filename: filename.to_owned(),
             compiler: None,
             in_defun: false,
             stdenv: true,
@@ -158,12 +158,12 @@ impl LSPCompilerOpts {
             frontend_opt: false,
             start_env: None,
             prim_map: create_prim_map(),
-            lsp: docs.clone(),
+            lsp: docs,
             known_dialects: Rc::new(KNOWN_DIALECTS.clone())
         }
     }
 
-    fn get_file(&self, name: &String) -> Result<DocData, String> {
+    fn get_file(&self, name: &str) -> Result<DocData, String> {
         let cell: &RefCell<HashMap<String, DocData>> = self.lsp.borrow();
         let coll: Ref<HashMap<String, DocData>> = cell.borrow();
         (&coll).get(name).map(|x| Ok(x.clone())).unwrap_or_else(|| Err(format!("don't have {} to open", name)))

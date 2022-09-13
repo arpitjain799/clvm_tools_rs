@@ -46,7 +46,7 @@ pub struct ReparsedModule {
 }
 
 pub fn parse_include(
-    opts: Rc<dyn CompilerOpts>,
+    _opts: Rc<dyn CompilerOpts>, // Needed to resolve new files when we do that.
     sexp: Rc<SExp>
 ) -> Option<Vec<u8>> {
     sexp.proper_list().and_then(|l| {
@@ -69,8 +69,8 @@ pub fn parse_include(
 pub fn reparse_subset(
     opts: Rc<dyn CompilerOpts>,
     doc: &[Rc<Vec<u8>>],
-    uristring: &String,
-    simple_ranges: &Vec<DocRange>,
+    uristring: &str,
+    simple_ranges: &[DocRange],
     compiled: &CompileForm,
     used_hashes: &HashSet<Vec<u8>>
 ) -> ReparsedModule {
@@ -91,16 +91,16 @@ pub fn reparse_subset(
     let mut took_exp = false;
     let mut have_mod = false;
 
-    if simple_ranges.len() == 0 {
+    if simple_ranges.is_empty() {
         // There's nothing to be gained by trying to do incremental.
         return result;
     } else {
         // Find out if there's a single atom before the first identified
         // expression.
-        let docstart = Srcloc::start(&uristring);
+        let docstart = Srcloc::start(uristring);
         let prefix_start = DocPosition { line: 0, character: 0 };
         let prefix_range = DocRange {
-            start: prefix_start.clone(),
+            start: prefix_start,
             end: simple_ranges[0].start.clone()
         };
         let mut prefix_text = grab_scope_doc_range(doc, &prefix_range, false);
@@ -109,7 +109,7 @@ pub fn reparse_subset(
         if let Some(prefix_parse) =
             parse_sexp(docstart, prefix_text.iter().copied()).ok().
             and_then(|s| {
-                if s.len() == 0 {
+                if s.is_empty() {
                     None
                 } else {
                     s[0].proper_list()
@@ -117,7 +117,7 @@ pub fn reparse_subset(
             })
         {
             let mut form_error_start = 0;
-            if prefix_parse.len() > 0 {
+            if !prefix_parse.is_empty() {
                 if let SExp::Atom(_,m) = prefix_parse[0].borrow() {
                     have_mod = m == b"mod";
                     form_error_start = 2;
@@ -163,17 +163,17 @@ pub fn reparse_subset(
 
         suffix_text = suffix_text.iter().take(break_end).copied().collect();
 
-        if let Some(suffix_parse) =
+        if let Ok(suffix_parse) =
             parse_sexp(
                 Srcloc::new(
-                    Rc::new(uristring.clone()),
+                    Rc::new(uristring.to_owned()),
                     (suffix_start.line + 1) as usize,
                     (suffix_start.character + 1) as usize
                 ),
                 suffix_text.iter().copied()
-            ).ok()
+            )
         {
-            if suffix_parse.len() > 0 {
+            if !suffix_parse.is_empty() {
                 if let Ok(body) =
                     compile_bodyform(suffix_parse[suffix_parse.len()-1].clone())
                 {
@@ -191,12 +191,12 @@ pub fn reparse_subset(
     let parse_as_body = if have_mod && !took_exp { simple_ranges.len() - 1 } else { simple_ranges.len() };
 
     for (i, r) in simple_ranges.iter().enumerate() {
-        let text = grab_scope_doc_range(doc, &r, false);
+        let text = grab_scope_doc_range(doc, r, false);
         eprintln!("{} {} {} helper text {}", i, start_parsing_forms, parse_as_body, decode_string(&text));
         let hash = sha256tree_from_atom(&text);
         if !used_hashes.contains(&hash) {
             if let Ok(parsed) =
-                parse_sexp(Srcloc::new(Rc::new(uristring.clone()), (r.start.line + 1) as usize, (r.start.character + 1) as usize), text.iter().copied())
+                parse_sexp(Srcloc::new(Rc::new(uristring.to_owned()), (r.start.line + 1) as usize, (r.start.character + 1) as usize), text.iter().copied())
             {
                 if i < start_parsing_forms {
                     result.args = parsed[0].clone();
@@ -248,7 +248,7 @@ pub fn reparse_subset(
 }
 
 pub fn combine_new_with_old_parse(
-    uristring: &String,
+    uristring: &str,
     text: &[Rc<Vec<u8>>],
     parsed: &ParsedDoc,
     reparse: &ReparsedModule
@@ -300,7 +300,7 @@ pub fn combine_new_with_old_parse(
     ParsedDoc {
         compiled: new_compile.remove_helpers(&to_remove_helpers),
         errors: reparse.errors.clone(),
-        scopes: recover_scopes(uristring, &text, &new_compile),
+        scopes: recover_scopes(uristring, text, &new_compile),
         name_to_hash: new_pointers,
         hashes: new_hashes,
         includes: new_includes

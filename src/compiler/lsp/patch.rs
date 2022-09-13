@@ -13,36 +13,33 @@ pub trait PatchableDocument {
 }
 
 pub trait LSPServiceProviderApplyDocumentPatch {
-    fn apply_document_patch(&mut self, uristring: &String, patches: &[TextDocumentContentChangeEvent]);
+    fn apply_document_patch(&mut self, uristring: &str, patches: &[TextDocumentContentChangeEvent]);
 }
 
-pub fn split_text(td: &String) -> Vec<Rc<Vec<u8>>> {
-    let result: Vec<Rc<Vec<u8>>> = td.split("\n").map(|x| Rc::new(x.as_bytes().to_vec())).collect();
+pub fn split_text(td: &str) -> Vec<Rc<Vec<u8>>> {
+    let result: Vec<Rc<Vec<u8>>> = td.split('\n').map(|x| Rc::new(x.as_bytes().to_vec())).collect();
     result
 }
 
-pub fn stringify_doc(d: &Vec<Rc<Vec<u8>>>) -> Result<String, String> {
+pub fn stringify_doc(d: &[Rc<Vec<u8>>]) -> Result<String, String> {
     let bytes = DocVecByteIter::new(d).collect();
     String::from_utf8(bytes).map_err(|_| "no conversion from utf8".to_string())
 }
 
 impl PatchableDocument for DocData {
     fn apply_patch(&self, patches: &[TextDocumentContentChangeEvent]) -> Self {
-        let mut last_line = 1;
-        let mut last_col = 1;
         let mut doc_copy = self.text.clone();
 
         // Try to do an efficient job of patching the old document content.
         for p in patches.iter() {
             if let Some(r) = p.range {
-                let split_data = split_text(&p.text);
-                let mut prelude_start =
+                let prelude_start =
                     if r.start.line > 0 {
                         self.text.iter().take(r.start.line as usize).collect()
                     } else {
                         vec![]
                     };
-                let mut suffix_after =
+                let suffix_after =
                     if (r.end.line as usize) < self.text.len() - 1 {
                         self.text.iter().skip((r.end.line + 1) as usize).collect()
                     } else {
@@ -66,11 +63,11 @@ impl PatchableDocument for DocData {
                     };
 
                 for (i, l) in prelude_start.iter().enumerate() {
-                    eprintln!("P {}: {}", i, decode_string(&l));
+                    eprintln!("P {}: {}", i, decode_string(l));
                 }
 
                 for (i, l) in suffix_after.iter().enumerate() {
-                    eprintln!("S {}: {}", i, decode_string(&l));
+                    eprintln!("S {}: {}", i, decode_string(l));
                 }
 
                 let split_input = split_text(&p.text);
@@ -91,7 +88,7 @@ impl PatchableDocument for DocData {
                     line_prefix.append(&mut line_suffix);
                 } else if split_input.len() == 1 {
                     let input_line: &Vec<u8> = split_input[0].borrow();
-                    let mut copied_vec: Vec<u8> = input_line.iter().copied().collect();
+                    let mut copied_vec: Vec<u8> = input_line.to_vec();
                     line_prefix.append(&mut copied_vec);
                     line_prefix.append(&mut line_suffix);
                     doc_copy.push(Rc::new(line_prefix));
@@ -123,19 +120,19 @@ impl PatchableDocument for DocData {
 }
 
 impl LSPServiceProviderApplyDocumentPatch for LSPServiceProvider {
-    fn apply_document_patch(&mut self, uristring: &String, patches: &[TextDocumentContentChangeEvent]) {
+    fn apply_document_patch(&mut self, uristring: &str, patches: &[TextDocumentContentChangeEvent]) {
         if let Some(dd) = self.get_doc(uristring) {
             if patches.len() == 1 && patches[0].range.is_none() {
                 // We can short circuit a full document rewrite.
                 // There are no hanging patches as a result.
-                self.save_doc(uristring.clone(), DocData {
+                self.save_doc(uristring.to_owned(), DocData {
                     text: split_text(&patches[0].text)
                 });
                 return;
             }
 
             let new_doc = dd.apply_patch(patches);
-            self.save_doc(uristring.clone(), new_doc);
+            self.save_doc(uristring.to_owned(), new_doc);
         }
     }
 }
