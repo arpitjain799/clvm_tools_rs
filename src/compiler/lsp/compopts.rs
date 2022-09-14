@@ -124,10 +124,10 @@ impl CompilerOpts for LSPCompilerOpts {
             }
         }
 
-        return Err(CompileErr(
+        Err(CompileErr(
             Srcloc::start(&inc_from),
             format!("could not find {} to include", filename),
-        ));
+        ))
     }
 
     fn compile_program(
