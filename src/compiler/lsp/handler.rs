@@ -135,7 +135,10 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                     if let Ok(params) = serde_json::from_str::<DidOpenTextDocumentParams>(&stringified_params) {
                         self.save_doc(
                             params.text_document.uri.to_string(),
-                            DocData { text: split_text(&params.text_document.text) }
+                            DocData {
+                                text: split_text(&params.text_document.text),
+                                version: params.text_document.version
+                            }
                         );
                     } else {
                         eprintln!("cast failed in didOpen");
@@ -144,7 +147,7 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                     let stringified_params = serde_json::to_string(&not.params).unwrap();
                     if let Ok(params) = serde_json::from_str::<DidChangeTextDocumentParams>(&stringified_params) {
                         let doc_id = params.text_document.uri.to_string();
-                        self.apply_document_patch(&doc_id, &params.content_changes);
+                        self.apply_document_patch(&doc_id, params.text_document.version, &params.content_changes);
                     } else {
                         eprintln!("case failed in didChange");
                     }

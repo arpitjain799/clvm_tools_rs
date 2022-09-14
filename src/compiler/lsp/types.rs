@@ -180,6 +180,7 @@ impl DocRange {
 #[derive(Debug, Clone)]
 pub struct DocData {
     pub text: Vec<Rc<Vec<u8>>>,
+    pub version: i32
 }
 
 impl DocData {
@@ -271,7 +272,9 @@ impl LSPServiceProvider {
         let mut res = Vec::new();
 
         self.ensure_parsed_document(uristring);
-        if let Some(p) = self.get_parsed(uristring) {
+        if let (Some(d), Some(p)) =
+            (self.get_doc(uristring), self.get_parsed(uristring))
+        {
             let mut errors = Vec::new();
 
             for (_, error) in p.errors.iter() {
@@ -289,12 +292,12 @@ impl LSPServiceProvider {
                 });
             }
 
-            if !errors.is_empty() {
+            if !errors.is_empty() || d.version > 1 {
                 res.push(Message::Notification(Notification {
                     method: "textDocument/publishDiagnostics".to_string(),
                     params: serde_json::to_value(PublishDiagnosticsParams {
                         uri: Url::parse(uristring).unwrap(),
-                        version: None,
+                        version: Some(d.version),
                         diagnostics: errors
                     }).unwrap()
                 }));

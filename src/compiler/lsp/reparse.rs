@@ -297,6 +297,8 @@ pub fn combine_new_with_old_parse(
         }
     }
 
+    eprintln!("errors {:?}", reparse.errors);
+
     ParsedDoc {
         compiled: new_compile.remove_helpers(&to_remove_helpers),
         errors: reparse.errors.clone(),
