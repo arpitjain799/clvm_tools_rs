@@ -3,6 +3,7 @@ use std::cell::{Ref, RefCell};
 use std::cmp::{Ordering, PartialOrd};
 use std::collections::{BTreeMap, HashMap};
 use std::mem::swap;
+use std::path::Path;
 use std::rc::Rc;
 
 use lsp_server::{
@@ -14,29 +15,35 @@ use lsp_server::{
 };
 
 use lsp_types::{
+    CompletionOptions,
     Diagnostic,
+    InitializeParams,
+    OneOf,
     Position,
     PublishDiagnosticsParams,
     Range,
     SemanticTokenModifier,
-    SemanticTokenType,
-    Url,
-
-    OneOf,
-
-    CompletionOptions,
     SemanticTokensLegend,
     SemanticTokensFullOptions,
     SemanticTokensOptions,
     SemanticTokensServerCapabilities,
+    SemanticTokenType,
     ServerCapabilities,
     TextDocumentSyncCapability,
     TextDocumentSyncKind,
-    WorkDoneProgressOptions,
+    Url,
+    WorkDoneProgressOptions
 };
 
+use serde::{Deserialize, Serialize};
+
+use crate::compiler::clvm::sha256tree_from_atom;
+use crate::compiler::sexp::decode_string;
 use crate::compiler::srcloc::Srcloc;
-use crate::compiler::lsp::compopts::LSPCompilerOpts;
+use crate::compiler::lsp::compopts::{
+    LSPCompilerOpts,
+    get_file_content
+};
 use crate::compiler::lsp::parse::{
     ParsedDoc,
     make_simple_ranges
@@ -45,6 +52,7 @@ use crate::compiler::lsp::patch::{
     stringify_doc
 };
 use crate::compiler::lsp::reparse::{
+    ReparsedHelper,
     combine_new_with_old_parse,
     reparse_subset
 };
@@ -254,9 +262,26 @@ impl Ord for HelperWithDocRange {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigJson {
+    pub include_paths: Vec<String>
+}
+
+impl Default for ConfigJson {
+    fn default() -> Self {
+        ConfigJson { include_paths: vec![] }
+    }
+}
+
+pub enum InitState {
+    Preconfig,
+    Initialized(InitializeParams)
+}
+
 pub struct LSPServiceProvider {
-    // Waiting for init msg.
-    pub waiting_for_init: bool,
+    // Init params.
+    pub init: Option<InitState>,
+    pub config: ConfigJson,
 
     // Let document collection be sharable due to the need to capture it for
     // use in compiler opts.
@@ -347,7 +372,7 @@ impl LSPServiceProvider {
         &mut self,
         uristring: &str
     ) {
-        let opts = Rc::new(LSPCompilerOpts::new(uristring, self.document_collection.clone()));
+        let opts = Rc::new(LSPCompilerOpts::new(uristring, &self.config.include_paths, self.document_collection.clone()));
 
         if let Some(doc) = self.get_doc(uristring) {
             let startloc = Srcloc::start(uristring);
@@ -356,7 +381,8 @@ impl LSPServiceProvider {
                     ParsedDoc::new(startloc)
                 });
             let ranges = make_simple_ranges(&doc.text);
-            let new_helpers = reparse_subset(
+            eprintln!("file {} ranges {:?}", uristring, ranges);
+            let mut new_helpers = reparse_subset(
                 opts,
                 &doc.text,
                 uristring,
@@ -364,6 +390,27 @@ impl LSPServiceProvider {
                 &output.compiled,
                 &output.hashes
             );
+
+            for (_, incfile) in new_helpers.includes.iter() {
+                eprintln!("incfile {}", decode_string(incfile));
+                if let Ok((filename, file_body)) = get_file_content(&self.config.include_paths, &decode_string(incfile)) {
+                    let file_uri = format!("file://{}", filename);
+                    eprintln!("incfile uri {}", file_uri);
+                    self.save_doc(file_uri.clone(), file_body);
+                    self.ensure_parsed_document(&file_uri);
+                    if let Some(p) = self.get_parsed(&file_uri) {
+                        eprintln!("parsed {:?}", p);
+                        for h in p.compiled.helpers.iter().cloned() {
+                            eprintln!("helper {}", decode_string(h.name()));
+                            new_helpers.helpers.push(ReparsedHelper {
+                                hash: sha256tree_from_atom(h.name()),
+                                parsed: h.clone()
+                            });
+                        }
+                    }
+                }
+            }
+
             self.save_parse(uristring.to_owned(), combine_new_with_old_parse(
                 uristring, &doc.text, &output, &new_helpers
             ));
@@ -398,12 +445,55 @@ impl LSPServiceProvider {
 
     pub fn new(configured: bool) -> Self {
         LSPServiceProvider {
-            waiting_for_init: !configured,
+            init: if configured {
+                Some(InitState::Preconfig)
+            } else {
+                None
+            },
+            config: Default::default(),
+
             document_collection: Rc::new(RefCell::new(HashMap::new())),
 
             parsed_documents: HashMap::new(),
             goto_defs: HashMap::new(),
         }
+    }
+
+    pub fn get_workspace_root(&self) -> Option<String> {
+        if let Some(InitState::Initialized(init)) = &self.init {
+            init.root_uri.as_ref().and_then(|uri| {
+                let us = uri.to_string();
+                if us.starts_with("file://") {
+                    return Some(us[7..].to_owned());
+                }
+
+                None
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn get_relative_path(&self, target: &str) -> Option<String> {
+        if let Some(r) = self.get_workspace_root() {
+            if target == "." {
+                return Path::new(&r).to_str().map(|o| o.to_owned());
+            } else if target.len() < 2 {
+                return Path::new(&r).join(target).to_str().map(|o| o.to_owned());
+            }
+
+            Path::new(&r).join(target[2..].to_string()).to_str().map(|o| o.to_owned())
+        } else {
+            None
+        }
+    }
+
+    pub fn get_config_path(&self) -> Option<String> {
+        self.get_workspace_root().and_then(|r| {
+            let p = Path::new(&r).join("chialisp.json");
+            eprintln!("config path {:?}", p);
+            p.to_str().map(|s| s.to_owned())
+        })
     }
 
     pub fn get_file(&self, filename: &str) -> Result<String, String> {

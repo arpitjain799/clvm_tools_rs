@@ -1,8 +1,11 @@
+use std::fs::read;
+use std::path::Path;
 use std::rc::Rc;
 
 use lsp_types::{
     request::Completion,
     request::GotoDefinition,
+    request::Initialize,
     request::SemanticTokensFullRequest,
     DidChangeTextDocumentParams,
     DidOpenTextDocumentParams,
@@ -23,9 +26,12 @@ use crate::compiler::lsp::patch::{
 use crate::compiler::lsp::semtok::LSPSemtokRequestHandler;
 use crate::compiler::lsp::types::{
     cast,
+    ConfigJson,
     DocData,
+    InitState,
     LSPServiceProvider
 };
+use crate::compiler::sexp::decode_string;
 use crate::compiler::srcloc::Srcloc;
 
 pub trait LSPServiceMessageHandler {
@@ -81,26 +87,57 @@ impl LSPServiceProvider {
 impl LSPServiceMessageHandler for LSPServiceProvider {
     fn handle_message(&mut self, msg: &Message) -> Result<Vec<Message>, String> {
         // Handle initialization.
-        if self.waiting_for_init {
+        if self.init.is_none() {
             if let Message::Request(req) = msg {
                 if req.method == "initialize" {
-                    self.waiting_for_init = false;
-                    let server_capabilities = LSPServiceProvider::get_capabilities();
+                    if let Ok((_, params)) = cast::<Initialize>(req.clone()) {
+                        self.init = Some(InitState::Initialized(params));
+                        // Try to read the config data
+                        if let Some(config) =
+                            self.get_config_path().and_then(|config_path| {
+                                read(config_path).ok()
+                            }).and_then(|config_data| {
+                                serde_json::from_str(&decode_string(&config_data)).ok()
+                            }).map(|config: ConfigJson| {
+                                let mut result = config.clone();
+                                result.include_paths.clear();
 
-                    let initialize_data = serde_json::json!({
-                        "capabilities": server_capabilities,
-                        "serverInfo": {
-                            "name": "chialisp-lsp",
-                            "version": "0.1"
+                                for p in config.include_paths.iter() {
+                                    if p.starts_with(".") {
+                                        if let Some(path_str) = self.get_relative_path(p) {
+                                            result.include_paths.push(path_str.to_owned());
+                                        }
+                                    } else {
+                                        if let Some(ps) = Path::new(p).to_str() {
+                                            result.include_paths.push(ps.to_owned());
+                                        }
+                                    }
+                                }
+
+                                result
+                            })
+                        {
+                            // We have a config file and can read the filesystem.
+                            self.config = config;
                         }
-                    });
 
-                    let resp = Response::new_ok(
-                        req.id.clone(),
-                        initialize_data
-                    );
+                        let server_capabilities = LSPServiceProvider::get_capabilities();
 
-                    return Ok(vec![Message::Response(resp)]);
+                        let initialize_data = serde_json::json!({
+                            "capabilities": server_capabilities,
+                            "serverInfo": {
+                                "name": "chialisp-lsp",
+                                "version": "0.1"
+                            }
+                        });
+
+                        let resp = Response::new_ok(
+                            req.id.clone(),
+                            initialize_data
+                        );
+
+                        return Ok(vec![Message::Response(resp)]);
+                    }
                 } else {
                     let resp = Response::new_err(
                         req.id.clone(),

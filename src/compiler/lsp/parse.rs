@@ -42,7 +42,7 @@ pub struct ParsedDoc {
     pub scopes: ParseScope,
     pub name_to_hash: HashMap<Vec<u8>, Vec<u8>>,
     pub hashes: HashSet<Vec<u8>>,
-    pub includes: HashMap<Vec<u8>, Vec<u8>>
+    pub includes: HashMap<Vec<u8>, Vec<u8>>,
 }
 
 impl ParsedDoc {

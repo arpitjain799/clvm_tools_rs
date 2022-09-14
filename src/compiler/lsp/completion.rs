@@ -23,8 +23,15 @@ use crate::compiler::lsp::parse::{
     is_first_in_list
 };
 use crate::compiler::lsp::types::DocData;
+use crate::compiler::prims::prims;
 use crate::compiler::sexp::{SExp, decode_string};
 use crate::compiler::srcloc::Srcloc;
+
+lazy_static! {
+    static ref PRIM_NAMES: Vec<Vec<u8>> = {
+        prims().iter().map(|p| p.0.clone()).collect()
+    };
+}
 
 pub trait LSPCompletionRequestHandler {
     fn handle_completion_request(
@@ -99,7 +106,7 @@ fn complete_function_name(
         return;
     }
 
-    let viable_completions =
+    let mut viable_completions: Vec<Vec<u8>> =
         scopes[scopes.len()-1].functions.iter().
         filter_map(|sexp| {
             if let SExp::Atom(_,name) = sexp {
@@ -107,8 +114,11 @@ fn complete_function_name(
             } else {
                 None
             }
-        }).
-        filter(|real_name| real_name.starts_with(cpl));
+        }).collect();
+    viable_completions.append(&mut PRIM_NAMES.clone());
+
+    viable_completions = viable_completions.iter().
+        filter(|real_name| real_name.starts_with(cpl)).cloned().collect();
 
     for real_name in viable_completions {
         result_items.push(CompletionItem {

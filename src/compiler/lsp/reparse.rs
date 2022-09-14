@@ -187,7 +187,7 @@ pub fn reparse_subset(
     // Capture the simple ranges, then check each one's hash
     // if the hash isn't present in the helpers we have, we need to run the
     // frontend on it.
-    let start_parsing_forms = if took_args { 0 } else { 1 };
+    let start_parsing_forms = if took_args { 0 } else if have_mod { 1 } else { 0 };
     let parse_as_body = if have_mod && !took_exp { simple_ranges.len() - 1 } else { simple_ranges.len() };
 
     for (i, r) in simple_ranges.iter().enumerate() {
@@ -254,12 +254,14 @@ pub fn combine_new_with_old_parse(
     reparse: &ReparsedModule
 ) -> ParsedDoc {
     let mut new_hashes = reparse.unparsed.clone();
+
     // An exclusive collection from names to hashes.
     // This will let us eliminate functions that have disappeared or renamed.
     let mut new_pointers = HashMap::new();
     let mut new_includes = reparse.includes.clone();
 
     for new_helper in reparse.helpers.iter() {
+        eprintln!("new_helper {}", decode_string(new_helper.parsed.name()));
         new_hashes.insert(new_helper.hash.clone());
         new_pointers.insert(new_helper.parsed.name().clone(), new_helper.hash.clone());
     }

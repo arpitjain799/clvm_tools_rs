@@ -1,6 +1,8 @@
 use std::borrow::Borrow;
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
+use std::fs::read;
+use std::path::Path;
 use std::rc::Rc;
 
 use clvmr::allocator::Allocator;
@@ -17,9 +19,9 @@ use crate::compiler::comptypes::{
     CompilerOpts,
     PrimaryCodegen
 };
-use crate::compiler::lsp::patch::stringify_doc;
+use crate::compiler::lsp::patch::{split_text, stringify_doc};
 use crate::compiler::lsp::types::DocData;
-use crate::compiler::sexp::SExp;
+use crate::compiler::sexp::{SExp, decode_string};
 use crate::compiler::srcloc::Srcloc;
 
 #[derive(Clone, Debug)]
@@ -146,10 +148,27 @@ impl CompilerOpts for LSPCompilerOpts {
     }
 }
 
+pub fn get_file_content(
+    include_paths: &[String],
+    name: &str
+) -> Result<(String, DocData), String> {
+    for find_path in include_paths.iter() {
+        if let Some(try_path) = Path::new(&find_path).join(name).to_str() {
+            if let Ok(filedata) = read(try_path) {
+                return Ok((try_path.to_string(), DocData {
+                    text: split_text(&decode_string(&filedata)),
+                    version: -1
+                }));
+            }
+        }
+    }
+    Err(format!("don't have {} to open", name))
+}
+
 impl LSPCompilerOpts {
-    pub fn new(filename: &str, docs: Rc<RefCell<HashMap<String, DocData>>>) -> Self {
+    pub fn new(filename: &str, paths: &[String], docs: Rc<RefCell<HashMap<String, DocData>>>) -> Self {
         LSPCompilerOpts {
-            include_dirs: vec![".".to_string()],
+            include_dirs: paths.to_owned(),
             filename: filename.to_owned(),
             compiler: None,
             in_defun: false,
@@ -166,6 +185,9 @@ impl LSPCompilerOpts {
     fn get_file(&self, name: &str) -> Result<DocData, String> {
         let cell: &RefCell<HashMap<String, DocData>> = self.lsp.borrow();
         let coll: Ref<HashMap<String, DocData>> = cell.borrow();
-        (&coll).get(name).map(|x| Ok(x.clone())).unwrap_or_else(|| Err(format!("don't have {} to open", name)))
+        (&coll).get(name).map(|x| Ok(x.clone())).
+            unwrap_or_else(|| {
+                get_file_content(&self.include_dirs, name).map(|x| x.1)
+            })
     }
 }
