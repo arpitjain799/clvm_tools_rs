@@ -1,16 +1,19 @@
+use std::borrow::Borrow;
 use std::fmt::Display;
 use std::rc::Rc;
-use std::borrow::Borrow;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Until {
     pub line: usize,
-    pub col: usize
+    pub col: usize,
 }
 
 impl Until {
-    pub fn from_pair(p : (usize, usize)) -> Self {
-        Until { line: p.0, col: p.1 }
+    pub fn from_pair(p: (usize, usize)) -> Self {
+        Until {
+            line: p.0,
+            col: p.1,
+        }
     }
 }
 
@@ -58,7 +61,7 @@ impl Srcloc {
             file: name,
             line,
             col,
-            until: None
+            until: None,
         }
     }
 
@@ -68,7 +71,7 @@ impl Srcloc {
                 file: self.file.clone(),
                 line: u.line,
                 col: u.col,
-                until: None
+                until: None,
             };
         }
         self.clone()
@@ -92,7 +95,10 @@ impl Srcloc {
                 if self.line < other.line && u.line > other.line {
                     return true;
                 }
-                if self.line == other.line && self.col <= other.col && self.col + self.len() >= other.col {
+                if self.line == other.line
+                    && self.col <= other.col
+                    && self.col + self.len() >= other.col
+                {
                     return true;
                 }
                 if u.line == other.line && self.col + self.len() >= other.col {
@@ -100,7 +106,7 @@ impl Srcloc {
                 }
 
                 false
-            },
+            }
             (Some(u1), Some(u2)) => {
                 let l1 = Srcloc::new(self.file.clone(), self.line, self.col);
                 let l2 = Srcloc::new(self.file.clone(), u1.line, u1.col);
@@ -119,8 +125,8 @@ impl Srcloc {
         if let Some(u) = &self.until {
             if u.line != self.line {
                 1 // TODO: Can't tell length ...
-                // We can fix this by recording the character
-                // number in the file.
+                  // We can fix this by recording the character
+                  // number in the file.
             } else {
                 u.col - self.col
             }

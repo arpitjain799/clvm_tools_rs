@@ -103,11 +103,7 @@ impl Repl {
             )),
         );
         let start_program_fe = frontend(opts.clone(), &[starter_empty_program]).unwrap();
-        let evaluator = Evaluator::new(
-            opts.clone(),
-            runner.clone(),
-            start_program_fe.helpers,
-        );
+        let evaluator = Evaluator::new(opts.clone(), runner.clone(), start_program_fe.helpers);
 
         Repl {
             depth: 0,
@@ -150,9 +146,7 @@ impl Repl {
         self.input_exp = "".to_string();
 
         parse_sexp(self.loc.clone(), input_taken.as_bytes().iter().copied())
-            .map_err(|e| {
-                CompileErr(e.0.clone(), e.1)
-            })
+            .map_err(|e| CompileErr(e.0.clone(), e.1))
             .and_then(|parsed_program| {
                 if parsed_program.is_empty() {
                     return Ok(None);

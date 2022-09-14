@@ -6,17 +6,8 @@ use std::rc::Rc;
 use crate::classic::clvm::__type_compatibility__::bi_one;
 
 use crate::compiler::comptypes::{
-    list_to_cons,
-    Binding,
-    BodyForm,
-    CompileErr,
-    CompileForm,
-    CompilerOpts,
-    DefmacData,
-    DefunData,
-    HelperForm,
-    LetFormKind,
-    ModAccum,
+    list_to_cons, Binding, BodyForm, CompileErr, CompileForm, CompilerOpts, DefmacData, DefunData,
+    HelperForm, LetFormKind, ModAccum,
 };
 use crate::compiler::preprocessor::preprocess;
 use crate::compiler::rename::rename_children_compileform;
@@ -346,7 +337,7 @@ fn compile_defconstant(l: Srcloc, name: Vec<u8>, body: Rc<SExp>) -> Result<Helpe
 fn location_span(l_: Srcloc, lst_: Rc<SExp>) -> Srcloc {
     let mut l = l_;
     let mut lst = lst_;
-    while let SExp::Cons(_,a,b) = lst.borrow() {
+    while let SExp::Cons(_, a, b) = lst.borrow() {
         l = location_span(l.clone(), a.clone()).ext(&b.loc());
         lst = b.clone();
     }
@@ -366,14 +357,18 @@ fn compile_defun(
     if let SExp::Cons(_, f, _r) = body.borrow() {
         take_form = f.clone();
     }
-    compile_bodyform(take_form)
-        .map(|bf| HelperForm::Defun(inline, DefunData {
-            loc: l,
-            nl,
-            name,
-            args: args.clone(),
-            body: Rc::new(bf)
-        }))
+    compile_bodyform(take_form).map(|bf| {
+        HelperForm::Defun(
+            inline,
+            DefunData {
+                loc: l,
+                nl,
+                name,
+                args: args.clone(),
+                body: Rc::new(bf),
+            },
+        )
+    })
 }
 
 fn compile_defmacro(
@@ -390,14 +385,15 @@ fn compile_defmacro(
         Rc::new(SExp::Cons(l.clone(), args.clone(), body)),
     );
     let new_opts = opts.set_stdenv(false);
-    frontend(new_opts, &[Rc::new(program)])
-        .map(|p| HelperForm::Defmacro(DefmacData {
+    frontend(new_opts, &[Rc::new(program)]).map(|p| {
+        HelperForm::Defmacro(DefmacData {
             loc: l,
             nl,
             name,
             args: args.clone(),
-            program: Rc::new(p)
-        }))
+            program: Rc::new(p),
+        })
+    })
 }
 
 #[allow(clippy::type_complexity)]
@@ -457,19 +453,22 @@ pub fn compile_helperform(
         if op_name == b"defconstant" {
             compile_defconstant(l, name.to_vec(), args).map(Some)
         } else if op_name == b"defmacro" {
-            compile_defmacro(opts, l, nl, name.to_vec(), args, body)
-                .map(Some)
+            compile_defmacro(opts, l, nl, name.to_vec(), args, body).map(Some)
         } else if op_name == b"defun" {
-            compile_defun(l, nl, false, name.to_vec(), args, body)
-                .map(Some)
+            compile_defun(l, nl, false, name.to_vec(), args, body).map(Some)
         } else if op_name == b"defun-inline" {
-            compile_defun(l, nl, true, name.to_vec(), args, body)
-                .map(Some)
+            compile_defun(l, nl, true, name.to_vec(), args, body).map(Some)
         } else {
-            Err(CompileErr(body.loc(), "unknown keyword in helper".to_string()))
+            Err(CompileErr(
+                body.loc(),
+                "unknown keyword in helper".to_string(),
+            ))
         }
     } else {
-        Err(CompileErr(body.loc(), "Helper wasn't in the proper form".to_string()))
+        Err(CompileErr(
+            body.loc(),
+            "Helper wasn't in the proper form".to_string(),
+        ))
     }
 }
 

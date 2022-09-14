@@ -581,9 +581,10 @@ pub fn parse_and_run(
     content: &str,
     args: &str,
 ) -> Result<Rc<SExp>, RunFailure> {
-    let code =
-        parse_sexp(Srcloc::start(file), content.as_bytes().iter().copied()).map_err(|e| RunFailure::RunErr(e.0, e.1))?;
-    let args = parse_sexp(Srcloc::start(file), args.as_bytes().iter().copied()).map_err(|e| RunFailure::RunErr(e.0, e.1))?;
+    let code = parse_sexp(Srcloc::start(file), content.as_bytes().iter().copied())
+        .map_err(|e| RunFailure::RunErr(e.0, e.1))?;
+    let args = parse_sexp(Srcloc::start(file), args.as_bytes().iter().copied())
+        .map_err(|e| RunFailure::RunErr(e.0, e.1))?;
 
     if code.is_empty() {
         Err(RunFailure::RunErr(

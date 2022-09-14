@@ -3,34 +3,15 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
-use lsp_server::{
-    Message,
-    RequestId,
-    Response
-};
-use lsp_types::{
-    SemanticToken,
-    SemanticTokens,
-    SemanticTokensParams
-};
+use lsp_server::{Message, RequestId, Response};
+use lsp_types::{SemanticToken, SemanticTokens, SemanticTokensParams};
 
-use crate::compiler::comptypes::{
-    BodyForm,
-    CompileForm,
-    HelperForm,
-    LetFormKind
-};
-use crate::compiler::lsp::{
-    TK_FUNCTION_IDX,
-    TK_MACRO_IDX,
-    TK_NUMBER_IDX,
-    TK_PARAMETER_IDX,
-    TK_STRING_IDX,
-    TK_VARIABLE_IDX,
-    TK_DEFINITION_BIT,
-    TK_READONLY_BIT
-};
+use crate::compiler::comptypes::{BodyForm, CompileForm, HelperForm, LetFormKind};
 use crate::compiler::lsp::types::LSPServiceProvider;
+use crate::compiler::lsp::{
+    TK_DEFINITION_BIT, TK_FUNCTION_IDX, TK_MACRO_IDX, TK_NUMBER_IDX, TK_PARAMETER_IDX,
+    TK_READONLY_BIT, TK_STRING_IDX, TK_VARIABLE_IDX,
+};
 use crate::compiler::sexp::SExp;
 use crate::compiler::srcloc::Srcloc;
 
@@ -43,12 +24,13 @@ pub struct SemanticTokenSortable {
 
 impl PartialEq for SemanticTokenSortable {
     fn eq(&self, other: &SemanticTokenSortable) -> bool {
-        self.loc.file == other.loc.file && self.loc.line == other.loc.line && self.loc.col == other.loc.col
+        self.loc.file == other.loc.file
+            && self.loc.line == other.loc.line
+            && self.loc.col == other.loc.col
     }
 }
 
-impl Eq for SemanticTokenSortable {
-}
+impl Eq for SemanticTokenSortable {}
 
 impl PartialOrd for SemanticTokenSortable {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -74,29 +56,29 @@ pub trait LSPSemtokRequestHandler {
     fn handle_semantic_tokens(
         &mut self,
         id: RequestId,
-        params: &SemanticTokensParams
+        params: &SemanticTokensParams,
     ) -> Result<Vec<Message>, String>;
 }
 
 fn collect_arg_tokens(
     collected_tokens: &mut Vec<SemanticTokenSortable>,
     argcollection: &mut HashMap<Vec<u8>, Srcloc>,
-    args: Rc<SExp>
+    args: Rc<SExp>,
 ) {
     match args.borrow() {
-        SExp::Atom(l,a) => {
+        SExp::Atom(l, a) => {
             argcollection.insert(a.clone(), l.clone());
             collected_tokens.push(SemanticTokenSortable {
                 loc: l.clone(),
                 token_type: TK_PARAMETER_IDX,
-                token_mod: 1 << TK_DEFINITION_BIT
+                token_mod: 1 << TK_DEFINITION_BIT,
             });
-        },
-        SExp::Cons(_,a,b) => {
+        }
+        SExp::Cons(_, a, b) => {
             collect_arg_tokens(collected_tokens, argcollection, a.clone());
             collect_arg_tokens(collected_tokens, argcollection, b.clone());
         }
-        _ => { }
+        _ => {}
     }
 }
 
@@ -106,16 +88,16 @@ fn process_body_code(
     argcollection: &HashMap<Vec<u8>, Srcloc>,
     varcollection: &HashMap<Vec<u8>, Srcloc>,
     frontend: &CompileForm,
-    body: Rc<BodyForm>
+    body: Rc<BodyForm>,
 ) {
     match body.borrow() {
-        BodyForm::Let(_,k,bindings,inner_body) => {
+        BodyForm::Let(_, k, bindings, inner_body) => {
             let mut bindings_vars = varcollection.clone();
             for b in bindings.clone() {
                 collected_tokens.push(SemanticTokenSortable {
                     loc: b.nl.clone(),
                     token_type: TK_VARIABLE_IDX,
-                    token_mod: 1 << TK_DEFINITION_BIT | 1 << TK_READONLY_BIT
+                    token_mod: 1 << TK_DEFINITION_BIT | 1 << TK_READONLY_BIT,
                 });
                 if k == &LetFormKind::Sequential {
                     // Bindings above affect code below
@@ -125,7 +107,7 @@ fn process_body_code(
                         argcollection,
                         &bindings_vars,
                         frontend,
-                        b.body.clone()
+                        b.body.clone(),
                     );
                 } else {
                     process_body_code(
@@ -134,7 +116,7 @@ fn process_body_code(
                         argcollection,
                         varcollection,
                         frontend,
-                        b.body.clone()
+                        b.body.clone(),
                     )
                 }
                 bindings_vars.insert(b.name.clone(), b.nl.clone());
@@ -145,29 +127,29 @@ fn process_body_code(
                 argcollection,
                 &bindings_vars,
                 frontend,
-                inner_body.clone()
+                inner_body.clone(),
             );
-        },
-        BodyForm::Quoted(SExp::Integer(l,_)) => {
+        }
+        BodyForm::Quoted(SExp::Integer(l, _)) => {
             collected_tokens.push(SemanticTokenSortable {
                 loc: l.clone(),
                 token_type: TK_NUMBER_IDX,
-                token_mod: 0
+                token_mod: 0,
             });
-        },
-        BodyForm::Quoted(SExp::QuotedString(l,_,_)) => {
+        }
+        BodyForm::Quoted(SExp::QuotedString(l, _, _)) => {
             collected_tokens.push(SemanticTokenSortable {
                 loc: l.clone(),
                 token_type: TK_STRING_IDX,
                 token_mod: 0,
             });
-        },
-        BodyForm::Value(SExp::Atom(l,a)) => {
+        }
+        BodyForm::Value(SExp::Atom(l, a)) => {
             if let Some(argloc) = argcollection.get(a) {
                 let t = SemanticTokenSortable {
                     loc: l.clone(),
                     token_type: TK_PARAMETER_IDX,
-                    token_mod: 0
+                    token_mod: 0,
                 };
                 collected_tokens.push(t.clone());
                 gotodef.insert(t, argloc.clone());
@@ -176,26 +158,26 @@ fn process_body_code(
                 let t = SemanticTokenSortable {
                     loc: l.clone(),
                     token_type: TK_VARIABLE_IDX,
-                    token_mod: 0
+                    token_mod: 0,
                 };
                 collected_tokens.push(t.clone());
                 gotodef.insert(t, varloc.clone());
             }
-        },
-        BodyForm::Value(SExp::Integer(l,_)) => {
+        }
+        BodyForm::Value(SExp::Integer(l, _)) => {
             collected_tokens.push(SemanticTokenSortable {
                 loc: l.clone(),
                 token_type: TK_NUMBER_IDX,
-                token_mod: 0
+                token_mod: 0,
             });
-        },
+        }
         BodyForm::Call(_, args) => {
             if args.is_empty() {
                 return;
             }
 
             let head: &BodyForm = args[0].borrow();
-            if let BodyForm::Value(SExp::Atom(l,a)) = head {
+            if let BodyForm::Value(SExp::Atom(l, a)) = head {
                 for f in frontend.helpers.iter() {
                     match f {
                         HelperForm::Defun(_inline, defun) => {
@@ -203,26 +185,26 @@ fn process_body_code(
                                 let st = SemanticTokenSortable {
                                     loc: l.clone(),
                                     token_type: TK_FUNCTION_IDX,
-                                    token_mod: 0
+                                    token_mod: 0,
                                 };
                                 gotodef.insert(st.clone(), defun.nl.clone());
                                 collected_tokens.push(st);
                                 break;
                             }
-                        },
+                        }
                         HelperForm::Defmacro(mac) => {
                             if &mac.name == a {
                                 let st = SemanticTokenSortable {
                                     loc: l.clone(),
                                     token_type: TK_MACRO_IDX,
-                                    token_mod: 0
+                                    token_mod: 0,
                                 };
                                 gotodef.insert(st.clone(), mac.nl.clone());
                                 collected_tokens.push(st);
                                 break;
                             }
-                        },
-                        _ => { }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -234,11 +216,11 @@ fn process_body_code(
                     argcollection,
                     varcollection,
                     frontend,
-                    a.clone()
+                    a.clone(),
                 );
             }
-        },
-        _ => { }
+        }
+        _ => {}
     }
 }
 
@@ -246,23 +228,23 @@ pub fn do_semantic_tokens(
     id: RequestId,
     uristring: &str,
     goto_def: &mut BTreeMap<SemanticTokenSortable, Srcloc>,
-    frontend: &CompileForm
+    frontend: &CompileForm,
 ) -> Response {
     let mut collected_tokens = Vec::new();
     let varcollection = HashMap::new();
     for form in frontend.helpers.iter() {
         match form {
-            HelperForm::Defun(_,defun) => {
+            HelperForm::Defun(_, defun) => {
                 let mut argcollection = HashMap::new();
                 collected_tokens.push(SemanticTokenSortable {
                     loc: defun.nl.clone(),
                     token_type: TK_FUNCTION_IDX,
-                    token_mod: 1 << TK_DEFINITION_BIT
+                    token_mod: 1 << TK_DEFINITION_BIT,
                 });
                 collect_arg_tokens(
                     &mut collected_tokens,
                     &mut argcollection,
-                    defun.args.clone()
+                    defun.args.clone(),
                 );
                 process_body_code(
                     &mut collected_tokens,
@@ -270,31 +252,27 @@ pub fn do_semantic_tokens(
                     &argcollection,
                     &varcollection,
                     frontend,
-                    defun.body.clone()
+                    defun.body.clone(),
                 );
-            },
+            }
             HelperForm::Defmacro(mac) => {
                 let mut argcollection = HashMap::new();
                 collected_tokens.push(SemanticTokenSortable {
                     loc: mac.nl.clone(),
                     token_type: TK_FUNCTION_IDX,
-                    token_mod: 1 << TK_DEFINITION_BIT
+                    token_mod: 1 << TK_DEFINITION_BIT,
                 });
-                collect_arg_tokens(
-                    &mut collected_tokens,
-                    &mut argcollection,
-                    mac.args.clone()
-                );
+                collect_arg_tokens(&mut collected_tokens, &mut argcollection, mac.args.clone());
                 process_body_code(
                     &mut collected_tokens,
                     goto_def,
                     &argcollection,
                     &varcollection,
                     frontend,
-                    mac.program.exp.clone()
+                    mac.program.exp.clone(),
                 );
-            },
-            _ => { }
+            }
+            _ => {}
         }
     }
 
@@ -302,7 +280,7 @@ pub fn do_semantic_tokens(
     collect_arg_tokens(
         &mut collected_tokens,
         &mut argcollection,
-        frontend.args.clone()
+        frontend.args.clone(),
     );
     process_body_code(
         &mut collected_tokens,
@@ -310,13 +288,17 @@ pub fn do_semantic_tokens(
         &argcollection,
         &varcollection,
         frontend,
-        frontend.exp.clone()
+        frontend.exp.clone(),
     );
 
-    collected_tokens = collected_tokens.iter().filter(|t| {
-        let borrowed: &String = t.loc.file.borrow();
-        borrowed == uristring
-    }).cloned().collect();
+    collected_tokens = collected_tokens
+        .iter()
+        .filter(|t| {
+            let borrowed: &String = t.loc.file.borrow();
+            borrowed == uristring
+        })
+        .cloned()
+        .collect();
     collected_tokens.sort();
     let mut result_tokens = SemanticTokens {
         result_id: None,
@@ -338,7 +320,7 @@ pub fn do_semantic_tokens(
             delta_start: (t.loc.col - last_col) as u32,
             length: t.loc.len() as u32,
             token_type: t.token_type,
-            token_modifiers_bitset: t.token_mod
+            token_modifiers_bitset: t.token_mod,
         });
         last_row = t.loc.line;
         last_col = t.loc.col;
@@ -347,7 +329,7 @@ pub fn do_semantic_tokens(
     Response {
         id,
         error: None,
-        result: Some(serde_json::to_value(result_tokens).unwrap())
+        result: Some(serde_json::to_value(result_tokens).unwrap()),
     }
 }
 
@@ -355,9 +337,12 @@ impl LSPSemtokRequestHandler for LSPServiceProvider {
     fn handle_semantic_tokens(
         &mut self,
         id: RequestId,
-        params: &SemanticTokensParams
+        params: &SemanticTokensParams,
     ) -> Result<Vec<Message>, String> {
-        eprintln!("got semantic token request #{}: for file {}", id, params.text_document.uri);
+        eprintln!(
+            "got semantic token request #{}: for file {}",
+            id, params.text_document.uri
+        );
         let uristring = params.text_document.uri.to_string();
         let mut res = self.parse_document_and_output_errors(&uristring);
 

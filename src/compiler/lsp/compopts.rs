@@ -1,7 +1,6 @@
 use std::borrow::Borrow;
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
-use std::fs::read;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -9,23 +8,17 @@ use clvmr::allocator::Allocator;
 
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
 use crate::compiler::compiler::{
-    KNOWN_DIALECTS,
-    STANDARD_MACROS,
-    compile_pre_forms,
-    create_prim_map
+    compile_pre_forms, create_prim_map, KNOWN_DIALECTS, STANDARD_MACROS,
 };
-use crate::compiler::comptypes::{
-    CompileErr,
-    CompilerOpts,
-    PrimaryCodegen
-};
+use crate::compiler::comptypes::{CompileErr, CompilerOpts, PrimaryCodegen};
 use crate::compiler::lsp::patch::{split_text, stringify_doc};
-use crate::compiler::lsp::types::DocData;
-use crate::compiler::sexp::{SExp, decode_string};
+use crate::compiler::lsp::types::{DocData, IFileReader};
+use crate::compiler::sexp::{decode_string, SExp};
 use crate::compiler::srcloc::Srcloc;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct LSPCompilerOpts {
+    pub fs: Rc<dyn IFileReader>,
     pub include_dirs: Vec<String>,
     pub filename: String,
     pub compiler: Option<PrimaryCodegen>,
@@ -124,7 +117,9 @@ impl CompilerOpts for LSPCompilerOpts {
                     continue;
                 }
                 Ok(content) => {
-                    return stringify_doc(&content.text).map(|s| (filename, s)).map_err(|x| CompileErr(Srcloc::start(&p), x));
+                    return stringify_doc(&content.text)
+                        .map(|s| (filename, s))
+                        .map_err(|x| CompileErr(Srcloc::start(&p), x));
                 }
             }
         }
@@ -149,16 +144,20 @@ impl CompilerOpts for LSPCompilerOpts {
 }
 
 pub fn get_file_content(
+    reader: Rc<dyn IFileReader>,
     include_paths: &[String],
-    name: &str
+    name: &str,
 ) -> Result<(String, DocData), String> {
     for find_path in include_paths.iter() {
         if let Some(try_path) = Path::new(&find_path).join(name).to_str() {
-            if let Ok(filedata) = read(try_path) {
-                return Ok((try_path.to_string(), DocData {
-                    text: split_text(&decode_string(&filedata)),
-                    version: -1
-                }));
+            if let Ok(filedata) = reader.read(try_path) {
+                return Ok((
+                    try_path.to_string(),
+                    DocData {
+                        text: split_text(&decode_string(&filedata)),
+                        version: -1,
+                    },
+                ));
             }
         }
     }
@@ -166,8 +165,14 @@ pub fn get_file_content(
 }
 
 impl LSPCompilerOpts {
-    pub fn new(filename: &str, paths: &[String], docs: Rc<RefCell<HashMap<String, DocData>>>) -> Self {
+    pub fn new(
+        fs: Rc<dyn IFileReader>,
+        filename: &str,
+        paths: &[String],
+        docs: Rc<RefCell<HashMap<String, DocData>>>,
+    ) -> Self {
         LSPCompilerOpts {
+            fs,
             include_dirs: paths.to_owned(),
             filename: filename.to_owned(),
             compiler: None,
@@ -178,16 +183,15 @@ impl LSPCompilerOpts {
             start_env: None,
             prim_map: create_prim_map(),
             lsp: docs,
-            known_dialects: Rc::new(KNOWN_DIALECTS.clone())
+            known_dialects: Rc::new(KNOWN_DIALECTS.clone()),
         }
     }
 
     fn get_file(&self, name: &str) -> Result<DocData, String> {
         let cell: &RefCell<HashMap<String, DocData>> = self.lsp.borrow();
         let coll: Ref<HashMap<String, DocData>> = cell.borrow();
-        (&coll).get(name).map(|x| Ok(x.clone())).
-            unwrap_or_else(|| {
-                get_file_content(&self.include_dirs, name).map(|x| x.1)
-            })
+        (&coll).get(name).map(|x| Ok(x.clone())).unwrap_or_else(|| {
+            get_file_content(self.fs.clone(), &self.include_dirs, name).map(|x| x.1)
+        })
     }
 }

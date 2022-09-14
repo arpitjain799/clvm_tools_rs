@@ -1,36 +1,18 @@
-use std::fs::read;
 use std::path::Path;
 use std::rc::Rc;
 
 use lsp_types::{
-    request::Completion,
-    request::GotoDefinition,
-    request::Initialize,
-    request::SemanticTokensFullRequest,
-    DidChangeTextDocumentParams,
-    DidOpenTextDocumentParams,
-    GotoDefinitionParams,
-    GotoDefinitionResponse,
-    Location,
-    Position,
-    Range
+    request::Completion, request::GotoDefinition, request::Initialize,
+    request::SemanticTokensFullRequest, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+    GotoDefinitionParams, GotoDefinitionResponse, Location, Position, Range,
 };
 
 use lsp_server::{ErrorCode, Message, RequestId, Response};
 
 use crate::compiler::lsp::completion::LSPCompletionRequestHandler;
-use crate::compiler::lsp::patch::{
-    LSPServiceProviderApplyDocumentPatch,
-    split_text
-};
+use crate::compiler::lsp::patch::{split_text, LSPServiceProviderApplyDocumentPatch};
 use crate::compiler::lsp::semtok::LSPSemtokRequestHandler;
-use crate::compiler::lsp::types::{
-    cast,
-    ConfigJson,
-    DocData,
-    InitState,
-    LSPServiceProvider
-};
+use crate::compiler::lsp::types::{cast, ConfigJson, DocData, InitState, LSPServiceProvider};
 use crate::compiler::sexp::decode_string;
 use crate::compiler::srcloc::Srcloc;
 
@@ -43,41 +25,55 @@ impl LSPServiceProvider {
     fn goto_definition(
         &mut self,
         id: RequestId,
-        params: &GotoDefinitionParams
+        params: &GotoDefinitionParams,
     ) -> Result<Vec<Message>, String> {
         let mut res = Vec::new();
 
         eprintln!("got gotoDefinition request #{}: {:?}", id, params);
         let mut goto_response = None;
-        let docname = params.text_document_position_params.text_document.uri.to_string();
+        let docname = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .to_string();
         let docpos = params.text_document_position_params.position;
-        let wantloc = Srcloc::new(Rc::new(docname.clone()), (docpos.line + 1) as usize, (docpos.character + 1) as usize);
+        let wantloc = Srcloc::new(
+            Rc::new(docname.clone()),
+            (docpos.line + 1) as usize,
+            (docpos.character + 1) as usize,
+        );
         if let Some(defs) = self.goto_defs.get(&docname) {
             eprintln!("find {:?} in {:?}", wantloc, defs);
             for kv in defs.iter() {
                 if kv.0.loc.overlap(&wantloc) {
                     goto_response = Some(Location {
-                        uri: params.text_document_position_params.text_document.uri.clone(),
+                        uri: params
+                            .text_document_position_params
+                            .text_document
+                            .uri
+                            .clone(),
                         range: Range {
                             start: Position {
                                 line: (kv.1.line - 1) as u32,
-                                character: (kv.1.col - 1) as u32
+                                character: (kv.1.col - 1) as u32,
                             },
                             end: Position {
                                 line: (kv.1.line - 1) as u32,
-                                character: (kv.1.col + kv.1.len() - 1) as u32
-                            }
-                        }
+                                character: (kv.1.col + kv.1.len() - 1) as u32,
+                            },
+                        },
                     });
                     break;
                 }
             }
         }
-        let result = goto_response.map(|gr| {
-            GotoDefinitionResponse::Scalar(gr)
-        });
+        let result = goto_response.map(|gr| GotoDefinitionResponse::Scalar(gr));
         let result = serde_json::to_value(&result).unwrap();
-        let resp = Response { id, result: Some(result), error: None };
+        let resp = Response {
+            id,
+            result: Some(result),
+            error: None,
+        };
         res.push(Message::Response(resp));
 
         Ok(res)
@@ -91,26 +87,25 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
             if let Message::Request(req) = msg {
                 if req.method == "initialize" {
                     if let Ok((_, params)) = cast::<Initialize>(req.clone()) {
-                        self.init = Some(InitState::Initialized(params));
+                        self.init = Some(InitState::Initialized(Rc::new(params)));
                         // Try to read the config data
-                        if let Some(config) =
-                            self.get_config_path().and_then(|config_path| {
-                                read(config_path).ok()
-                            }).and_then(|config_data| {
+                        if let Some(config) = self
+                            .get_config_path()
+                            .and_then(|config_path| self.fs.read(&config_path).ok())
+                            .and_then(|config_data| {
                                 serde_json::from_str(&decode_string(&config_data)).ok()
-                            }).map(|config: ConfigJson| {
+                            })
+                            .map(|config: ConfigJson| {
                                 let mut result = config.clone();
                                 result.include_paths.clear();
 
                                 for p in config.include_paths.iter() {
-                                    if p.starts_with(".") {
+                                    if p.starts_with('.') {
                                         if let Some(path_str) = self.get_relative_path(p) {
                                             result.include_paths.push(path_str.to_owned());
                                         }
-                                    } else {
-                                        if let Some(ps) = Path::new(p).to_str() {
-                                            result.include_paths.push(ps.to_owned());
-                                        }
+                                    } else if let Some(ps) = Path::new(p).to_str() {
+                                        result.include_paths.push(ps.to_owned());
                                     }
                                 }
 
@@ -131,10 +126,7 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                             }
                         });
 
-                        let resp = Response::new_ok(
-                            req.id.clone(),
-                            initialize_data
-                        );
+                        let resp = Response::new_ok(req.id.clone(), initialize_data);
 
                         return Ok(vec![Message::Response(resp)]);
                     }
@@ -142,7 +134,7 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                     let resp = Response::new_err(
                         req.id.clone(),
                         ErrorCode::ServerNotInitialized as i32,
-                        format!("expected initialize request, got {:?}", req)
+                        format!("expected initialize request, got {:?}", req),
                     );
                     return Ok(vec![Message::Response(resp)]);
                 }
@@ -169,22 +161,30 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                 eprintln!("got notification: {:?}", not);
                 if not.method == "textDocument/didOpen" {
                     let stringified_params = serde_json::to_string(&not.params).unwrap();
-                    if let Ok(params) = serde_json::from_str::<DidOpenTextDocumentParams>(&stringified_params) {
+                    if let Ok(params) =
+                        serde_json::from_str::<DidOpenTextDocumentParams>(&stringified_params)
+                    {
                         self.save_doc(
                             params.text_document.uri.to_string(),
                             DocData {
                                 text: split_text(&params.text_document.text),
-                                version: params.text_document.version
-                            }
+                                version: params.text_document.version,
+                            },
                         );
                     } else {
                         eprintln!("cast failed in didOpen");
                     }
                 } else if not.method == "textDocument/didChange" {
                     let stringified_params = serde_json::to_string(&not.params).unwrap();
-                    if let Ok(params) = serde_json::from_str::<DidChangeTextDocumentParams>(&stringified_params) {
+                    if let Ok(params) =
+                        serde_json::from_str::<DidChangeTextDocumentParams>(&stringified_params)
+                    {
                         let doc_id = params.text_document.uri.to_string();
-                        self.apply_document_patch(&doc_id, params.text_document.version, &params.content_changes);
+                        self.apply_document_patch(
+                            &doc_id,
+                            params.text_document.version,
+                            &params.content_changes,
+                        );
                     } else {
                         eprintln!("case failed in didChange");
                     }

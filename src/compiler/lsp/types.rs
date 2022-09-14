@@ -2,61 +2,31 @@ use std::borrow::Borrow;
 use std::cell::{Ref, RefCell};
 use std::cmp::{Ordering, PartialOrd};
 use std::collections::{BTreeMap, HashMap};
+use std::default::Default;
 use std::mem::swap;
 use std::path::Path;
 use std::rc::Rc;
 
-use lsp_server::{
-    ExtractError,
-    Notification,
-    Message,
-    Request,
-    RequestId
-};
+use lsp_server::{ExtractError, Message, Notification, Request, RequestId};
 
 use lsp_types::{
-    CompletionOptions,
-    Diagnostic,
-    InitializeParams,
-    OneOf,
-    Position,
-    PublishDiagnosticsParams,
-    Range,
-    SemanticTokenModifier,
-    SemanticTokensLegend,
-    SemanticTokensFullOptions,
-    SemanticTokensOptions,
-    SemanticTokensServerCapabilities,
-    SemanticTokenType,
-    ServerCapabilities,
-    TextDocumentSyncCapability,
-    TextDocumentSyncKind,
-    Url,
-    WorkDoneProgressOptions
+    CompletionOptions, Diagnostic, InitializeParams, OneOf, Position, PublishDiagnosticsParams,
+    Range, SemanticTokenModifier, SemanticTokenType, SemanticTokensFullOptions,
+    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensServerCapabilities,
+    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    WorkDoneProgressOptions,
 };
 
 use serde::{Deserialize, Serialize};
 
 use crate::compiler::clvm::sha256tree_from_atom;
+use crate::compiler::lsp::compopts::{get_file_content, LSPCompilerOpts};
+use crate::compiler::lsp::parse::{make_simple_ranges, ParsedDoc};
+use crate::compiler::lsp::patch::stringify_doc;
+use crate::compiler::lsp::reparse::{combine_new_with_old_parse, reparse_subset, ReparsedHelper};
+use crate::compiler::lsp::semtok::SemanticTokenSortable;
 use crate::compiler::sexp::decode_string;
 use crate::compiler::srcloc::Srcloc;
-use crate::compiler::lsp::compopts::{
-    LSPCompilerOpts,
-    get_file_content
-};
-use crate::compiler::lsp::parse::{
-    ParsedDoc,
-    make_simple_ranges
-};
-use crate::compiler::lsp::patch::{
-    stringify_doc
-};
-use crate::compiler::lsp::reparse::{
-    ReparsedHelper,
-    combine_new_with_old_parse,
-    reparse_subset
-};
-use crate::compiler::lsp::semtok::SemanticTokenSortable;
 
 lazy_static! {
     pub static ref TOKEN_TYPES: Vec<SemanticTokenType> = {
@@ -69,15 +39,14 @@ lazy_static! {
             SemanticTokenType::COMMENT,
             SemanticTokenType::STRING,
             SemanticTokenType::NUMBER,
-            SemanticTokenType::OPERATOR
+            SemanticTokenType::OPERATOR,
         ]
     };
-
     pub static ref TOKEN_MODIFIERS: Vec<SemanticTokenModifier> = {
         vec![
             SemanticTokenModifier::DEFINITION,
             SemanticTokenModifier::READONLY,
-            SemanticTokenModifier::DOCUMENTATION
+            SemanticTokenModifier::DOCUMENTATION,
         ]
     };
 }
@@ -96,6 +65,44 @@ pub const TK_DEFINITION_BIT: u32 = 0;
 pub const TK_READONLY_BIT: u32 = 1;
 pub const TK_DOCUMENTATION_BIT: u32 = 2;
 
+pub trait IFileReader {
+    fn read(&self, name: &str) -> Result<Vec<u8>, String>;
+}
+
+pub trait ILogWriter {
+    fn write(&self, text: &str);
+}
+
+#[derive(Default)]
+pub struct FSFileReader {}
+
+impl IFileReader for FSFileReader {
+    fn read(&self, name: &str) -> Result<Vec<u8>, String> {
+        std::fs::read(name).map_err(|e| format!("{:?}", e))
+    }
+}
+
+impl FSFileReader {
+    pub fn new() -> Self {
+        Default::default()
+    }
+}
+
+#[derive(Default)]
+pub struct EPrintWriter {}
+
+impl ILogWriter for EPrintWriter {
+    fn write(&self, text: &str) {
+        eprintln!("{}", text);
+    }
+}
+
+impl EPrintWriter {
+    pub fn new() -> Self {
+        Default::default()
+    }
+}
+
 pub fn cast<R>(req: Request) -> Result<(RequestId, R::Params), ExtractError<Request>>
 where
     R: lsp_types::request::Request,
@@ -107,33 +114,33 @@ where
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DocPosition {
     pub line: u32,
-    pub character: u32
+    pub character: u32,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DocRange {
     pub start: DocPosition,
-    pub end: DocPosition
+    pub end: DocPosition,
 }
 
 #[derive(Clone, Debug)]
 pub struct DocPatch {
     pub range: DocRange,
-    pub text: String
+    pub text: String,
 }
 
 impl DocPosition {
     pub fn from_position(p: &Position) -> Self {
         DocPosition {
             line: p.line,
-            character: p.character
+            character: p.character,
         }
     }
 
     pub fn to_position(&self) -> Position {
         Position {
             line: self.line,
-            character: self.character
+            character: self.character,
         }
     }
 }
@@ -142,7 +149,7 @@ impl DocRange {
     pub fn from_range(r: &Range) -> Self {
         DocRange {
             start: DocPosition::from_position(&r.start),
-            end: DocPosition::from_position(&r.end)
+            end: DocPosition::from_position(&r.end),
         }
     }
 
@@ -150,24 +157,20 @@ impl DocRange {
         let e = l.ending();
         DocRange {
             start: DocPosition {
-                line:
-                if l.line > 0 { (l.line - 1) as u32 } else { 0 },
-                character:
-                if l.col > 0 { (l.col - 1) as u32 } else { 0 },
+                line: if l.line > 0 { (l.line - 1) as u32 } else { 0 },
+                character: if l.col > 0 { (l.col - 1) as u32 } else { 0 },
             },
             end: DocPosition {
-                line:
-                if e.line > 0 { (e.line - 1) as u32 } else { 0 },
-                character:
-                if e.col > 0 { (e.col - 1) as u32 } else { 0  },
-            }
+                line: if e.line > 0 { (e.line - 1) as u32 } else { 0 },
+                character: if e.col > 0 { (e.col - 1) as u32 } else { 0 },
+            },
         }
     }
 
     pub fn to_range(&self) -> Range {
         Range {
             start: self.start.to_position(),
-            end: self.end.to_position()
+            end: self.end.to_position(),
         }
     }
 
@@ -176,7 +179,7 @@ impl DocRange {
             (self.start.clone(), 0),
             (self.end.clone(), 0),
             (other.start.clone(), 1),
-            (other.end.clone(), 1)
+            (other.end.clone(), 1),
         ];
         sortable.sort();
 
@@ -188,7 +191,7 @@ impl DocRange {
 #[derive(Debug, Clone)]
 pub struct DocData {
     pub text: Vec<Rc<Vec<u8>>>,
-    pub version: i32
+    pub version: i32,
 }
 
 impl DocData {
@@ -204,21 +207,27 @@ impl DocData {
     // Given a position go back one character, returning the character
     // and the new position if they exist.
     pub fn get_prev_position(&self, position: &Position) -> Option<(u8, Position)> {
-        if position.character == 0 && position.line > 0 && ((position.line - 1) as usize) < self.text.len() {
+        if position.character == 0
+            && position.line > 0
+            && ((position.line - 1) as usize) < self.text.len()
+        {
             let nextline = position.line - 1;
             self.get_prev_position(&Position {
                 line: nextline,
-                character: self.text[nextline as usize].len() as u32
+                character: self.text[nextline as usize].len() as u32,
             })
         } else {
             self.nth_line_ref(position.line as usize).and_then(|line| {
                 if position.character > 0 && (position.character as usize) <= line.len() {
                     let prev_char = position.character - 1;
                     let the_char = line[prev_char as usize];
-                    Some((the_char, Position {
-                        line: position.line,
-                        character: prev_char
-                    }))
+                    Some((
+                        the_char,
+                        Position {
+                            line: position.line,
+                            character: prev_char,
+                        },
+                    ))
                 } else {
                     None
                 }
@@ -240,7 +249,7 @@ impl DocData {
 
 #[derive(Debug, Clone)]
 struct HelperWithDocRange {
-    pub loc: DocRange
+    pub loc: DocRange,
 }
 
 impl PartialEq for HelperWithDocRange {
@@ -255,31 +264,27 @@ impl PartialOrd for HelperWithDocRange {
     }
 }
 
-impl Eq for HelperWithDocRange { }
+impl Eq for HelperWithDocRange {}
 impl Ord for HelperWithDocRange {
     fn cmp(&self, other: &Self) -> Ordering {
         self.loc.cmp(&other.loc)
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConfigJson {
-    pub include_paths: Vec<String>
-}
-
-impl Default for ConfigJson {
-    fn default() -> Self {
-        ConfigJson { include_paths: vec![] }
-    }
+    pub include_paths: Vec<String>,
 }
 
 pub enum InitState {
     Preconfig,
-    Initialized(InitializeParams)
+    Initialized(Rc<InitializeParams>),
 }
 
 pub struct LSPServiceProvider {
     // Init params.
+    pub fs: Rc<dyn IFileReader>,
+    pub log: Rc<dyn ILogWriter>,
     pub init: Option<InitState>,
     pub config: ConfigJson,
 
@@ -297,13 +302,10 @@ impl LSPServiceProvider {
         let mut res = Vec::new();
 
         self.ensure_parsed_document(uristring);
-        if let (Some(d), Some(p)) =
-            (self.get_doc(uristring), self.get_parsed(uristring))
-        {
+        if let (Some(d), Some(p)) = (self.get_doc(uristring), self.get_parsed(uristring)) {
             let mut errors = Vec::new();
 
             for (_, error) in p.errors.iter() {
-                eprintln!("error {:?}", error);
                 errors.push(Diagnostic {
                     range: DocRange::from_srcloc(error.0.clone()).to_range(),
                     severity: None,
@@ -313,7 +315,7 @@ impl LSPServiceProvider {
                     message: error.1.clone(),
                     tags: None,
                     related_information: None,
-                    data: None
+                    data: None,
                 });
             }
 
@@ -323,8 +325,9 @@ impl LSPServiceProvider {
                     params: serde_json::to_value(PublishDiagnosticsParams {
                         uri: Url::parse(uristring).unwrap(),
                         version: Some(d.version),
-                        diagnostics: errors
-                    }).unwrap()
+                        diagnostics: errors,
+                    })
+                    .unwrap(),
                 }));
             }
         }
@@ -332,9 +335,9 @@ impl LSPServiceProvider {
         res
     }
 
-    pub fn with_doc_and_parsed<F,G>(&mut self, uristring: &str, f: F) -> Option<G>
+    pub fn with_doc_and_parsed<F, G>(&mut self, uristring: &str, f: F) -> Option<G>
     where
-        F: FnOnce(&DocData, &ParsedDoc) -> Option<G>
+        F: FnOnce(&DocData, &ParsedDoc) -> Option<G>,
     {
         if let (Some(d), Some(p)) = (self.get_doc(uristring), self.get_parsed(uristring)) {
             f(&d, &p)
@@ -368,52 +371,55 @@ impl LSPServiceProvider {
         self.parsed_documents.insert(uristring, p);
     }
 
-    pub fn ensure_parsed_document(
-        &mut self,
-        uristring: &str
-    ) {
-        let opts = Rc::new(LSPCompilerOpts::new(uristring, &self.config.include_paths, self.document_collection.clone()));
+    pub fn ensure_parsed_document(&mut self, uristring: &str) {
+        let opts = Rc::new(LSPCompilerOpts::new(
+            self.fs.clone(),
+            uristring,
+            &self.config.include_paths,
+            self.document_collection.clone(),
+        ));
 
         if let Some(doc) = self.get_doc(uristring) {
             let startloc = Srcloc::start(uristring);
-            let output =
-                self.parsed_documents.get(uristring).cloned().unwrap_or_else(|| {
-                    ParsedDoc::new(startloc)
-                });
+            let output = self
+                .parsed_documents
+                .get(uristring)
+                .cloned()
+                .unwrap_or_else(|| ParsedDoc::new(startloc));
             let ranges = make_simple_ranges(&doc.text);
-            eprintln!("file {} ranges {:?}", uristring, ranges);
             let mut new_helpers = reparse_subset(
                 opts,
                 &doc.text,
                 uristring,
                 &ranges,
                 &output.compiled,
-                &output.hashes
+                &output.hashes,
             );
 
             for (_, incfile) in new_helpers.includes.iter() {
-                eprintln!("incfile {}", decode_string(incfile));
-                if let Ok((filename, file_body)) = get_file_content(&self.config.include_paths, &decode_string(incfile)) {
+                if let Ok((filename, file_body)) = get_file_content(
+                    self.fs.clone(),
+                    &self.config.include_paths,
+                    &decode_string(incfile),
+                ) {
                     let file_uri = format!("file://{}", filename);
-                    eprintln!("incfile uri {}", file_uri);
                     self.save_doc(file_uri.clone(), file_body);
                     self.ensure_parsed_document(&file_uri);
                     if let Some(p) = self.get_parsed(&file_uri) {
-                        eprintln!("parsed {:?}", p);
-                        for h in p.compiled.helpers.iter().cloned() {
-                            eprintln!("helper {}", decode_string(h.name()));
+                        for h in p.compiled.helpers.iter() {
                             new_helpers.helpers.push(ReparsedHelper {
                                 hash: sha256tree_from_atom(h.name()),
-                                parsed: h.clone()
+                                parsed: h.clone(),
                             });
                         }
                     }
                 }
             }
 
-            self.save_parse(uristring.to_owned(), combine_new_with_old_parse(
-                uristring, &doc.text, &output, &new_helpers
-            ));
+            self.save_parse(
+                uristring.to_owned(),
+                combine_new_with_old_parse(uristring, &doc.text, &output, &new_helpers),
+            );
         }
     }
 
@@ -422,18 +428,22 @@ impl LSPServiceProvider {
             // Specify capabilities from the set:
             // https://docs.rs/lsp-types/latest/lsp_types/struct.ServerCapabilities.html
             definition_provider: Some(OneOf::Left(true)),
-            semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
-                work_done_progress_options: WorkDoneProgressOptions {
-                    work_done_progress: Some(false)
-                },
-                legend: SemanticTokensLegend {
-                    token_types: TOKEN_TYPES.clone(),
-                    token_modifiers: TOKEN_MODIFIERS.clone(),
-                },
-                range: None,
-                full: Some(SemanticTokensFullOptions::Delta {delta: Some(true)})
-            })),
-            text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::INCREMENTAL)),
+            semantic_tokens_provider: Some(
+                SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
+                    work_done_progress_options: WorkDoneProgressOptions {
+                        work_done_progress: Some(false),
+                    },
+                    legend: SemanticTokensLegend {
+                        token_types: TOKEN_TYPES.clone(),
+                        token_modifiers: TOKEN_MODIFIERS.clone(),
+                    },
+                    range: None,
+                    full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
+                }),
+            ),
+            text_document_sync: Some(TextDocumentSyncCapability::Kind(
+                TextDocumentSyncKind::INCREMENTAL,
+            )),
             completion_provider: Some(CompletionOptions {
                 resolve_provider: Some(true),
                 //             trigger_characters: Some(completion_start),
@@ -443,8 +453,10 @@ impl LSPServiceProvider {
         }
     }
 
-    pub fn new(configured: bool) -> Self {
+    pub fn new(fs: Rc<dyn IFileReader>, log: Rc<dyn ILogWriter>, configured: bool) -> Self {
         LSPServiceProvider {
+            fs,
+            log,
             init: if configured {
                 Some(InitState::Preconfig)
             } else {
@@ -464,7 +476,8 @@ impl LSPServiceProvider {
             init.root_uri.as_ref().and_then(|uri| {
                 let us = uri.to_string();
                 if us.starts_with("file://") {
-                    return Some(us[7..].to_owned());
+                    let truncated_name: Vec<u8> = us.as_bytes().iter().skip(7).copied().collect();
+                    return Some(decode_string(&truncated_name));
                 }
 
                 None
@@ -482,7 +495,11 @@ impl LSPServiceProvider {
                 return Path::new(&r).join(target).to_str().map(|o| o.to_owned());
             }
 
-            Path::new(&r).join(target[2..].to_string()).to_str().map(|o| o.to_owned())
+            let target_suffix: Vec<u8> = target.as_bytes().iter().skip(2).copied().collect();
+            Path::new(&r)
+                .join(decode_string(&target_suffix))
+                .to_str()
+                .map(|o| o.to_owned())
         } else {
             None
         }
@@ -491,12 +508,13 @@ impl LSPServiceProvider {
     pub fn get_config_path(&self) -> Option<String> {
         self.get_workspace_root().and_then(|r| {
             let p = Path::new(&r).join("chialisp.json");
-            eprintln!("config path {:?}", p);
             p.to_str().map(|s| s.to_owned())
         })
     }
 
     pub fn get_file(&self, filename: &str) -> Result<String, String> {
-        self.get_doc(filename).map(|d| stringify_doc(&d.text)).unwrap_or_else(|| Err(format!("don't have file {}", filename)))
+        self.get_doc(filename)
+            .map(|d| stringify_doc(&d.text))
+            .unwrap_or_else(|| Err(format!("don't have file {}", filename)))
     }
 }

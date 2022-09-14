@@ -604,8 +604,9 @@ fn parse_sexp_inner<I>(
     start_: Srcloc,
     p_: SExpParseState,
     s: I,
-) -> Result<Vec<Rc<SExp>>, (Srcloc, String)> where
-    I: Iterator<Item = u8>
+) -> Result<Vec<Rc<SExp>>, (Srcloc, String)>
+where
+    I: Iterator<Item = u8>,
 {
     let mut start = start_;
     let mut p = p_;
@@ -631,35 +632,22 @@ fn parse_sexp_inner<I>(
     }
 
     match p {
-        SExpParseState::Empty => {
-            Ok(res)
-        }
-        SExpParseState::Bareword(l, t) => {
-            Ok(vec![Rc::new(make_atom(l, t))])
-        }
-        SExpParseState::CommentText(_, _) => {
-            Ok(res)
-        }
-        SExpParseState::QuotedText(l, _, _) => {
-            Err((l, "unterminated quoted string".to_string()))
-        }
+        SExpParseState::Empty => Ok(res),
+        SExpParseState::Bareword(l, t) => Ok(vec![Rc::new(make_atom(l, t))]),
+        SExpParseState::CommentText(_, _) => Ok(res),
+        SExpParseState::QuotedText(l, _, _) => Err((l, "unterminated quoted string".to_string())),
         SExpParseState::QuotedEscaped(l, _, _) => {
             Err((l, "unterminated quoted string with escape".to_string()))
         }
-        SExpParseState::OpenList(l) => {
-            Err((l, "Unterminated list (empty)".to_string()))
-        }
-        SExpParseState::ParsingList(l, _, _) => {
-            Err((l, "Unterminated mid list".to_string()))
-        }
-        SExpParseState::TermList(l, _, _) => {
-            Err((l, "Unterminated tail list".to_string()))
-        }
+        SExpParseState::OpenList(l) => Err((l, "Unterminated list (empty)".to_string())),
+        SExpParseState::ParsingList(l, _, _) => Err((l, "Unterminated mid list".to_string())),
+        SExpParseState::TermList(l, _, _) => Err((l, "Unterminated tail list".to_string())),
     }
 }
 
-pub fn parse_sexp<I>(start: Srcloc, input: I) -> Result<Vec<Rc<SExp>>, (Srcloc, String)> where
-    I: Iterator<Item = u8>
+pub fn parse_sexp<I>(start: Srcloc, input: I) -> Result<Vec<Rc<SExp>>, (Srcloc, String)>
+where
+    I: Iterator<Item = u8>,
 {
     parse_sexp_inner(start, SExpParseState::Empty, input)
 }

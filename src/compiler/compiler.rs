@@ -57,7 +57,8 @@ lazy_static! {
                     )
             (defun-inline / (A B) (f (divmod A B)))
             )
-            "}.to_string()
+            "}
+        .to_string()
     };
 }
 
@@ -119,8 +120,13 @@ fn fe_opt(
             HelperForm::Defun(inline, defun) => {
                 let mut env = HashMap::new();
                 build_reflex_captures(&mut env, defun.args.clone());
-                let body_rc =
-                    evaluator.shrink_bodyform(allocator, defun.args.clone(), &env, defun.body.clone(), true)?;
+                let body_rc = evaluator.shrink_bodyform(
+                    allocator,
+                    defun.args.clone(),
+                    &env,
+                    defun.body.clone(),
+                    true,
+                )?;
                 let new_helper = HelperForm::Defun(
                     *inline,
                     DefunData {
@@ -128,8 +134,8 @@ fn fe_opt(
                         nl: defun.nl.clone(),
                         name: defun.name.clone(),
                         args: defun.args.clone(),
-                        body: body_rc.clone()
-                    }
+                        body: body_rc.clone(),
+                    },
                 );
                 optimized_helpers.push(new_helper);
             }
@@ -184,8 +190,11 @@ pub fn compile_file(
     content: &str,
     symbol_table: &mut HashMap<String, String>,
 ) -> Result<SExp, CompileErr> {
-    let pre_forms =
-        parse_sexp(Srcloc::start(&opts.filename()), content.as_bytes().iter().copied()).map_err(|e| CompileErr(e.0, e.1))?;
+    let pre_forms = parse_sexp(
+        Srcloc::start(&opts.filename()),
+        content.as_bytes().iter().copied(),
+    )
+    .map_err(|e| CompileErr(e.0, e.1))?;
 
     compile_pre_forms(allocator, runner, opts, &pre_forms, symbol_table)
 }
@@ -329,7 +338,7 @@ impl DefaultCompilerOpts {
             frontend_opt: false,
             start_env: None,
             prim_map: create_prim_map(),
-            known_dialects: Rc::new(KNOWN_DIALECTS.clone())
+            known_dialects: Rc::new(KNOWN_DIALECTS.clone()),
         }
     }
 }

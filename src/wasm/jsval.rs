@@ -147,7 +147,7 @@ fn location(o: &Object) -> Option<Srcloc> {
             until: get_property(o, "until")
                 .and_then(|lo| Object::try_from(&lo).map(|o| o.clone()))
                 .and_then(|lo| location_lc_pair(&lo))
-                .map(|(ll, lc)| Until { line: ll, col: lc })
+                .map(|(ll, lc)| Until { line: ll, col: lc }),
         })
 }
 

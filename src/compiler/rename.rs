@@ -3,13 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::compiler::comptypes::{
-    Binding,
-    BodyForm,
-    CompileForm,
-    DefmacData,
-    DefunData,
-    HelperForm,
-    LetFormKind
+    Binding, BodyForm, CompileForm, DefmacData, DefunData, HelperForm, LetFormKind,
 };
 use crate::compiler::gensym::gensym;
 use crate::compiler::sexp::SExp;
@@ -256,16 +250,17 @@ fn rename_in_helperform(namemap: &HashMap<Vec<u8>, Vec<u8>>, h: &HelperForm) -> 
             nl: mac.nl.clone(),
             name: mac.name.to_vec(),
             args: mac.args.clone(),
-            program: Rc::new(rename_in_compileform(namemap, mac.program.clone()))
+            program: Rc::new(rename_in_compileform(namemap, mac.program.clone())),
         }),
         HelperForm::Defun(inline, defun) => HelperForm::Defun(
-            *inline, DefunData {
+            *inline,
+            DefunData {
                 loc: defun.loc.clone(),
                 nl: defun.nl.clone(),
                 name: defun.name.to_vec(),
                 args: defun.args.clone(),
-                body: Rc::new(rename_in_bodyform(namemap, defun.body.clone()))
-            }
+                body: Rc::new(rename_in_bodyform(namemap, defun.body.clone())),
+            },
         ),
     }
 }
@@ -306,7 +301,8 @@ fn rename_args_helperform(h: &HelperForm) -> HelperForm {
             let local_renamed_arg = rename_in_cons(&local_namemap, defun.args.clone());
             let local_renamed_body = rename_args_bodyform(defun.body.borrow());
             HelperForm::Defun(
-                *inline, DefunData {
+                *inline,
+                DefunData {
                     loc: defun.loc.clone(),
                     nl: defun.nl.clone(),
                     name: defun.name.clone(),
@@ -314,8 +310,8 @@ fn rename_args_helperform(h: &HelperForm) -> HelperForm {
                     body: Rc::new(rename_in_bodyform(
                         &local_namemap,
                         Rc::new(local_renamed_body),
-                    ))
-                }
+                    )),
+                },
             )
         }
     }

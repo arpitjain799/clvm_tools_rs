@@ -1,5 +1,6 @@
 let clvm_tools_rs = require('../build/clvm_tools_rs.js');
 let process = require('process');
+let fs = require('fs');
 
 // clean 1:1 8-bit encoding.
 process.stdin.setEncoding('binary');
@@ -17,8 +18,9 @@ stdin_reader.message_payload = '';
 stdin_reader.remaining_bytes = 0;
 
 process.stdin.on('data', function(chunk) {
-    for (var i = 0; i < chunk.length; i++) {
+    for (var i = 0; i < chunk.length; ) {
         let ch = chunk[i];
+        let do_inc = 1;
         if (stdin_reader.mode == START_HEADER) {
             if (ch == '\r' || ch == '\n') {
                 let line = stdin_reader.message_header.split(':');
@@ -52,13 +54,18 @@ process.stdin.on('data', function(chunk) {
                 stdin_reader.mode = MESSAGE_READ;
             }
         } else { // MESSAGE_READ
+            do_inc = 0;
             if (chunk.length >= stdin_reader.remaining_bytes) {
                 let message = chunk.substr(i, stdin_reader.remaining_bytes);
                 i += stdin_reader.remaining_bytes;
                 stdin_reader.remaining_bytes = 0;
                 stdin_reader.mode = START_HEADER;
-                if (stdin_reader.deliver_msg) {
-                    stdin_reader.deliver_msg(message);
+                try {
+                    if (stdin_reader.deliver_msg) {
+                        stdin_reader.deliver_msg(message);
+                    }
+                } catch (e) {
+                    process.stderr.write('exception ' + e + '\n');
                 }
             } else {
                 stdin_reader.message_payload += chunk.substr(i);
@@ -67,10 +74,21 @@ process.stdin.on('data', function(chunk) {
                 i += can_use_bytes; // end
             }
         }
+
+        i += do_inc;
     }
 });
 
-let lsp_id = clvm_tools_rs.create_lsp_service();
+let lsp_id = clvm_tools_rs.create_lsp_service(function(name) {
+    try {
+        return fs.readFileSync(name, 'utf8');
+    } catch(e) {
+        process.stderr.write('read file failed: ' + e + '\n');
+        return null;
+    }
+}, function(e) {
+    process.stderr.write('stderr> ' + e + '\n');
+});
 
 process.stdin.on('end', function() {
     clvm_tools_rs.destroy_lsp_service(lsp_id);
@@ -79,7 +97,12 @@ process.stdin.on('end', function() {
 
 let awaiting_init_msg = true;
 stdin_reader.deliver_msg = function(m) {
-    let messages = clvm_tools_rs.lsp_service_handle_msg(lsp_id, m);
+    let messages = [];
+    try {
+        messages = clvm_tools_rs.lsp_service_handle_msg(lsp_id, m);
+    } catch (e) {
+        process.stderr.write('exn: ' + e + '\n');
+    }
 
     for (var i = 0; i < messages.length; i++) {
         let inner_ms = JSON.parse(messages[i]);

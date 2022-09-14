@@ -85,7 +85,7 @@ pub struct DefunData {
     pub name: Vec<u8>,
     pub nl: Srcloc,
     pub args: Rc<SExp>,
-    pub body: Rc<BodyForm>
+    pub body: Rc<BodyForm>,
 }
 
 #[derive(Clone, Debug)]
@@ -94,7 +94,7 @@ pub struct DefmacData {
     pub name: Vec<u8>,
     pub nl: Srcloc,
     pub args: Rc<SExp>,
-    pub program: Rc<CompileForm>
+    pub program: Rc<CompileForm>,
 }
 
 #[derive(Clone, Debug)]
@@ -102,7 +102,7 @@ pub struct DefconstData {
     pub loc: Srcloc,
     pub name: Vec<u8>,
     pub nl: Srcloc,
-    pub body: Rc<BodyForm>
+    pub body: Rc<BodyForm>,
 }
 
 #[derive(Clone, Debug)]
@@ -232,8 +232,13 @@ impl CompileForm {
         CompileForm {
             loc: self.loc.clone(),
             args: self.args.clone(),
-            helpers: self.helpers.iter().filter(|h| !names.contains(h.name())).cloned().collect(),
-            exp: self.exp.clone()
+            helpers: self
+                .helpers
+                .iter()
+                .filter(|h| !names.contains(h.name()))
+                .cloned()
+                .collect(),
+            exp: self.exp.clone(),
         }
     }
 
@@ -242,16 +247,19 @@ impl CompileForm {
         for h in helpers.iter() {
             new_names.insert(h.name());
         }
-        let mut new_helpers: Vec<HelperForm> = self.helpers.iter().filter(|h| {
-            !new_names.contains(h.name())
-        }).cloned().collect();
+        let mut new_helpers: Vec<HelperForm> = self
+            .helpers
+            .iter()
+            .filter(|h| !new_names.contains(h.name()))
+            .cloned()
+            .collect();
         new_helpers.append(&mut helpers.to_vec());
 
         CompileForm {
             loc: self.loc.clone(),
             args: self.args.clone(),
             helpers: new_helpers,
-            exp: self.exp.clone()
+            exp: self.exp.clone(),
         }
     }
 }

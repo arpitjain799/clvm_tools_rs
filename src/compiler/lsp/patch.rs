@@ -3,21 +3,29 @@ use std::rc::Rc;
 
 use lsp_types::TextDocumentContentChangeEvent;
 
-use crate::compiler::sexp::decode_string;
-use crate::compiler::lsp::LSPServiceProvider;
 use crate::compiler::lsp::parse::DocVecByteIter;
 use crate::compiler::lsp::types::DocData;
+use crate::compiler::lsp::LSPServiceProvider;
+use crate::compiler::sexp::decode_string;
 
 pub trait PatchableDocument {
     fn apply_patch(&self, version: i32, patches: &[TextDocumentContentChangeEvent]) -> Self;
 }
 
 pub trait LSPServiceProviderApplyDocumentPatch {
-    fn apply_document_patch(&mut self, uristring: &str, version: i32, patches: &[TextDocumentContentChangeEvent]);
+    fn apply_document_patch(
+        &mut self,
+        uristring: &str,
+        version: i32,
+        patches: &[TextDocumentContentChangeEvent],
+    );
 }
 
 pub fn split_text(td: &str) -> Vec<Rc<Vec<u8>>> {
-    let result: Vec<Rc<Vec<u8>>> = td.split('\n').map(|x| Rc::new(x.as_bytes().to_vec())).collect();
+    let result: Vec<Rc<Vec<u8>>> = td
+        .split('\n')
+        .map(|x| Rc::new(x.as_bytes().to_vec()))
+        .collect();
     result
 }
 
@@ -33,34 +41,36 @@ impl PatchableDocument for DocData {
         // Try to do an efficient job of patching the old document content.
         for p in patches.iter() {
             if let Some(r) = p.range {
-                let prelude_start =
-                    if r.start.line > 0 {
-                        self.text.iter().take(r.start.line as usize).collect()
-                    } else {
-                        vec![]
-                    };
-                let suffix_after =
-                    if (r.end.line as usize) < self.text.len() - 1 {
-                        self.text.iter().skip((r.end.line + 1) as usize).collect()
-                    } else {
-                        vec![]
-                    };
-                let mut line_prefix =
-                    if (r.start.line as usize) < self.text.len() {
-                        let line_ref: &Vec<u8> =
-                            self.text[r.start.line as usize].borrow();
-                        line_ref.iter().take(r.start.character as usize).copied().collect()
-                    } else {
-                        vec![]
-                    };
-                let mut line_suffix =
-                    if (r.end.line as usize) < self.text.len() {
-                        let line_ref: &Vec<u8> =
-                            self.text[r.end.line as usize].borrow();
-                        line_ref.iter().skip(r.end.character as usize).copied().collect()
-                    } else {
-                        vec![]
-                    };
+                let prelude_start = if r.start.line > 0 {
+                    self.text.iter().take(r.start.line as usize).collect()
+                } else {
+                    vec![]
+                };
+                let suffix_after = if (r.end.line as usize) < self.text.len() - 1 {
+                    self.text.iter().skip((r.end.line + 1) as usize).collect()
+                } else {
+                    vec![]
+                };
+                let mut line_prefix = if (r.start.line as usize) < self.text.len() {
+                    let line_ref: &Vec<u8> = self.text[r.start.line as usize].borrow();
+                    line_ref
+                        .iter()
+                        .take(r.start.character as usize)
+                        .copied()
+                        .collect()
+                } else {
+                    vec![]
+                };
+                let mut line_suffix = if (r.end.line as usize) < self.text.len() {
+                    let line_ref: &Vec<u8> = self.text[r.end.line as usize].borrow();
+                    line_ref
+                        .iter()
+                        .skip(r.end.character as usize)
+                        .copied()
+                        .collect()
+                } else {
+                    vec![]
+                };
 
                 for (i, l) in prelude_start.iter().enumerate() {
                     eprintln!("P {}: {}", i, decode_string(l));
@@ -115,20 +125,31 @@ impl PatchableDocument for DocData {
             }
         }
 
-        DocData { text: doc_copy, version }
+        DocData {
+            text: doc_copy,
+            version,
+        }
     }
 }
 
 impl LSPServiceProviderApplyDocumentPatch for LSPServiceProvider {
-    fn apply_document_patch(&mut self, uristring: &str, version: i32, patches: &[TextDocumentContentChangeEvent]) {
+    fn apply_document_patch(
+        &mut self,
+        uristring: &str,
+        version: i32,
+        patches: &[TextDocumentContentChangeEvent],
+    ) {
         if let Some(dd) = self.get_doc(uristring) {
             if patches.len() == 1 && patches[0].range.is_none() {
                 // We can short circuit a full document rewrite.
                 // There are no hanging patches as a result.
-                self.save_doc(uristring.to_owned(), DocData {
-                    text: split_text(&patches[0].text),
-                    version
-                });
+                self.save_doc(
+                    uristring.to_owned(),
+                    DocData {
+                        text: split_text(&patches[0].text),
+                        version,
+                    },
+                );
                 return;
             }
 

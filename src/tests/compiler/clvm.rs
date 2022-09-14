@@ -48,7 +48,8 @@ fn test_sexp_parse_3() {
 #[test]
 fn test_sexp_parse_4() {
     let loc = Srcloc::start(&"*test*".to_string());
-    let res = parse_sexp(loc, "\"hello\"".as_bytes().iter().copied()).and_then(|x| x[0].get_number());
+    let res =
+        parse_sexp(loc, "\"hello\"".as_bytes().iter().copied()).and_then(|x| x[0].get_number());
     assert_eq!(res, Ok(448378203247_i64.to_bigint().unwrap()));
 }
 
@@ -78,7 +79,10 @@ fn test_sexp_parse_8() {
     let loc = Srcloc::start(&"*test*".to_string());
     let res = parse_sexp(
         loc,
-        "(a (q 2 4 (c 2 (c 6 ()))) (c (q 13 26729 \"there\" \"fool\") 1))".as_bytes().iter().copied(),
+        "(a (q 2 4 (c 2 (c 6 ()))) (c (q 13 26729 \"there\" \"fool\") 1))"
+            .as_bytes()
+            .iter()
+            .copied(),
     )
     .map(|x| x[0].to_string());
     assert_eq!(

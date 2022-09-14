@@ -4,26 +4,17 @@ use std::rc::Rc;
 
 use lsp_types::Position;
 
-use crate::compiler::comptypes::{
-    BodyForm,
-    CompileErr,
-    CompileForm,
-    HelperForm
-};
+use crate::compiler::comptypes::{BodyForm, CompileErr, CompileForm, HelperForm};
+use crate::compiler::lsp::types::{DocData, DocPosition, DocRange};
 use crate::compiler::sexp::SExp;
 use crate::compiler::srcloc::Srcloc;
-use crate::compiler::lsp::types::{
-    DocData,
-    DocPosition,
-    DocRange
-};
 
 #[derive(Debug, Clone)]
 pub enum ScopeKind {
     Module,
     Macro,
     Function,
-    Let
+    Let,
 }
 
 #[derive(Debug, Clone)]
@@ -32,7 +23,7 @@ pub struct ParseScope {
     pub kind: ScopeKind,
     pub variables: HashSet<SExp>,
     pub functions: HashSet<SExp>,
-    pub containing: Vec<ParseScope>
+    pub containing: Vec<ParseScope>,
 }
 
 #[derive(Debug, Clone)]
@@ -64,8 +55,8 @@ impl ParsedDoc {
                 loc: startloc,
                 args: Rc::new(nil.clone()),
                 helpers: vec![],
-                exp: Rc::new(BodyForm::Quoted(nil))
-            }
+                exp: Rc::new(BodyForm::Quoted(nil)),
+            },
         }
     }
 }
@@ -73,7 +64,7 @@ impl ParsedDoc {
 pub struct DocVecByteIter<'a> {
     line: usize,
     offs: usize,
-    target: &'a [Rc<Vec<u8>>]
+    target: &'a [Rc<Vec<u8>>],
 }
 
 impl<'a> Iterator for DocVecByteIter<'a> {
@@ -99,7 +90,7 @@ impl<'a> DocVecByteIter<'a> {
         DocVecByteIter {
             line: 0,
             offs: 0,
-            target
+            target,
         }
     }
 }
@@ -115,16 +106,14 @@ pub fn find_ident(line: Rc<Vec<u8>>, char_at: u32) -> Option<Vec<u8>> {
     let borrowed: &Vec<u8> = line.borrow();
     let mut lb = ca_size - 1;
     let mut ub = ca_size;
-    while lb > 0 && borrowed[lb-1].is_ascii_alphabetic() {
+    while lb > 0 && borrowed[lb - 1].is_ascii_alphabetic() {
         lb -= 1;
     }
     while ub < borrowed.len() && borrowed[ub].is_ascii_alphanumeric() {
         ub += 1;
     }
 
-    let ident_vec: Vec<u8> =
-        borrowed[lb..].iter().
-        take(ub - lb).copied().collect();
+    let ident_vec: Vec<u8> = borrowed[lb..].iter().take(ub - lb).copied().collect();
 
     Some(ident_vec)
 }
@@ -180,14 +169,11 @@ pub fn get_positional_text(lines: &DocData, position: &Position) -> Option<Vec<u
 }
 
 pub fn is_identifier(v: &[u8]) -> bool {
-    v.iter().all(|x| !(*x == b'(' || *x == b')' || x.is_ascii_whitespace()))
+    v.iter()
+        .all(|x| !(*x == b'(' || *x == b')' || x.is_ascii_whitespace()))
 }
 
-pub fn find_scope_stack(
-    out_scopes: &mut Vec<ParseScope>,
-    scope: &ParseScope,
-    position: &Srcloc
-) {
+pub fn find_scope_stack(out_scopes: &mut Vec<ParseScope>, scope: &ParseScope, position: &Srcloc) {
     if scope.region.overlap(position) {
         for s in scope.containing.iter() {
             find_scope_stack(out_scopes, s, position);
@@ -196,7 +182,11 @@ pub fn find_scope_stack(
     }
 }
 
-pub fn grab_scope_doc_range(text: &[Rc<Vec<u8>>], range: &DocRange, space_for_range: bool) -> Vec<u8> {
+pub fn grab_scope_doc_range(
+    text: &[Rc<Vec<u8>>],
+    range: &DocRange,
+    space_for_range: bool,
+) -> Vec<u8> {
     let mut res = Vec::new();
 
     let loc = &range.start;
@@ -213,7 +203,11 @@ pub fn grab_scope_doc_range(text: &[Rc<Vec<u8>>], range: &DocRange, space_for_ra
 
     if eloc.line == loc.line {
         // Only line
-        for ch in text_borrowed.iter().take(eloc.character as usize).skip(loc.character as usize) {
+        for ch in text_borrowed
+            .iter()
+            .take(eloc.character as usize)
+            .skip(loc.character as usize)
+        {
             res.push(*ch);
         }
 
@@ -225,12 +219,11 @@ pub fn grab_scope_doc_range(text: &[Rc<Vec<u8>>], range: &DocRange, space_for_ra
     }
 
     // Inside lines.
-    let end_line =
-        if (eloc.line as usize) > text.len() {
-            text.len()
-        } else {
-            eloc.line as usize
-        };
+    let end_line = if (eloc.line as usize) > text.len() {
+        text.len()
+    } else {
+        eloc.line as usize
+    };
 
     for l in text.iter().take(end_line).skip((loc.line + 1) as usize) {
         res.push(b'\n');
@@ -241,12 +234,11 @@ pub fn grab_scope_doc_range(text: &[Rc<Vec<u8>>], range: &DocRange, space_for_ra
         }
     }
 
-    let eline =
-        if end_line < text.len() {
-            text[end_line].clone()
-        } else {
-            Rc::new(vec![])
-        };
+    let eline = if end_line < text.len() {
+        text[end_line].clone()
+    } else {
+        Rc::new(vec![])
+    };
 
     let end_borrowed: &Vec<u8> = eline.borrow();
 
@@ -260,14 +252,14 @@ pub fn grab_scope_doc_range(text: &[Rc<Vec<u8>>], range: &DocRange, space_for_ra
 
 fn make_arg_set(set: &mut HashSet<SExp>, args: Rc<SExp>) {
     match args.borrow() {
-        SExp::Atom(l,a) => {
-            set.insert(SExp::Atom(l.clone(),a.clone()));
-        },
-        SExp::Cons(_,a,b) => {
+        SExp::Atom(l, a) => {
+            set.insert(SExp::Atom(l.clone(), a.clone()));
+        }
+        SExp::Cons(_, a, b) => {
             make_arg_set(set, a.clone());
             make_arg_set(set, b.clone());
-        },
-        _ => { }
+        }
+        _ => {}
     }
 }
 
@@ -278,25 +270,23 @@ fn make_helper_scope(h: &HelperForm) -> Option<ParseScope> {
     let mut args = HashSet::new();
 
     match h {
-        HelperForm::Defun(_,d) => {
+        HelperForm::Defun(_, d) => {
             kind = Some(ScopeKind::Function);
             make_arg_set(&mut args, d.args.clone());
-        },
+        }
         HelperForm::Defmacro(m) => {
             kind = Some(ScopeKind::Macro);
             make_arg_set(&mut args, m.args.clone());
-        },
-        _ => { }
+        }
+        _ => {}
     }
 
-    kind.map(|k| {
-        ParseScope {
-            kind: k,
-            region: loc,
-            variables: args,
-            functions: HashSet::new(),
-            containing: Vec::new()
-        }
+    kind.map(|k| ParseScope {
+        kind: k,
+        region: loc,
+        variables: args,
+        functions: HashSet::new(),
+        containing: Vec::new(),
     })
 }
 
@@ -309,13 +299,13 @@ pub fn recover_scopes(ourfile: &str, text: &[Rc<Vec<u8>>], fe: &CompileForm) -> 
 
     for h in fe.helpers.iter() {
         match h {
-            HelperForm::Defun(_,d) => {
+            HelperForm::Defun(_, d) => {
                 toplevel_funs.insert(SExp::Atom(d.loc.clone(), d.name.clone()));
-            },
+            }
             HelperForm::Defmacro(m) => {
                 toplevel_funs.insert(SExp::Atom(m.loc.clone(), m.name.clone()));
-            },
-            HelperForm::Defconstant(l,n,_) => {
+            }
+            HelperForm::Defconstant(l, n, _) => {
                 toplevel_args.insert(SExp::Atom(l.clone(), n.clone()));
             }
         }
@@ -331,12 +321,14 @@ pub fn recover_scopes(ourfile: &str, text: &[Rc<Vec<u8>>], fe: &CompileForm) -> 
 
     ParseScope {
         kind: ScopeKind::Module,
-        region: Srcloc::start(ourfile).ext(
-            &Srcloc::new(Rc::new(ourfile.to_string()), text.len() + 1, 0)
-        ),
+        region: Srcloc::start(ourfile).ext(&Srcloc::new(
+            Rc::new(ourfile.to_string()),
+            text.len() + 1,
+            0,
+        )),
         variables: toplevel_args,
         functions: toplevel_funs,
-        containing: contained
+        containing: contained,
     }
 }
 
@@ -364,7 +356,10 @@ pub fn make_simple_ranges(srctext: &[Rc<Vec<u8>>]) -> Vec<DocRange> {
                     if let Some(s) = start.clone() {
                         ranges.push(DocRange {
                             start: s,
-                            end: DocPosition { line, character: character + 1 }
+                            end: DocPosition {
+                                line,
+                                character: character + 1,
+                            },
                         });
                         start = None;
                     }

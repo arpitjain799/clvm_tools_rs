@@ -1,16 +1,17 @@
 use std::error::Error;
+use std::rc::Rc;
 
 use lsp_server::{Connection, Message};
 
-use clvm_tools_rs::compiler::lsp::{
-    LSPServiceProvider,
-    LSPServiceMessageHandler
-};
+use clvm_tools_rs::compiler::lsp::types::{EPrintWriter, FSFileReader};
+use clvm_tools_rs::compiler::lsp::{LSPServiceMessageHandler, LSPServiceProvider};
 
-fn main_loop(
-    connection: Connection
-) -> Result<(), Box<dyn Error + Sync + Send>> {
-    let mut lsp_provider = LSPServiceProvider::new(false);
+fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>> {
+    let mut lsp_provider = LSPServiceProvider::new(
+        Rc::new(FSFileReader::new()),
+        Rc::new(EPrintWriter::new()),
+        false,
+    );
 
     eprintln!("starting example main loop");
     for msg in &connection.receiver {
@@ -20,7 +21,9 @@ fn main_loop(
             }
         }
 
-        let out_msgs = lsp_provider.handle_message(&msg).map_err(Box::<dyn Error + Send + Sync>::from)?;
+        let out_msgs = lsp_provider
+            .handle_message(&msg)
+            .map_err(Box::<dyn Error + Send + Sync>::from)?;
         for o in out_msgs.into_iter() {
             connection.sender.send(o)?;
         }
