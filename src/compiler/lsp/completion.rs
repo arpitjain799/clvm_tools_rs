@@ -13,7 +13,7 @@ use crate::compiler::sexp::{decode_string, SExp};
 use crate::compiler::srcloc::Srcloc;
 
 lazy_static! {
-    static ref PRIM_NAMES: Vec<Vec<u8>> = { prims().iter().map(|p| p.0.clone()).collect() };
+    static ref PRIM_NAMES: Vec<Vec<u8>> = prims().iter().map(|p| p.0.clone()).collect();
 }
 
 pub trait LSPCompletionRequestHandler {

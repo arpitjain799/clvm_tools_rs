@@ -67,7 +67,7 @@ impl LSPServiceProvider {
                 }
             }
         }
-        let result = goto_response.map(|gr| GotoDefinitionResponse::Scalar(gr));
+        let result = goto_response.map(GotoDefinitionResponse::Scalar);
         let result = serde_json::to_value(&result).unwrap();
         let resp = Response {
             id,
