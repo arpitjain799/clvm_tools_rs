@@ -335,14 +335,14 @@ impl Formatter {
                 semis += 1;
             } else if semis > 0 {
                 comment = line[i..].to_vec();
-                line = trim_ascii_end(&line[0..semi_off].to_vec());
+                line = trim_ascii_end(&line[0..semi_off]);
                 break;
             }
         }
 
         // Handle the case where the ;s are the last characters on the line.
         if semis + semi_off == line.len() {
-            line = trim_ascii_end(&line[0..semi_off].to_vec());
+            line = trim_ascii_end(&line[0..semi_off]);
         }
 
         line = trim_ascii_end(&line);
