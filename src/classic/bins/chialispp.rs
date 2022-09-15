@@ -1,21 +1,12 @@
 use std::cmp::max;
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::Write;
-
-use clvm_tools_rs::compiler::sexp::decode_string;
 
 #[derive(Debug)]
 struct Line {
     code: Vec<u8>,
     comment: Option<Vec<u8>>,
-}
-
-impl Line {
-    pub fn new(code: Vec<u8>, comment: Option<Vec<u8>>) -> Self {
-        Line { code, comment }
-    }
 }
 
 #[derive(Debug)]
@@ -33,7 +24,6 @@ struct Formatter {
     form_name: Vec<u8>,
     got_form_on_line: usize,
     reset_form_indent: bool,
-    last_single_line_comment: usize,
     definition_starts: Vec<usize>,
     extra_def_lines: Vec<usize>,
     result_line: Vec<u8>,
@@ -95,7 +85,6 @@ impl Formatter {
             reset_form_indent: false,
             def_started: false,
             result_line: Vec::new(),
-            last_single_line_comment: 0,
             definition_starts: Vec::new(),
             extra_def_lines: Vec::new(),
             indent_stack: Vec::new(),
@@ -232,7 +221,6 @@ impl Formatter {
 
     pub fn output_line(&mut self) {
         let line_indent = self.get_cur_indent();
-        let mut prec_ws = 0;
         let mut max_paren_level = self.paren_level;
 
         self.start_paren_level = self.paren_level;
@@ -248,7 +236,6 @@ impl Formatter {
         let mut col = 0;
         for ch in line.iter() {
             if *ch != b' ' && *ch != b'\t' {
-                prec_ws = col;
                 break;
             }
 
@@ -263,7 +250,6 @@ impl Formatter {
         let mut string_bs = false;
 
         let mut semis = 0;
-        let mut semi_loc = 0;
         let mut semi_off = 0;
         let mut comment = Vec::new();
 
@@ -344,7 +330,6 @@ impl Formatter {
 
             if ch == b';' {
                 if semis == 0 {
-                    semi_loc = i + prec_ws;
                     semi_off = i;
                 }
                 semis += 1;
@@ -362,7 +347,7 @@ impl Formatter {
 
         line = trim_ascii_end(&line);
 
-        if semis == 1 && line.len() > 0 {
+        if semis == 1 && line.is_empty() {
             // Handle single semicolon alignment in the post pass
             semis = 0;
             self.comment = Some(comment);
