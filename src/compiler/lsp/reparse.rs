@@ -122,7 +122,10 @@ pub fn reparse_subset(
 
         // Find out of there's a single atom after the last identified atom.
         let suffix_start = simple_ranges[simple_ranges.len() - 1].end.clone();
-        let doc_end = DocPosition { line: doc.len() as u32, character: 0 };
+        let doc_end = DocPosition {
+            line: doc.len() as u32,
+            character: 0,
+        };
         let suffix_range = DocRange {
             start: suffix_start.clone(),
             end: doc_end.clone(),
@@ -150,10 +153,11 @@ pub fn reparse_subset(
                 CompileErr(
                     DocRange {
                         start: suffix_start.clone(),
-                        end: doc_end
-                    }.to_srcloc(uristring),
-                    "Missing end paren for enclosing list form".to_string()
-                )
+                        end: doc_end,
+                    }
+                    .to_srcloc(uristring),
+                    "Missing end paren for enclosing list form".to_string(),
+                ),
             );
         }
 

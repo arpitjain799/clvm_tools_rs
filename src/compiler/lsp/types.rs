@@ -172,11 +172,12 @@ impl DocRange {
         Srcloc::new(
             file_rc.clone(),
             (self.start.line + 1) as usize,
-            (self.start.character + 1) as usize
-        ).ext(&Srcloc::new(
+            (self.start.character + 1) as usize,
+        )
+        .ext(&Srcloc::new(
             file_rc,
             (self.end.line + 1) as usize,
-            (self.end.character + 1) as usize
+            (self.end.character + 1) as usize,
         ))
     }
 

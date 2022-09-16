@@ -543,11 +543,6 @@ fn test_warn_missing_end() {
     let file = "file:///test.cl".to_string();
     let loc = Srcloc::start(&file);
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
-    let combined = run_reparse_steps(
-        loc,
-        opts.clone(),
-        &file,
-        &["(mod X ()".to_string()],
-    );
+    let combined = run_reparse_steps(loc, opts.clone(), &file, &["(mod X ()".to_string()]);
     assert_eq!(!combined.errors.is_empty(), true);
 }
