@@ -525,7 +525,7 @@ fn test_reparse_subset_4() {
     let file = "file:///test.cl".to_string();
     let loc = Srcloc::start(&file);
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
-    let combined2 = run_reparse_steps(
+    let combined = run_reparse_steps(
         loc,
         opts.clone(),
         &file,
@@ -533,6 +533,21 @@ fn test_reparse_subset_4() {
     );
     assert_eq!(
         "(X (defun F (X) (+ X 1)) X)",
-        chop_scopes(&combined2.compiled.to_sexp().to_string())
+        chop_scopes(&combined.compiled.to_sexp().to_string())
     );
+}
+
+// Warn on missing end parenthesis.
+#[test]
+fn test_warn_missing_end() {
+    let file = "file:///test.cl".to_string();
+    let loc = Srcloc::start(&file);
+    let opts = Rc::new(DefaultCompilerOpts::new(&file));
+    let combined = run_reparse_steps(
+        loc,
+        opts.clone(),
+        &file,
+        &["(mod X ()".to_string()],
+    );
+    assert_eq!(!combined.errors.is_empty(), true);
 }

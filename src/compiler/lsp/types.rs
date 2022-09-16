@@ -167,6 +167,19 @@ impl DocRange {
         }
     }
 
+    pub fn to_srcloc(&self, file: &str) -> Srcloc {
+        let file_rc = Rc::new(file.to_owned());
+        Srcloc::new(
+            file_rc.clone(),
+            (self.start.line + 1) as usize,
+            (self.start.character + 1) as usize
+        ).ext(&Srcloc::new(
+            file_rc,
+            (self.end.line + 1) as usize,
+            (self.end.character + 1) as usize
+        ))
+    }
+
     pub fn to_range(&self) -> Range {
         Range {
             start: self.start.to_position(),

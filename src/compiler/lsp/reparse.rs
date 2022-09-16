@@ -71,6 +71,9 @@ pub fn reparse_subset(
 
     if simple_ranges.is_empty() {
         // There's nothing to be gained by trying to do incremental.
+
+        // XXX check for an enclosing form.
+
         return result;
     } else {
         // Find out if there's a single atom before the first identified
@@ -119,12 +122,10 @@ pub fn reparse_subset(
 
         // Find out of there's a single atom after the last identified atom.
         let suffix_start = simple_ranges[simple_ranges.len() - 1].end.clone();
+        let doc_end = DocPosition { line: doc.len() as u32, character: 0 };
         let suffix_range = DocRange {
             start: suffix_start.clone(),
-            end: DocPosition {
-                line: doc.len() as u32,
-                character: 0,
-            },
+            end: doc_end.clone(),
         };
         let mut suffix_text = grab_scope_doc_range(doc, &suffix_range, false);
         // TODO hash suffix to prevent reparsing.
@@ -139,7 +140,21 @@ pub fn reparse_subset(
         for (i, ch) in suffix_text.iter().enumerate() {
             if *ch == b')' {
                 break_end = i;
+                break;
             }
+        }
+
+        if break_end == suffix_text.len() {
+            result.errors.insert(
+                sha256tree_from_atom(&suffix_text),
+                CompileErr(
+                    DocRange {
+                        start: suffix_start.clone(),
+                        end: doc_end
+                    }.to_srcloc(uristring),
+                    "Missing end paren for enclosing list form".to_string()
+                )
+            );
         }
 
         suffix_text = suffix_text.iter().take(break_end).copied().collect();
