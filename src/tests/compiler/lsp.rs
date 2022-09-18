@@ -96,9 +96,7 @@ fn decode_completion_response(m: &Message) -> Option<Vec<CompletionItem>> {
         })
 }
 
-fn find_completion_response(
-    out_msgs: &[Message]
-) -> Option<CompletionItem> {
+fn find_completion_response(out_msgs: &[Message]) -> Option<CompletionItem> {
     for c in out_msgs.iter() {
         if let Some(completion_result) = decode_completion_response(&c) {
             return Some(completion_result[0].clone());
@@ -564,9 +562,7 @@ fn test_mod_ends_in_defun_error() {
         loc,
         opts.clone(),
         &file,
-        &[
-            "(mod X (defun F (X) (+ X 1)))".to_string(),
-        ],
+        &["(mod X (defun F (X) (+ X 1)))".to_string()],
     );
     assert_eq!(combined.errors.len(), 1);
 }
@@ -580,9 +576,7 @@ fn test_list_ends_in_defun_no_error() {
         loc,
         opts.clone(),
         &file,
-        &[
-            "( (defun F (X) (+ X 1)) )".to_string(),
-        ],
+        &["( (defun F (X) (+ X 1)) )".to_string()],
     );
     assert_eq!(combined.errors.is_empty(), true);
 }
