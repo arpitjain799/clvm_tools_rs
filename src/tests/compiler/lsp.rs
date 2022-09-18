@@ -282,10 +282,14 @@ fn test_completion_from_argument_function() {
         },
     );
     let out_msgs = run_lsp(&mut lsp, &vec![open_msg, complete_msg]).unwrap();
-    assert_eq!(out_msgs.len() > 0, true);
-    let completion_result = decode_completion_response(&out_msgs[0]).unwrap();
-    assert_eq!(completion_result.len() > 0, true);
-    assert_eq!(completion_result[0].label, "odd");
+    let mut completion_responses = Vec::new();
+    for c in out_msgs.iter() {
+        if let Some(completion_result) = decode_completion_response(&c) {
+            completion_responses.push(completion_result[0].clone());
+        }
+    }
+    assert_eq!(completion_responses.len(), 1);
+    assert_eq!(completion_responses[0].label, "odd");
 }
 
 #[test]
@@ -537,12 +541,62 @@ fn test_reparse_subset_4() {
     );
 }
 
-// Warn on missing end parenthesis.
+// Warn on unrecognized function call.
 #[test]
-fn test_warn_missing_end() {
+fn test_warn_call_of_undefined_function() {
     let file = "file:///test.cl".to_string();
     let loc = Srcloc::start(&file);
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
-    let combined = run_reparse_steps(loc, opts.clone(), &file, &["(mod X ()".to_string()]);
+    let combined = run_reparse_steps(loc, opts.clone(), &file, &["(mod X (F 3))".to_string()]);
     assert_eq!(!combined.errors.is_empty(), true);
+}
+
+#[test]
+fn test_mod_ends_in_defun_error() {
+    let file = "file:///test.cl".to_string();
+    let loc = Srcloc::start(&file);
+    let opts = Rc::new(DefaultCompilerOpts::new(&file));
+    let combined = run_reparse_steps(
+        loc,
+        opts.clone(),
+        &file,
+        &[
+            "(mod X (defun F (X) (+ X 1)))".to_string(),
+        ],
+    );
+    assert_eq!(combined.errors.len(), 1);
+}
+
+#[test]
+fn test_list_ends_in_defun_no_error() {
+    let file = "file:///test.cl".to_string();
+    let loc = Srcloc::start(&file);
+    let opts = Rc::new(DefaultCompilerOpts::new(&file));
+    let combined = run_reparse_steps(
+        loc,
+        opts.clone(),
+        &file,
+        &[
+            "( (defun F (X) (+ X 1)) )".to_string(),
+        ],
+    );
+    assert_eq!(combined.errors.is_empty(), true);
+}
+
+#[test]
+fn test_mod_can_cease_reporting_wrong_function_error() {
+    let file = "file:///test.cl".to_string();
+    let loc = Srcloc::start(&file);
+    let opts = Rc::new(DefaultCompilerOpts::new(&file));
+    let combined = run_reparse_steps(
+        loc,
+        opts.clone(),
+        &file,
+        &[
+            "(mod X (defun F (X) (+ X 1)))".to_string(),
+            "(mod X (defun F (X) (+ X 1)) (G X))".to_string(),
+            "(mod X (defun G (X) (+ X 1)) (G X))".to_string(),
+        ],
+    );
+    assert_eq!(combined.errors.len(), 0);
 }

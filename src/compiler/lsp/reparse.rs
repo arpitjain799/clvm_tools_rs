@@ -5,7 +5,12 @@ use std::rc::Rc;
 use crate::compiler::clvm::{sha256tree, sha256tree_from_atom};
 use crate::compiler::comptypes::{BodyForm, CompileErr, CompileForm, CompilerOpts, HelperForm};
 use crate::compiler::frontend::{compile_bodyform, compile_helperform};
-use crate::compiler::lsp::parse::{grab_scope_doc_range, recover_scopes, ParsedDoc};
+use crate::compiler::lsp::parse::{
+    grab_scope_doc_range,
+    recover_scopes,
+    ParsedDoc,
+    ParseScope
+};
 use crate::compiler::lsp::types::{DocPosition, DocRange};
 use crate::compiler::sexp::{decode_string, parse_sexp, SExp};
 use crate::compiler::srcloc::Srcloc;
@@ -149,7 +154,7 @@ pub fn reparse_subset(
 
         if break_end == suffix_text.len() {
             result.errors.insert(
-                sha256tree_from_atom(&suffix_text),
+                b"end".to_vec(),
                 CompileErr(
                     DocRange {
                         start: suffix_start.clone(),
@@ -205,7 +210,8 @@ pub fn reparse_subset(
             parse_as_body,
             decode_string(&text)
         );
-        let hash = sha256tree_from_atom(&text);
+        let mut hash = sha256tree_from_atom(&text);
+        hash.append(&mut format!("{} {} {}", i, simple_ranges.len(), parse_as_body).as_bytes().to_vec());
         if !used_hashes.contains(&hash) {
             if let Ok(parsed) = parse_sexp(
                 Srcloc::new(
@@ -261,6 +267,61 @@ pub fn reparse_subset(
     result
 }
 
+// Only the top scope is relevant for now.
+fn find_function_in_scopes(
+    scopes: &ParseScope,
+    name: &SExp
+) -> bool {
+    scopes.functions.contains(name)
+}
+
+// Add errors for unrecognized calls.
+pub fn check_live_helper_calls(
+    scopes: &ParseScope,
+    exp: &BodyForm
+) -> Option<CompileErr> {
+    match exp {
+        BodyForm::Call(l, v) => {
+            if v.is_empty() {
+                return Some(CompileErr(
+                    l.clone(),
+                    "Empty function call".to_string()
+                ));
+            }
+
+            // Try to make sense of the list head
+            if let BodyForm::Value(s) = v[0].borrow() {
+                if !find_function_in_scopes(scopes, &s) {
+                    return Some(CompileErr(
+                        s.loc(),
+                        "No such function found".to_string()
+                    ));
+                }
+            } else {
+                return Some(CompileErr(
+                    l.clone(),
+                    "Inappropriate function name".to_string()
+                ));
+            }
+
+            for b in v.iter().skip(1) {
+                if let Some(e) = check_live_helper_calls(
+                    scopes,
+                    &b
+                ) {
+                    return Some(e);
+                }
+            }
+        },
+        BodyForm::Let(_l,_kind,_bindings,body) => {
+            return check_live_helper_calls(scopes, body.borrow());
+        },
+        _ => { }
+    }
+
+    None
+}
+
 pub fn combine_new_with_old_parse(
     uristring: &str,
     text: &[Rc<Vec<u8>>],
@@ -312,12 +373,27 @@ pub fn combine_new_with_old_parse(
         }
     }
 
-    eprintln!("errors {:?}", reparse.errors);
+    let mut out_errors = reparse.errors.clone();
+    let compile_with_dead_helpers_removed =
+        new_compile.remove_helpers(&to_remove_helpers);
+    let scopes = recover_scopes(uristring, text, &new_compile);
+
+    // Check whether functions called in exp are live
+    let main_key = b"__chia__main";
+    if let Some(error) = check_live_helper_calls(
+        &scopes,
+        &compile_with_dead_helpers_removed.exp
+    ) {
+        out_errors.insert(main_key.to_vec(), error);
+    }
+
+    // Check whether helpers always call live functions
+    eprintln!("errors {:?}", out_errors);
 
     ParsedDoc {
-        compiled: new_compile.remove_helpers(&to_remove_helpers),
-        errors: reparse.errors.clone(),
-        scopes: recover_scopes(uristring, text, &new_compile),
+        compiled: compile_with_dead_helpers_removed,
+        errors: out_errors,
+        scopes,
         name_to_hash: new_pointers,
         hashes: new_hashes,
         includes: new_includes,
