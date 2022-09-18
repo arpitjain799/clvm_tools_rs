@@ -5,6 +5,7 @@ use std::rc::Rc;
 use crate::compiler::clvm::{sha256tree, sha256tree_from_atom};
 use crate::compiler::comptypes::{BodyForm, CompileErr, CompileForm, CompilerOpts, HelperForm};
 use crate::compiler::frontend::{compile_bodyform, compile_helperform};
+use crate::compiler::lsp::completion::PRIM_NAMES;
 use crate::compiler::lsp::parse::{
     grab_scope_doc_range,
     recover_scopes,
@@ -269,14 +270,22 @@ pub fn reparse_subset(
 
 // Only the top scope is relevant for now.
 fn find_function_in_scopes(
+    prims: &Vec<Vec<u8>>,
     scopes: &ParseScope,
     name: &SExp
 ) -> bool {
-    scopes.functions.contains(name)
+    if let SExp::Atom(_,a) = name {
+        scopes.functions.contains(name) || prims.iter().any(|p| {
+            p == a
+        })
+    } else {
+        false
+    }
 }
 
 // Add errors for unrecognized calls.
 pub fn check_live_helper_calls(
+    prims: &Vec<Vec<u8>>,
     scopes: &ParseScope,
     exp: &BodyForm
 ) -> Option<CompileErr> {
@@ -291,10 +300,10 @@ pub fn check_live_helper_calls(
 
             // Try to make sense of the list head
             if let BodyForm::Value(s) = v[0].borrow() {
-                if !find_function_in_scopes(scopes, &s) {
+                if !find_function_in_scopes(prims, scopes, &s) {
                     return Some(CompileErr(
                         s.loc(),
-                        "No such function found".to_string()
+                        format!("No such function found: {}", s)
                     ));
                 }
             } else {
@@ -306,6 +315,7 @@ pub fn check_live_helper_calls(
 
             for b in v.iter().skip(1) {
                 if let Some(e) = check_live_helper_calls(
+                    prims,
                     scopes,
                     &b
                 ) {
@@ -314,7 +324,11 @@ pub fn check_live_helper_calls(
             }
         },
         BodyForm::Let(_l,_kind,_bindings,body) => {
-            return check_live_helper_calls(scopes, body.borrow());
+            return check_live_helper_calls(
+                prims,
+                scopes,
+                body.borrow()
+            );
         },
         _ => { }
     }
@@ -378,9 +392,24 @@ pub fn combine_new_with_old_parse(
         new_compile.remove_helpers(&to_remove_helpers);
     let scopes = recover_scopes(uristring, text, &new_compile);
 
+    for h in compile_with_dead_helpers_removed.helpers.iter() {
+        if let HelperForm::Defun(_,d) = h {
+            let mut error_key = b"__chia_function_".to_vec();
+            error_key.append(&mut d.name.clone());
+            if let Some(error) = check_live_helper_calls(
+                &PRIM_NAMES,
+                &scopes,
+                &d.body
+            ) {
+                out_errors.insert(error_key, error);
+            }
+        }
+    }
+
     // Check whether functions called in exp are live
     let main_key = b"__chia__main";
     if let Some(error) = check_live_helper_calls(
+        &PRIM_NAMES,
         &scopes,
         &compile_with_dead_helpers_removed.exp
     ) {

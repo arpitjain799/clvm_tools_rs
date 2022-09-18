@@ -13,7 +13,13 @@ use crate::compiler::sexp::{decode_string, SExp};
 use crate::compiler::srcloc::Srcloc;
 
 lazy_static! {
-    static ref PRIM_NAMES: Vec<Vec<u8>> = prims().iter().map(|p| p.0.clone()).collect();
+    pub static ref PRIM_NAMES: Vec<Vec<u8>> = {
+        let mut p: Vec<Vec<u8>> = prims().iter().map(|p| p.0.clone()).collect();
+        p.push(b"if".to_vec());
+        p.push(b"function".to_vec());
+        p.push(b"list".to_vec());
+        p
+    };
 }
 
 pub trait LSPCompletionRequestHandler {
@@ -112,6 +118,7 @@ fn complete_function_name(
             }
         })
         .collect();
+
     viable_completions.append(&mut PRIM_NAMES.clone());
 
     viable_completions = viable_completions

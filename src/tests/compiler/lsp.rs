@@ -96,6 +96,18 @@ fn decode_completion_response(m: &Message) -> Option<Vec<CompletionItem>> {
         })
 }
 
+fn find_completion_response(
+    out_msgs: &[Message]
+) -> Option<CompletionItem> {
+    for c in out_msgs.iter() {
+        if let Some(completion_result) = decode_completion_response(&c) {
+            return Some(completion_result[0].clone());
+        }
+    }
+
+    None
+}
+
 fn get_msg_params(msg: &Message) -> String {
     match msg {
         Message::Request(req) => req.params.to_string(),
@@ -200,9 +212,8 @@ fn test_completion_from_argument_single_level() {
     );
     let out_msgs = run_lsp(&mut lsp, &vec![open_msg, complete_msg]).unwrap();
     assert_eq!(out_msgs.len() > 0, true);
-    let completion_result = decode_completion_response(&out_msgs[0]).unwrap();
-    assert_eq!(completion_result.len() > 0, true);
-    assert_eq!(completion_result[0].label, "zoom");
+    let completion_result = find_completion_response(&out_msgs).unwrap();
+    assert_eq!(completion_result.label, "zoom");
 }
 
 #[test]
@@ -250,9 +261,8 @@ fn test_completion_from_argument_top_level_only_expected() {
     );
     let out_msgs = run_lsp(&mut lsp, &vec![open_msg, complete_msg]).unwrap();
     assert_eq!(out_msgs.len() > 0, true);
-    let completion_result = decode_completion_response(&out_msgs[0]).unwrap();
-    assert_eq!(completion_result.len() == 1, true);
-    assert_eq!(completion_result[0].label, "X1");
+    let completion_result = find_completion_response(&out_msgs).unwrap();
+    assert_eq!(completion_result.label, "X1");
 }
 
 #[test]
@@ -282,14 +292,8 @@ fn test_completion_from_argument_function() {
         },
     );
     let out_msgs = run_lsp(&mut lsp, &vec![open_msg, complete_msg]).unwrap();
-    let mut completion_responses = Vec::new();
-    for c in out_msgs.iter() {
-        if let Some(completion_result) = decode_completion_response(&c) {
-            completion_responses.push(completion_result[0].clone());
-        }
-    }
-    assert_eq!(completion_responses.len(), 1);
-    assert_eq!(completion_responses[0].label, "odd");
+    let completion_response = find_completion_response(&out_msgs).unwrap();
+    assert_eq!(completion_response.label, "odd");
 }
 
 #[test]
