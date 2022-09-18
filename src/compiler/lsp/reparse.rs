@@ -268,7 +268,9 @@ pub fn reparse_subset(
 }
 
 // Only the top scope is relevant for now.
-fn find_function_in_scopes(prims: &Vec<Vec<u8>>, scopes: &ParseScope, name: &SExp) -> bool {
+fn find_function_in_scopes(
+    prims: &[Vec<u8>], scopes: &ParseScope, name: &SExp
+) -> bool {
     if let SExp::Atom(_, a) = name {
         scopes.functions.contains(name) || prims.iter().any(|p| p == a)
     } else {
@@ -278,7 +280,7 @@ fn find_function_in_scopes(prims: &Vec<Vec<u8>>, scopes: &ParseScope, name: &SEx
 
 // Add errors for unrecognized calls.
 pub fn check_live_helper_calls(
-    prims: &Vec<Vec<u8>>,
+    prims: &[Vec<u8>],
     scopes: &ParseScope,
     exp: &BodyForm,
 ) -> Option<CompileErr> {
@@ -290,7 +292,7 @@ pub fn check_live_helper_calls(
 
             // Try to make sense of the list head
             if let BodyForm::Value(s) = v[0].borrow() {
-                if !find_function_in_scopes(prims, scopes, &s) {
+                if !find_function_in_scopes(prims, scopes, s) {
                     return Some(CompileErr(
                         s.loc(),
                         format!("No such function found: {}", s),
@@ -304,7 +306,7 @@ pub fn check_live_helper_calls(
             }
 
             for b in v.iter().skip(1) {
-                if let Some(e) = check_live_helper_calls(prims, scopes, &b) {
+                if let Some(e) = check_live_helper_calls(prims, scopes, b) {
                     return Some(e);
                 }
             }
