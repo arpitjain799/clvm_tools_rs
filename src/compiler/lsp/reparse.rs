@@ -268,9 +268,7 @@ pub fn reparse_subset(
 }
 
 // Only the top scope is relevant for now.
-fn find_function_in_scopes(
-    prims: &[Vec<u8>], scopes: &ParseScope, name: &SExp
-) -> bool {
+fn find_function_in_scopes(prims: &[Vec<u8>], scopes: &ParseScope, name: &SExp) -> bool {
     if let SExp::Atom(_, a) = name {
         scopes.functions.contains(name) || prims.iter().any(|p| p == a)
     } else {

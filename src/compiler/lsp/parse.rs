@@ -266,43 +266,45 @@ fn make_arg_set(set: &mut HashSet<SExp>, args: Rc<SExp>) {
 fn make_inner_function_scopes(scopes: &mut Vec<ParseScope>, body: &BodyForm) {
     eprintln!("make_inner_function_scopes {}", body.to_sexp());
     match body {
-        BodyForm::Let(l,LetFormKind::Sequential,bindings,body) => {
+        BodyForm::Let(l, LetFormKind::Sequential, bindings, body) => {
             if bindings.is_empty() {
-                make_inner_function_scopes(scopes, &body);
+                make_inner_function_scopes(scopes, body);
                 return;
             }
 
             let binding = &bindings[0];
-            let new_location =
-                if bindings.len() == 1 {
-                    body.loc()
-                } else {
-                    bindings[1].loc().ext(&l.ending())
-                };
+            let new_location = if bindings.len() == 1 {
+                body.loc()
+            } else {
+                bindings[1].loc().ext(&l.ending())
+            };
 
             let mut variables = HashSet::new();
             variables.insert(SExp::Atom(binding.nl.clone(), binding.name.clone()));
 
             let mut inner_scopes = Vec::new();
 
-            make_inner_function_scopes(&mut inner_scopes, &BodyForm::Let(
-                new_location.clone(),
-                LetFormKind::Sequential,
-                bindings.iter().skip(1).cloned().collect(),
-                body.clone()
-            ));
+            make_inner_function_scopes(
+                &mut inner_scopes,
+                &BodyForm::Let(
+                    new_location.clone(),
+                    LetFormKind::Sequential,
+                    bindings.iter().skip(1).cloned().collect(),
+                    body.clone(),
+                ),
+            );
 
             scopes.push(ParseScope {
                 region: new_location,
                 kind: ScopeKind::Let,
                 variables,
                 functions: HashSet::new(),
-                containing: inner_scopes
+                containing: inner_scopes,
             });
-        },
-        BodyForm::Let(_,LetFormKind::Parallel,bindings,body) => {
+        }
+        BodyForm::Let(_, LetFormKind::Parallel, bindings, body) => {
             if bindings.is_empty() {
-                make_inner_function_scopes(scopes, &body);
+                make_inner_function_scopes(scopes, body);
                 return;
             }
 
@@ -314,23 +316,23 @@ fn make_inner_function_scopes(scopes: &mut Vec<ParseScope>, body: &BodyForm) {
             }
 
             let mut inner_scopes = Vec::new();
-            make_inner_function_scopes(&mut inner_scopes, &body);
+            make_inner_function_scopes(&mut inner_scopes, body);
 
             let new_scope = ParseScope {
                 region: bindings[0].loc.ext(&body.loc().ending()),
                 kind: ScopeKind::Let,
                 variables: name_set,
                 functions: HashSet::new(),
-                containing: inner_scopes
+                containing: inner_scopes,
             };
             scopes.push(new_scope);
-        },
-        BodyForm::Call(_,v) => {
+        }
+        BodyForm::Call(_, v) => {
             for elt in v.iter() {
-                make_inner_function_scopes(scopes, &elt);
+                make_inner_function_scopes(scopes, elt);
             }
-        },
-        _ => { }
+        }
+        _ => {}
     }
 }
 
