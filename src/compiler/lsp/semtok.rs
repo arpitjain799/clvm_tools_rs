@@ -7,10 +7,10 @@ use lsp_server::{Message, RequestId, Response};
 use lsp_types::{SemanticToken, SemanticTokens, SemanticTokensParams};
 
 use crate::compiler::comptypes::{BodyForm, CompileForm, HelperForm, LetFormKind};
-use crate::compiler::lsp::types::LSPServiceProvider;
+use crate::compiler::lsp::types::{DocPosition, DocRange, LSPServiceProvider};
 use crate::compiler::lsp::{
-    TK_DEFINITION_BIT, TK_FUNCTION_IDX, TK_MACRO_IDX, TK_NUMBER_IDX, TK_PARAMETER_IDX,
-    TK_READONLY_BIT, TK_STRING_IDX, TK_VARIABLE_IDX,
+    TK_COMMENT_IDX, TK_DEFINITION_BIT, TK_FUNCTION_IDX, TK_MACRO_IDX, TK_NUMBER_IDX,
+    TK_PARAMETER_IDX, TK_READONLY_BIT, TK_STRING_IDX, TK_VARIABLE_IDX,
 };
 use crate::compiler::sexp::SExp;
 use crate::compiler::srcloc::Srcloc;
@@ -227,6 +227,8 @@ fn process_body_code(
 pub fn do_semantic_tokens(
     id: RequestId,
     uristring: &str,
+    lines: &[Rc<Vec<u8>>],
+    comments: &HashMap<usize, usize>,
     goto_def: &mut BTreeMap<SemanticTokenSortable, Srcloc>,
     frontend: &CompileForm,
 ) -> Response {
@@ -291,6 +293,24 @@ pub fn do_semantic_tokens(
         frontend.exp.clone(),
     );
 
+    for (l, c) in comments.iter() {
+        collected_tokens.push(SemanticTokenSortable {
+            loc: DocRange {
+                start: DocPosition {
+                    line: *l as u32,
+                    character: *c as u32,
+                },
+                end: DocPosition {
+                    line: *l as u32,
+                    character: lines[*l].len() as u32,
+                },
+            }
+            .to_srcloc(uristring),
+            token_type: TK_COMMENT_IDX,
+            token_mod: 0,
+        });
+    }
+
     collected_tokens = collected_tokens
         .iter()
         .filter(|t| {
@@ -346,9 +366,17 @@ impl LSPSemtokRequestHandler for LSPServiceProvider {
         let uristring = params.text_document.uri.to_string();
         let mut res = self.parse_document_and_output_errors(&uristring);
 
-        if let Some(frontend) = self.get_parsed(&uristring) {
+        if let (Some(doc), Some(frontend)) = (self.get_doc(&uristring), self.get_parsed(&uristring))
+        {
             let mut our_goto_defs = BTreeMap::new();
-            let resp = do_semantic_tokens(id, &uristring, &mut our_goto_defs, &frontend.compiled);
+            let resp = do_semantic_tokens(
+                id,
+                &uristring,
+                &doc.text,
+                &doc.comments,
+                &mut our_goto_defs,
+                &frontend.compiled,
+            );
             self.goto_defs.insert(uristring.clone(), our_goto_defs);
             res.push(Message::Response(resp));
         }

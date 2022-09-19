@@ -1,4 +1,5 @@
 use std::borrow::Borrow;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use lsp_types::TextDocumentContentChangeEvent;
@@ -6,7 +7,6 @@ use lsp_types::TextDocumentContentChangeEvent;
 use crate::compiler::lsp::parse::DocVecByteIter;
 use crate::compiler::lsp::types::DocData;
 use crate::compiler::lsp::LSPServiceProvider;
-use crate::compiler::sexp::decode_string;
 
 pub trait PatchableDocument {
     fn apply_patch(&self, version: i32, patches: &[TextDocumentContentChangeEvent]) -> Self;
@@ -34,12 +34,32 @@ pub fn stringify_doc(d: &[Rc<Vec<u8>>]) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "no conversion from utf8".to_string())
 }
 
+pub fn redo_comment_line(map: &mut HashMap<usize, usize>, text: &[Rc<Vec<u8>>], line: usize) {
+    let text_b: &Vec<u8> = text[line].borrow();
+    if let Some(found) = text_b.iter().position(|ch| *ch == b';') {
+        map.insert(line, found);
+    } else {
+        map.remove(&line);
+    }
+}
+
+pub fn compute_comment_lines(text: &[Rc<Vec<u8>>]) -> HashMap<usize, usize> {
+    let mut res = HashMap::new();
+    for i in 0..text.len() {
+        redo_comment_line(&mut res, text, i);
+    }
+    res
+}
+
 impl PatchableDocument for DocData {
     fn apply_patch(&self, version: i32, patches: &[TextDocumentContentChangeEvent]) -> Self {
         let mut doc_copy = self.text.clone();
+        let mut comments_copy = self.comments.clone();
 
         // Try to do an efficient job of patching the old document content.
         for p in patches.iter() {
+            let old_lines = doc_copy.len();
+
             if let Some(r) = p.range {
                 let prelude_start = if r.start.line > 0 {
                     self.text.iter().take(r.start.line as usize).collect()
@@ -71,14 +91,6 @@ impl PatchableDocument for DocData {
                 } else {
                     vec![]
                 };
-
-                for (i, l) in prelude_start.iter().enumerate() {
-                    eprintln!("P {}: {}", i, decode_string(l));
-                }
-
-                for (i, l) in suffix_after.iter().enumerate() {
-                    eprintln!("S {}: {}", i, decode_string(l));
-                }
 
                 let split_input = split_text(&p.text);
                 // Assemble the result:
@@ -120,13 +132,25 @@ impl PatchableDocument for DocData {
                     let line_borrow: &Vec<u8> = (*line).borrow();
                     doc_copy.push(Rc::new(line_borrow.clone()));
                 }
+
+                let new_lines = doc_copy.len();
+                if old_lines > new_lines {
+                    for i in new_lines..old_lines {
+                        comments_copy.remove(&i);
+                    }
+                }
+                for i in (r.start.line as usize)..(r.start.line as usize) + split_input.len() + 1 {
+                    redo_comment_line(&mut comments_copy, &doc_copy, i);
+                }
             } else {
-                doc_copy = split_text(&p.text)
+                doc_copy = split_text(&p.text);
+                comments_copy = compute_comment_lines(&doc_copy);
             }
         }
 
         DocData {
             text: doc_copy,
+            comments: comments_copy,
             version,
         }
     }
@@ -143,11 +167,14 @@ impl LSPServiceProviderApplyDocumentPatch for LSPServiceProvider {
             if patches.len() == 1 && patches[0].range.is_none() {
                 // We can short circuit a full document rewrite.
                 // There are no hanging patches as a result.
+                let have_text = split_text(&patches[0].text);
+                let comments = compute_comment_lines(&have_text);
                 self.save_doc(
                     uristring.to_owned(),
                     DocData {
-                        text: split_text(&patches[0].text),
+                        text: have_text,
                         version,
+                        comments,
                     },
                 );
                 return;

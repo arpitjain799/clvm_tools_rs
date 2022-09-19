@@ -11,7 +11,7 @@ use crate::compiler::compiler::{
     compile_pre_forms, create_prim_map, KNOWN_DIALECTS, STANDARD_MACROS,
 };
 use crate::compiler::comptypes::{CompileErr, CompilerOpts, PrimaryCodegen};
-use crate::compiler::lsp::patch::{split_text, stringify_doc};
+use crate::compiler::lsp::patch::{compute_comment_lines, split_text, stringify_doc};
 use crate::compiler::lsp::types::{DocData, IFileReader};
 use crate::compiler::sexp::{decode_string, SExp};
 use crate::compiler::srcloc::Srcloc;
@@ -151,11 +151,15 @@ pub fn get_file_content(
     for find_path in include_paths.iter() {
         if let Some(try_path) = Path::new(&find_path).join(name).to_str() {
             if let Ok(filedata) = reader.read(try_path) {
+                let doc_text = split_text(&decode_string(&filedata));
+                let comments = compute_comment_lines(&doc_text);
+
                 return Ok((
                     try_path.to_string(),
                     DocData {
-                        text: split_text(&decode_string(&filedata)),
+                        text: doc_text,
                         version: -1,
+                        comments,
                     },
                 ));
             }

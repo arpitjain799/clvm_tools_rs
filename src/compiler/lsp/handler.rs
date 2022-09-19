@@ -10,7 +10,9 @@ use lsp_types::{
 use lsp_server::{ErrorCode, Message, RequestId, Response};
 
 use crate::compiler::lsp::completion::LSPCompletionRequestHandler;
-use crate::compiler::lsp::patch::{split_text, LSPServiceProviderApplyDocumentPatch};
+use crate::compiler::lsp::patch::{
+    compute_comment_lines, split_text, LSPServiceProviderApplyDocumentPatch,
+};
 use crate::compiler::lsp::semtok::LSPSemtokRequestHandler;
 use crate::compiler::lsp::types::{cast, ConfigJson, DocData, InitState, LSPServiceProvider};
 use crate::compiler::sexp::decode_string;
@@ -164,11 +166,14 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                     if let Ok(params) =
                         serde_json::from_str::<DidOpenTextDocumentParams>(&stringified_params)
                     {
+                        let doc_data = split_text(&params.text_document.text);
+                        let comments = compute_comment_lines(&doc_data);
                         self.save_doc(
                             params.text_document.uri.to_string(),
                             DocData {
-                                text: split_text(&params.text_document.text),
+                                text: doc_data,
                                 version: params.text_document.version,
+                                comments,
                             },
                         );
                     } else {

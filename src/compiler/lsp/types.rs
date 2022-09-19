@@ -206,6 +206,7 @@ impl DocRange {
 pub struct DocData {
     pub text: Vec<Rc<Vec<u8>>>,
     pub version: i32,
+    pub comments: HashMap<usize, usize>,
 }
 
 impl DocData {

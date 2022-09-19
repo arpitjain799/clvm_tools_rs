@@ -1,4 +1,5 @@
 use regex::Regex;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::compiler::lsp::{
@@ -349,6 +350,7 @@ fn test_first_in_list() {
     let doc = DocData {
         text: split_text(&file_data),
         version: -1,
+        comments: HashMap::new(),
     };
     let pos = Position {
         line: 0,
@@ -363,6 +365,7 @@ fn test_not_first_in_list() {
     let doc = DocData {
         text: split_text(&file_data),
         version: -1,
+        comments: HashMap::new(),
     };
     let pos = Position {
         line: 0,
@@ -391,6 +394,7 @@ fn test_patch_document_1() {
     let doc = (DocData {
         text: split_text(&content),
         version: -1,
+        comments: HashMap::new(),
     })
     .apply_patch(0, &changes);
     eprintln!("edited: {}", stringify_doc(&doc.text).unwrap());
@@ -417,6 +421,7 @@ fn test_patch_document_2() {
     let doc = (DocData {
         text: split_text(&content),
         version: -1,
+        comments: HashMap::new(),
     })
     .apply_patch(1, &changes);
     eprintln!("edited: {}", stringify_doc(&doc.text).unwrap());
@@ -443,6 +448,7 @@ fn test_patch_document_3() {
     let doc = (DocData {
         text: split_text(&content),
         version: -1,
+        comments: HashMap::new(),
     })
     .apply_patch(1, &changes);
     eprintln!("edited: {}", stringify_doc(&doc.text).unwrap());
