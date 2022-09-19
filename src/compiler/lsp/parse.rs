@@ -409,22 +409,32 @@ pub fn recover_scopes(ourfile: &str, text: &[Rc<Vec<u8>>], fe: &CompileForm) -> 
 
 pub fn make_simple_ranges(srctext: &[Rc<Vec<u8>>]) -> Vec<DocRange> {
     let mut ranges = Vec::new();
+    let mut in_comment = false;
     let mut start = None;
     let mut level = 0;
     let mut line = 0;
     let mut character = 0;
 
     for i in DocVecByteIter::new(srctext) {
-        if i == b'(' {
-            if level == 1 && start.is_none() {
-                start = Some(DocPosition { line, character });
+        if i == b';' {
+            character += 1;
+            in_comment = true;
+        } else if i == b'\n' {
+            line += 1;
+            character = 0;
+            in_comment = false;
+        } else if i == b'(' {
+            if !in_comment {
+                if level == 1 && start.is_none() {
+                    start = Some(DocPosition { line, character });
+                }
+                level += 1;
             }
-
-            level += 1;
+            character += 1;
         } else if i == b')' {
             // We expect to contain only one toplevel list, so other ends
             // are probably a misparse.
-            if level > 0 {
+            if !in_comment && level > 0 {
                 level -= 1;
 
                 if level == 1 {
@@ -440,11 +450,7 @@ pub fn make_simple_ranges(srctext: &[Rc<Vec<u8>>]) -> Vec<DocRange> {
                     }
                 }
             }
-        }
-
-        if i == b'\n' {
-            line += 1;
-            character = 0;
+            character += 1;
         } else {
             character += 1;
         }

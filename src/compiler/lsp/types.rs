@@ -402,6 +402,7 @@ impl LSPServiceProvider {
                 .cloned()
                 .unwrap_or_else(|| ParsedDoc::new(startloc));
             let ranges = make_simple_ranges(&doc.text);
+            eprintln!("ranges {:?}", ranges);
             let mut new_helpers = reparse_subset(
                 opts,
                 &doc.text,
