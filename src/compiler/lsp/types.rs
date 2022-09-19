@@ -413,6 +413,9 @@ impl LSPServiceProvider {
             );
 
             for (_, incfile) in new_helpers.includes.iter() {
+                if incfile == b"*standard-cl-21*" || incfile == b"*standard-cl-22*" {
+                    continue;
+                }
                 if let Ok((filename, file_body)) = get_file_content(
                     self.fs.clone(),
                     &self.config.include_paths,
