@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use lsp_types::Position;
 
-use crate::compiler::comptypes::{BodyForm, CompileErr, CompileForm, HelperForm};
+use crate::compiler::comptypes::{BodyForm, CompileErr, CompileForm, HelperForm, LetFormKind};
 use crate::compiler::lsp::types::{DocData, DocPosition, DocRange};
 use crate::compiler::sexp::SExp;
 use crate::compiler::srcloc::Srcloc;
@@ -263,16 +263,89 @@ fn make_arg_set(set: &mut HashSet<SExp>, args: Rc<SExp>) {
     }
 }
 
+fn make_inner_function_scopes(scopes: &mut Vec<ParseScope>, body: &BodyForm) {
+    eprintln!("make_inner_function_scopes {}", body.to_sexp());
+    match body {
+        BodyForm::Let(l,LetFormKind::Sequential,bindings,body) => {
+            if bindings.is_empty() {
+                make_inner_function_scopes(scopes, &body);
+                return;
+            }
+
+            let binding = &bindings[0];
+            let new_location =
+                if bindings.len() == 1 {
+                    body.loc()
+                } else {
+                    bindings[1].loc().ext(&l.ending())
+                };
+
+            let mut variables = HashSet::new();
+            variables.insert(SExp::Atom(binding.nl.clone(), binding.name.clone()));
+
+            let mut inner_scopes = Vec::new();
+
+            make_inner_function_scopes(&mut inner_scopes, &BodyForm::Let(
+                new_location.clone(),
+                LetFormKind::Sequential,
+                bindings.iter().skip(1).cloned().collect(),
+                body.clone()
+            ));
+
+            scopes.push(ParseScope {
+                region: new_location,
+                kind: ScopeKind::Let,
+                variables,
+                functions: HashSet::new(),
+                containing: inner_scopes
+            });
+        },
+        BodyForm::Let(_,LetFormKind::Parallel,bindings,body) => {
+            if bindings.is_empty() {
+                make_inner_function_scopes(scopes, &body);
+                return;
+            }
+
+            let mut name_set = HashSet::new();
+            for b in bindings.iter() {
+                let new_name = SExp::Atom(b.nl.clone(), b.name.clone());
+                eprintln!("scope introduces {}", new_name);
+                name_set.insert(new_name);
+            }
+
+            let mut inner_scopes = Vec::new();
+            make_inner_function_scopes(&mut inner_scopes, &body);
+
+            let new_scope = ParseScope {
+                region: bindings[0].loc.ext(&body.loc().ending()),
+                kind: ScopeKind::Let,
+                variables: name_set,
+                functions: HashSet::new(),
+                containing: inner_scopes
+            };
+            scopes.push(new_scope);
+        },
+        BodyForm::Call(_,v) => {
+            for elt in v.iter() {
+                make_inner_function_scopes(scopes, &elt);
+            }
+        },
+        _ => { }
+    }
+}
+
 fn make_helper_scope(h: &HelperForm) -> Option<ParseScope> {
     let loc = h.loc();
 
     let mut kind = None;
     let mut args = HashSet::new();
+    let mut inner_scopes = Vec::new();
 
     match h {
         HelperForm::Defun(_, d) => {
             kind = Some(ScopeKind::Function);
             make_arg_set(&mut args, d.args.clone());
+            make_inner_function_scopes(&mut inner_scopes, &d.body);
         }
         HelperForm::Defmacro(m) => {
             kind = Some(ScopeKind::Macro);
@@ -286,7 +359,7 @@ fn make_helper_scope(h: &HelperForm) -> Option<ParseScope> {
         region: loc,
         variables: args,
         functions: HashSet::new(),
-        containing: Vec::new(),
+        containing: inner_scopes,
     })
 }
 

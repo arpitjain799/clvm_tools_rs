@@ -236,8 +236,14 @@ pub fn compile_bodyform(body: Rc<SExp>) -> Result<BodyForm, CompileErr> {
                     compile_bodyform(op.clone()).map(|func| {
                         let mut result_call = vec![Rc::new(func)];
                         let mut args_clone = args.to_vec();
+                        let ending =
+                            if args.is_empty() {
+                                l.ending()
+                            } else {
+                                args[args.len() - 1].loc().ending()
+                            };
                         result_call.append(&mut args_clone);
-                        BodyForm::Call(l.clone(), result_call)
+                        BodyForm::Call(l.ext(&ending), result_call)
                     })
                 })
             };

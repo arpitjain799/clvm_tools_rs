@@ -39,6 +39,8 @@ fn complete_variable_name(
 ) {
     let mut result_items = Vec::new();
 
+    eprintln!("found_scopes {:?}", found_scopes);
+
     for s in found_scopes {
         let viable_completions = s
             .variables
