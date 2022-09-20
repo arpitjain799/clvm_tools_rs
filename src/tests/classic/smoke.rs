@@ -481,28 +481,22 @@ fn pool_member_innerpuz() {
 // module level.
 #[test]
 fn test_non_consed_args() {
-    let program = "(mod params (defun ident (arg) (f (list arg))) (ident (ident params)))".to_string();
+    let program =
+        "(mod params (defun ident (arg) (f (list arg))) (ident (ident params)))".to_string();
     let mut s = Stream::new(None);
     launch_tool(
         &mut s,
-        &vec![
-            "run".to_string(),
-            program
-        ],
+        &vec!["run".to_string(), program],
         &"run".to_string(),
-        2
+        2,
     );
     let result = s.get_value().decode().trim().to_string();
     let mut t = Stream::new(None);
     launch_tool(
         &mut t,
-        &vec![
-            "brun".to_string(),
-            result,
-            "99".to_string()
-        ],
+        &vec!["brun".to_string(), result, "99".to_string()],
         &"brun".to_string(),
-        0
+        0,
     );
     let run_result = t.get_value().decode().trim().to_string();
     assert_eq!(run_result, "99");
