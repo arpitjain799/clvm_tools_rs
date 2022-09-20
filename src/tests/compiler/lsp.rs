@@ -519,7 +519,7 @@ fn run_reparse_steps(
             &file,
             &ranges,
             &doc.compiled,
-            &doc.hashes,
+            &HashMap::new(),
         );
         doc = combine_new_with_old_parse(&file, &text, &doc, &reparsed);
     }

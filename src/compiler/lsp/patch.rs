@@ -36,12 +36,11 @@ pub fn stringify_doc(d: &[Rc<Vec<u8>>]) -> Result<String, String> {
 
 pub fn redo_comment_line(map: &mut HashMap<usize, usize>, text: &[Rc<Vec<u8>>], line: usize) {
     let empty_line = Vec::new();
-    let text_b: &Vec<u8> =
-        if line >= text.len() {
-            &empty_line
-        } else {
-            text[line].borrow()
-        };
+    let text_b: &Vec<u8> = if line >= text.len() {
+        &empty_line
+    } else {
+        text[line].borrow()
+    };
     if let Some(found) = text_b.iter().position(|ch| *ch == b';') {
         map.insert(line, found);
     } else {

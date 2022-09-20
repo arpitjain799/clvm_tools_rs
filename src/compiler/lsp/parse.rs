@@ -5,6 +5,7 @@ use std::rc::Rc;
 use lsp_types::Position;
 
 use crate::compiler::comptypes::{BodyForm, CompileErr, CompileForm, HelperForm, LetFormKind};
+use crate::compiler::lsp::reparse::{ReparsedExp, ReparsedHelper};
 use crate::compiler::lsp::types::{DocData, DocPosition, DocRange};
 use crate::compiler::sexp::SExp;
 use crate::compiler::srcloc::Srcloc;
@@ -29,21 +30,19 @@ pub struct ParseScope {
 #[derive(Debug, Clone)]
 pub struct ParsedDoc {
     pub compiled: CompileForm,
-    pub errors: HashMap<Vec<u8>, CompileErr>,
     pub scopes: ParseScope,
-    pub name_to_hash: HashMap<Vec<u8>, Vec<u8>>,
-    pub hashes: HashSet<Vec<u8>>,
+    pub helpers: HashMap<Vec<u8>, ReparsedHelper>,
+    pub exp: Option<ReparsedExp>,
     pub includes: HashMap<Vec<u8>, Vec<u8>>,
+    pub hash_to_name: HashMap<Vec<u8>, Vec<u8>>,
+    pub errors: Vec<CompileErr>,
 }
 
 impl ParsedDoc {
     pub fn new(startloc: Srcloc) -> Self {
         let nil = SExp::Nil(startloc.clone());
         ParsedDoc {
-            hashes: HashSet::new(),
-            name_to_hash: HashMap::new(),
             includes: HashMap::new(),
-            errors: HashMap::new(),
             scopes: ParseScope {
                 region: startloc.clone(),
                 kind: ScopeKind::Module,
@@ -51,12 +50,16 @@ impl ParsedDoc {
                 functions: HashSet::new(),
                 containing: vec![],
             },
+            helpers: HashMap::new(),
+            hash_to_name: HashMap::new(),
+            exp: None,
             compiled: CompileForm {
                 loc: startloc,
                 args: Rc::new(nil.clone()),
                 helpers: vec![],
                 exp: Rc::new(BodyForm::Quoted(nil)),
             },
+            errors: Vec::new(),
         }
     }
 }

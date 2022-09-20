@@ -19,11 +19,10 @@ use lsp_types::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::compiler::clvm::sha256tree_from_atom;
 use crate::compiler::lsp::compopts::{get_file_content, LSPCompilerOpts};
 use crate::compiler::lsp::parse::{make_simple_ranges, ParsedDoc};
 use crate::compiler::lsp::patch::stringify_doc;
-use crate::compiler::lsp::reparse::{combine_new_with_old_parse, reparse_subset, ReparsedHelper};
+use crate::compiler::lsp::reparse::{combine_new_with_old_parse, reparse_subset};
 use crate::compiler::lsp::semtok::SemanticTokenSortable;
 use crate::compiler::sexp::decode_string;
 use crate::compiler::srcloc::Srcloc;
@@ -320,7 +319,7 @@ impl LSPServiceProvider {
         if let (Some(d), Some(p)) = (self.get_doc(uristring), self.get_parsed(uristring)) {
             let mut errors = Vec::new();
 
-            for (_, error) in p.errors.iter() {
+            for error in p.errors.iter() {
                 errors.push(Diagnostic {
                     range: DocRange::from_srcloc(error.0.clone()).to_range(),
                     severity: None,
@@ -409,7 +408,7 @@ impl LSPServiceProvider {
                 uristring,
                 &ranges,
                 &output.compiled,
-                &output.hashes,
+                &output.helpers,
             );
 
             for (_, incfile) in new_helpers.includes.iter() {
@@ -425,11 +424,8 @@ impl LSPServiceProvider {
                     self.save_doc(file_uri.clone(), file_body);
                     self.ensure_parsed_document(&file_uri);
                     if let Some(p) = self.get_parsed(&file_uri) {
-                        for h in p.compiled.helpers.iter() {
-                            new_helpers.helpers.push(ReparsedHelper {
-                                hash: sha256tree_from_atom(h.name()),
-                                parsed: h.clone(),
-                            });
+                        for (hash, helper) in p.helpers.iter() {
+                            new_helpers.helpers.insert(hash.clone(), helper.clone());
                         }
                     }
                 }
