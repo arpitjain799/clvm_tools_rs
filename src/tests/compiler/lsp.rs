@@ -450,7 +450,7 @@ fn test_patch_document_3() {
         version: -1,
         comments: HashMap::new(),
     })
-    .apply_patch(1, &changes);
+        .apply_patch(1, &changes);
     eprintln!("edited: {}", stringify_doc(&doc.text).unwrap());
     assert_eq!(stringify_doc(&doc.text).unwrap(), "(test\n  *\n  2\n  3)\n");
 }
@@ -494,6 +494,95 @@ fn test_simple_ranges() {
             }
         ]
     );
+}
+
+#[test]
+fn test_tricky_patch_1() {
+    let content = indoc!{"
+(mod (password new_puzhash amount)
+  (include *standard-cl-21*) ;; Specify chialisp-21 compilation.
+
+  (defconstant CREATE_COIN 51)
+
+  (defun get-real-password ()
+    0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+    )
+
+  (defun check-password (password)
+    (let ((password-hash (sha256 password))
+      (real-hash (get-real-password)))
+      (= password-hash real-hash)
+      )
+    )
+    
+
+  (if (check-password password)
+    (list (list CREATE_COIN new_puzhash amount))
+    (x)
+    )
+  )
+"}.to_string();
+    let changes = vec![
+        TextDocumentContentChangeEvent {
+            range_length: None,
+            range: Some(Range {
+                start: Position {
+                    character: 5,
+                    line: 15,
+                },
+                end: Position {
+                    character: 5,
+                    line: 15,
+                },
+            }),
+            text: "\n    ".to_string(),
+        },
+        TextDocumentContentChangeEvent {
+            range_length: None,
+            range: Some(Range {
+                start: Position {
+                    character: 0,
+                    line: 15,
+                },
+                end: Position {
+                    character: 4,
+                    line: 15
+                },
+            }),
+            text: "".to_string()
+        }
+    ];
+    let doc = (DocData {
+        text: split_text(&content),
+        version: -1,
+        comments: HashMap::new(),
+    })
+        .apply_patch(1, &changes);
+    eprintln!("edited: {}", stringify_doc(&doc.text).unwrap());
+    assert_eq!(stringify_doc(&doc.text).unwrap(), indoc!{"
+(mod (password new_puzhash amount)
+  (include *standard-cl-21*) ;; Specify chialisp-21 compilation.
+
+  (defconstant CREATE_COIN 51)
+
+  (defun get-real-password ()
+    0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+    )
+
+  (defun check-password (password)
+    (let ((password-hash (sha256 password))
+      (real-hash (get-real-password)))
+      (= password-hash real-hash)
+      )
+    )
+
+    
+
+  (if (check-password password)
+    (list (list CREATE_COIN new_puzhash amount))
+    (x)
+    )
+  )\n"});
 }
 
 // Remove renamed scope info so we can compare.

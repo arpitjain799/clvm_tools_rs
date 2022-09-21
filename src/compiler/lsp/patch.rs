@@ -63,21 +63,24 @@ impl PatchableDocument for DocData {
 
         // Try to do an efficient job of patching the old document content.
         for p in patches.iter() {
+            let split_input = split_text(&p.text);
             let old_lines = doc_copy.len();
 
             if let Some(r) = p.range {
                 let prelude_start = if r.start.line > 0 {
-                    self.text.iter().take(r.start.line as usize).collect()
+                    doc_copy.iter().take(r.start.line as usize).cloned().collect()
                 } else {
                     vec![]
                 };
-                let suffix_after = if (r.end.line as usize) < self.text.len() - 1 {
-                    self.text.iter().skip((r.end.line + 1) as usize).collect()
+                let suffix_line = r.end.line + 1;
+                let suffix_after = if (r.end.line as usize) < doc_copy.len() - 1 {
+                    doc_copy.iter().skip(suffix_line as usize).cloned().collect()
                 } else {
                     vec![]
                 };
-                let mut line_prefix = if (r.start.line as usize) < self.text.len() {
-                    let line_ref: &Vec<u8> = self.text[r.start.line as usize].borrow();
+
+                let mut line_prefix = if (r.start.line as usize) < doc_copy.len() {
+                    let line_ref: &Vec<u8> = doc_copy[r.start.line as usize].borrow();
                     line_ref
                         .iter()
                         .take(r.start.character as usize)
@@ -86,8 +89,8 @@ impl PatchableDocument for DocData {
                 } else {
                     vec![]
                 };
-                let mut line_suffix = if (r.end.line as usize) < self.text.len() {
-                    let line_ref: &Vec<u8> = self.text[r.end.line as usize].borrow();
+                let mut line_suffix = if (r.end.line as usize) < doc_copy.len() {
+                    let line_ref: &Vec<u8> = doc_copy[r.end.line as usize].borrow();
                     line_ref
                         .iter()
                         .skip(r.end.character as usize)
@@ -97,7 +100,6 @@ impl PatchableDocument for DocData {
                     vec![]
                 };
 
-                let split_input = split_text(&p.text);
                 // Assemble the result:
                 // prelude_start lines
                 // line_prelude + split_input[0]
@@ -106,9 +108,8 @@ impl PatchableDocument for DocData {
                 // suffix_after
 
                 doc_copy.clear();
-                for line in prelude_start.iter() {
-                    let line_borrow: &Vec<u8> = (*line).borrow();
-                    doc_copy.push(Rc::new(line_borrow.clone()));
+                for line in prelude_start.iter().cloned() {
+                    doc_copy.push(line.clone());
                 }
 
                 if split_input.is_empty() {
@@ -116,6 +117,7 @@ impl PatchableDocument for DocData {
                 } else if split_input.len() == 1 {
                     let input_line: &Vec<u8> = split_input[0].borrow();
                     let mut copied_vec: Vec<u8> = input_line.to_vec();
+
                     line_prefix.append(&mut copied_vec);
                     line_prefix.append(&mut line_suffix);
                     doc_copy.push(Rc::new(line_prefix));
@@ -123,7 +125,7 @@ impl PatchableDocument for DocData {
                     let first_input_line: &Vec<u8> = split_input[0].borrow();
                     line_prefix.append(&mut first_input_line.clone());
                     doc_copy.push(Rc::new(line_prefix));
-                    for in_line in split_input.iter().skip(1).take(split_input.len() - 2) {
+                    for in_line in split_input.iter().take(split_input.len() - 1).skip(1) {
                         let input_line: &Vec<u8> = in_line.borrow();
                         doc_copy.push(Rc::new(input_line.clone()));
                     }
@@ -133,9 +135,8 @@ impl PatchableDocument for DocData {
                     doc_copy.push(Rc::new(last_input));
                 }
 
-                for line in suffix_after.iter() {
-                    let line_borrow: &Vec<u8> = (*line).borrow();
-                    doc_copy.push(Rc::new(line_borrow.clone()));
+                for line in suffix_after.iter().cloned() {
+                    doc_copy.push(line.clone());
                 }
 
                 let new_lines = doc_copy.len();
