@@ -352,6 +352,7 @@ fn location_span(l_: Srcloc, lst_: Rc<SExp>) -> Srcloc {
 fn compile_defun(
     l: Srcloc,
     nl: Srcloc,
+    kwl: Option<Srcloc>,
     inline: bool,
     name: Vec<u8>,
     args: Rc<SExp>,
@@ -368,6 +369,7 @@ fn compile_defun(
             DefunData {
                 loc: l,
                 nl,
+                kw: kwl,
                 name,
                 args: args.clone(),
                 body: Rc::new(bf),
@@ -401,8 +403,17 @@ fn compile_defmacro(
     })
 }
 
+struct OpName4Match {
+    opl: Srcloc,
+    op_name: Vec<u8>,
+    nl: Srcloc,
+    name: Vec<u8>,
+    args: Rc<SExp>,
+    body: Rc<SExp>,
+}
+
 #[allow(clippy::type_complexity)]
-fn match_op_name_4(pl: &[SExp]) -> Option<(Vec<u8>, Srcloc, Vec<u8>, Rc<SExp>, Rc<SExp>)> {
+fn match_op_name_4(pl: &[SExp]) -> Option<OpName4Match> {
     if pl.is_empty() {
         return None;
     }
@@ -410,13 +421,14 @@ fn match_op_name_4(pl: &[SExp]) -> Option<(Vec<u8>, Srcloc, Vec<u8>, Rc<SExp>, R
     match &pl[0] {
         SExp::Atom(l, op_name) => {
             if pl.len() < 3 {
-                return Some((
-                    op_name.clone(),
-                    l.clone(),
-                    Vec::new(),
-                    Rc::new(SExp::Nil(l.clone())),
-                    Rc::new(SExp::Nil(l.clone())),
-                ));
+                return Some(OpName4Match {
+                    opl: l.clone(),
+                    op_name: op_name.clone(),
+                    nl: l.clone(),
+                    name: Vec::new(),
+                    args: Rc::new(SExp::Nil(l.clone())),
+                    body: Rc::new(SExp::Nil(l.clone())),
+                });
             }
 
             match &pl[1] {
@@ -425,21 +437,23 @@ fn match_op_name_4(pl: &[SExp]) -> Option<(Vec<u8>, Srcloc, Vec<u8>, Rc<SExp>, R
                     for elt in pl.iter().skip(3) {
                         tail_list.push(Rc::new(elt.clone()));
                     }
-                    Some((
-                        op_name.clone(),
-                        ll.clone(),
-                        name.clone(),
-                        Rc::new(pl[2].clone()),
-                        Rc::new(enlist(l.clone(), tail_list)),
-                    ))
+                    Some(OpName4Match {
+                        opl: l.clone(),
+                        op_name: op_name.clone(),
+                        nl: ll.clone(),
+                        name: name.clone(),
+                        args: Rc::new(pl[2].clone()),
+                        body: Rc::new(enlist(l.clone(), tail_list)),
+                    })
                 }
-                _ => Some((
-                    op_name.clone(),
-                    pl[1].loc(),
-                    Vec::new(),
-                    Rc::new(SExp::Nil(l.clone())),
-                    Rc::new(SExp::Nil(l.clone())),
-                )),
+                _ => Some(OpName4Match {
+                    opl: l.clone(),
+                    op_name: op_name.clone(),
+                    nl: pl[1].loc(),
+                    name: Vec::new(),
+                    args: Rc::new(SExp::Nil(l.clone())),
+                    body: Rc::new(SExp::Nil(l.clone())),
+                }),
             }
         }
         _ => None,
@@ -452,20 +466,44 @@ pub fn compile_helperform(
 ) -> Result<Option<HelperForm>, CompileErr> {
     let l = location_span(body.loc(), body.clone());
 
-    if let Some((op_name, nl, name, args, body)) =
-        body.proper_list().and_then(|pl| match_op_name_4(&pl))
-    {
-        if op_name == b"defconstant" {
-            compile_defconstant(l, name.to_vec(), args).map(Some)
-        } else if op_name == b"defmacro" {
-            compile_defmacro(opts, l, nl, name.to_vec(), args, body).map(Some)
-        } else if op_name == b"defun" {
-            compile_defun(l, nl, false, name.to_vec(), args, body).map(Some)
-        } else if op_name == b"defun-inline" {
-            compile_defun(l, nl, true, name.to_vec(), args, body).map(Some)
+    if let Some(matched) = body.proper_list().and_then(|pl| match_op_name_4(&pl)) {
+        if matched.op_name == b"defconstant" {
+            compile_defconstant(l, matched.name.to_vec(), matched.args).map(Some)
+        } else if matched.op_name == b"defmacro" {
+            compile_defmacro(
+                opts,
+                l,
+                matched.nl,
+                matched.name.to_vec(),
+                matched.args,
+                matched.body,
+            )
+            .map(Some)
+        } else if matched.op_name == b"defun" {
+            compile_defun(
+                l,
+                matched.nl,
+                Some(matched.opl),
+                false,
+                matched.name.to_vec(),
+                matched.args,
+                matched.body,
+            )
+            .map(Some)
+        } else if matched.op_name == b"defun-inline" {
+            compile_defun(
+                l,
+                matched.nl,
+                Some(matched.opl),
+                true,
+                matched.name.to_vec(),
+                matched.args,
+                matched.body,
+            )
+            .map(Some)
         } else {
             Err(CompileErr(
-                body.loc(),
+                matched.body.loc(),
                 "unknown keyword in helper".to_string(),
             ))
         }

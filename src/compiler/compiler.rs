@@ -132,6 +132,7 @@ fn fe_opt(
                     DefunData {
                         loc: defun.loc.clone(),
                         nl: defun.nl.clone(),
+                        kw: defun.kw.clone(),
                         name: defun.name.clone(),
                         args: defun.args.clone(),
                         body: body_rc.clone(),

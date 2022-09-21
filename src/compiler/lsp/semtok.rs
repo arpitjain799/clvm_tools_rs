@@ -9,8 +9,8 @@ use lsp_types::{SemanticToken, SemanticTokens, SemanticTokensParams};
 use crate::compiler::comptypes::{BodyForm, CompileForm, HelperForm, LetFormKind};
 use crate::compiler::lsp::types::{DocPosition, DocRange, LSPServiceProvider};
 use crate::compiler::lsp::{
-    TK_COMMENT_IDX, TK_DEFINITION_BIT, TK_FUNCTION_IDX, TK_MACRO_IDX, TK_NUMBER_IDX,
-    TK_PARAMETER_IDX, TK_READONLY_BIT, TK_STRING_IDX, TK_VARIABLE_IDX,
+    TK_COMMENT_IDX, TK_DEFINITION_BIT, TK_FUNCTION_IDX, TK_KEYWORD_IDX, TK_MACRO_IDX,
+    TK_NUMBER_IDX, TK_PARAMETER_IDX, TK_READONLY_BIT, TK_STRING_IDX, TK_VARIABLE_IDX,
 };
 use crate::compiler::sexp::SExp;
 use crate::compiler::srcloc::Srcloc;
@@ -243,6 +243,13 @@ pub fn do_semantic_tokens(
                     token_type: TK_FUNCTION_IDX,
                     token_mod: 1 << TK_DEFINITION_BIT,
                 });
+                if let Some(kw) = &defun.kw {
+                    collected_tokens.push(SemanticTokenSortable {
+                        loc: kw.clone(),
+                        token_type: TK_KEYWORD_IDX,
+                        token_mod: 0,
+                    });
+                }
                 collect_arg_tokens(
                     &mut collected_tokens,
                     &mut argcollection,

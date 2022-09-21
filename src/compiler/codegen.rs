@@ -719,6 +719,7 @@ pub fn empty_compiler(prim_map: Rc<HashMap<Vec<u8>, Rc<SExp>>>, l: Srcloc) -> Pr
 fn generate_let_defun(
     _compiler: &PrimaryCodegen,
     l: Srcloc,
+    kwl: Option<Srcloc>,
     name: &[u8],
     args: Rc<SExp>,
     bindings: Vec<Rc<Binding>>,
@@ -740,6 +741,7 @@ fn generate_let_defun(
         DefunData {
             loc: l.clone(),
             nl: l,
+            kw: kwl,
             name: name.to_owned(),
             args: Rc::new(inner_function_args),
             body,
@@ -815,6 +817,7 @@ fn hoist_body_let_binding(
             let generated_defun = generate_let_defun(
                 compiler,
                 l.clone(),
+                None,
                 &defun_name,
                 args,
                 revised_bindings.to_vec(),
@@ -898,6 +901,7 @@ fn process_helper_let_bindings(
                     DefunData {
                         loc: defun.loc.clone(),
                         nl: defun.nl.clone(),
+                        kw: defun.kw.clone(),
                         name: defun.name.clone(),
                         args: defun.args.clone(),
                         body: hoisted_body,

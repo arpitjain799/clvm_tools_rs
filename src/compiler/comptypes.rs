@@ -83,6 +83,7 @@ pub enum BodyForm {
 pub struct DefunData {
     pub loc: Srcloc,
     pub name: Vec<u8>,
+    pub kw: Option<Srcloc>,
     pub nl: Srcloc,
     pub args: Rc<SExp>,
     pub body: Rc<BodyForm>,
