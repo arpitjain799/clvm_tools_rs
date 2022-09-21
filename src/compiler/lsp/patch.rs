@@ -68,13 +68,21 @@ impl PatchableDocument for DocData {
 
             if let Some(r) = p.range {
                 let prelude_start = if r.start.line > 0 {
-                    doc_copy.iter().take(r.start.line as usize).cloned().collect()
+                    doc_copy
+                        .iter()
+                        .take(r.start.line as usize)
+                        .cloned()
+                        .collect()
                 } else {
                     vec![]
                 };
                 let suffix_line = r.end.line + 1;
                 let suffix_after = if (r.end.line as usize) < doc_copy.len() - 1 {
-                    doc_copy.iter().skip(suffix_line as usize).cloned().collect()
+                    doc_copy
+                        .iter()
+                        .skip(suffix_line as usize)
+                        .cloned()
+                        .collect()
                 } else {
                     vec![]
                 };
@@ -108,7 +116,7 @@ impl PatchableDocument for DocData {
                 // suffix_after
 
                 doc_copy.clear();
-                for line in prelude_start.iter().cloned() {
+                for line in prelude_start.iter() {
                     doc_copy.push(line.clone());
                 }
 
@@ -135,7 +143,7 @@ impl PatchableDocument for DocData {
                     doc_copy.push(Rc::new(last_input));
                 }
 
-                for line in suffix_after.iter().cloned() {
+                for line in suffix_after.iter() {
                     doc_copy.push(line.clone());
                 }
 

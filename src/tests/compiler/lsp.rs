@@ -450,7 +450,7 @@ fn test_patch_document_3() {
         version: -1,
         comments: HashMap::new(),
     })
-        .apply_patch(1, &changes);
+    .apply_patch(1, &changes);
     eprintln!("edited: {}", stringify_doc(&doc.text).unwrap());
     assert_eq!(stringify_doc(&doc.text).unwrap(), "(test\n  *\n  2\n  3)\n");
 }
@@ -498,7 +498,7 @@ fn test_simple_ranges() {
 
 #[test]
 fn test_tricky_patch_1() {
-    let content = indoc!{"
+    let content = indoc! {"
 (mod (password new_puzhash amount)
   (include *standard-cl-21*) ;; Specify chialisp-21 compilation.
 
@@ -521,7 +521,8 @@ fn test_tricky_patch_1() {
     (x)
     )
   )
-"}.to_string();
+"}
+    .to_string();
     let changes = vec![
         TextDocumentContentChangeEvent {
             range_length: None,
@@ -546,20 +547,22 @@ fn test_tricky_patch_1() {
                 },
                 end: Position {
                     character: 4,
-                    line: 15
+                    line: 15,
                 },
             }),
-            text: "".to_string()
-        }
+            text: "".to_string(),
+        },
     ];
     let doc = (DocData {
         text: split_text(&content),
         version: -1,
         comments: HashMap::new(),
     })
-        .apply_patch(1, &changes);
+    .apply_patch(1, &changes);
     eprintln!("edited: {}", stringify_doc(&doc.text).unwrap());
-    assert_eq!(stringify_doc(&doc.text).unwrap(), indoc!{"
+    assert_eq!(
+        stringify_doc(&doc.text).unwrap(),
+        indoc! {"
 (mod (password new_puzhash amount)
   (include *standard-cl-21*) ;; Specify chialisp-21 compilation.
 
@@ -582,7 +585,8 @@ fn test_tricky_patch_1() {
     (list (list CREATE_COIN new_puzhash amount))
     (x)
     )
-  )\n"});
+  )\n"}
+    );
 }
 
 // Remove renamed scope info so we can compare.

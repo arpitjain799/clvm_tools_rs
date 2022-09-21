@@ -73,7 +73,10 @@ pub fn reparse_subset(
         errors: Vec::new(),
     };
 
-    eprintln!("reparse starting from ***\n{}\n***", stringify_doc(doc).unwrap());
+    eprintln!(
+        "reparse starting from ***\n{}\n***",
+        stringify_doc(doc).unwrap()
+    );
 
     // if it's a module, we can patch the prefix in, otherwise make a (mod ()
     // prefix for it.
