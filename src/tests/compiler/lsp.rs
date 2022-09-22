@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::compiler::lsp::{
-    LSPServiceMessageHandler, LSPServiceProvider, TK_DEFINITION_BIT, TK_FUNCTION_IDX, TK_KEYWORD_IDX
+    LSPServiceMessageHandler, LSPServiceProvider, TK_DEFINITION_BIT, TK_FUNCTION_IDX,
+    TK_KEYWORD_IDX,
 };
 
 use lsp_server::{Message, Notification, Request, RequestId};
