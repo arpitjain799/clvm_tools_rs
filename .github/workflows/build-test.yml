@@ -80,7 +80,8 @@ jobs:
             pip install --upgrade pip
           '
         docker run --rm -v $(pwd):/io ghcr.io/pyo3/maturin build --release --strip --manylinux 2010
-        docker run --rm -v $(pwd):/io ghcr.io/pyo3/maturin cargo build --release
+        : Try to drop a lock file in target/release for later use
+        docker run --rm --user "$(id -u)":"$(id -g)" -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:1.59.0 cargo build --release
 
     - name: Build alpine wheel via docker
       if: startsWith(matrix.os, 'ubuntu') && startsWith(matrix.python, '3.7')
