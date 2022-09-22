@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::compiler::lsp::{
-    LSPServiceMessageHandler, LSPServiceProvider, TK_DEFINITION_BIT, TK_FUNCTION_IDX,
+    LSPServiceMessageHandler, LSPServiceProvider, TK_DEFINITION_BIT, TK_FUNCTION_IDX, TK_KEYWORD_IDX
 };
 
 use lsp_server::{Message, Notification, Request, RequestId};
@@ -140,7 +140,14 @@ fn can_receive_did_open_file_and_give_semantic_tokens() {
         vec![
             SemanticToken {
                 delta_line: 0,
-                delta_start: 15,
+                delta_start: 9,
+                length: 5,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 6,
                 length: 1,
                 token_type: TK_FUNCTION_IDX,
                 token_modifiers_bitset: 1 << TK_DEFINITION_BIT
