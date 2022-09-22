@@ -363,7 +363,7 @@ impl LSPServiceProvider {
     pub fn get_doc(&self, uristring: &str) -> Option<DocData> {
         let cell: &RefCell<HashMap<String, DocData>> = self.document_collection.borrow();
         let coll: Ref<HashMap<String, DocData>> = cell.borrow();
-        (&coll).get(uristring).cloned()
+        coll.get(uristring).cloned()
     }
 
     pub fn get_parsed(&self, uristring: &str) -> Option<ParsedDoc> {

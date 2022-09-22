@@ -122,12 +122,7 @@ fn complete_function_name(
         .collect();
 
     viable_completions.append(&mut PRIM_NAMES.clone());
-
-    viable_completions = viable_completions
-        .iter()
-        .filter(|real_name| real_name.starts_with(cpl))
-        .cloned()
-        .collect();
+    viable_completions.retain(|real_name| real_name.starts_with(cpl));
 
     for real_name in viable_completions {
         result_items.push(CompletionItem {

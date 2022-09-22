@@ -194,7 +194,7 @@ impl LSPCompilerOpts {
     fn get_file(&self, name: &str) -> Result<DocData, String> {
         let cell: &RefCell<HashMap<String, DocData>> = self.lsp.borrow();
         let coll: Ref<HashMap<String, DocData>> = cell.borrow();
-        (&coll).get(name).map(|x| Ok(x.clone())).unwrap_or_else(|| {
+        coll.get(name).map(|x| Ok(x.clone())).unwrap_or_else(|| {
             get_file_content(self.fs.clone(), &self.include_dirs, name).map(|x| x.1)
         })
     }

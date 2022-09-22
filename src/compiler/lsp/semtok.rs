@@ -347,14 +347,10 @@ pub fn do_semantic_tokens(
         });
     }
 
-    collected_tokens = collected_tokens
-        .iter()
-        .filter(|t| {
-            let borrowed: &String = t.loc.file.borrow();
-            borrowed == uristring
-        })
-        .cloned()
-        .collect();
+    collected_tokens.retain(|t| {
+        let borrowed: &String = t.loc.file.borrow();
+        borrowed == uristring
+    });
     collected_tokens.sort();
     let mut result_tokens = SemanticTokens {
         result_id: None,
