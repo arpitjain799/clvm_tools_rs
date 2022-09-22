@@ -383,8 +383,8 @@ pub fn recover_scopes(ourfile: &str, text: &[Rc<Vec<u8>>], fe: &CompileForm) -> 
             HelperForm::Defmacro(m) => {
                 toplevel_funs.insert(SExp::Atom(m.loc.clone(), m.name.clone()));
             }
-            HelperForm::Defconstant(l, n, _) => {
-                toplevel_args.insert(SExp::Atom(l.clone(), n.clone()));
+            HelperForm::Defconstant(c) => {
+                toplevel_args.insert(SExp::Atom(c.loc.clone(), c.name.clone()));
             }
         }
 

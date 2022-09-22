@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::compiler::comptypes::{
-    Binding, BodyForm, CompileForm, DefmacData, DefunData, HelperForm, LetFormKind,
+    Binding, BodyForm, CompileForm, DefconstData, DefmacData, DefunData, HelperForm, LetFormKind,
 };
 use crate::compiler::gensym::gensym;
 use crate::compiler::sexp::SExp;
@@ -240,13 +240,16 @@ fn rename_args_bodyform(b: &BodyForm) -> BodyForm {
 
 fn rename_in_helperform(namemap: &HashMap<Vec<u8>, Vec<u8>>, h: &HelperForm) -> HelperForm {
     match h {
-        HelperForm::Defconstant(l, n, body) => HelperForm::Defconstant(
-            l.clone(),
-            n.to_vec(),
-            Rc::new(rename_in_bodyform(namemap, body.clone())),
-        ),
+        HelperForm::Defconstant(defc) => HelperForm::Defconstant(DefconstData {
+            loc: defc.loc.clone(),
+            name: defc.name.to_vec(),
+            nl: defc.nl.clone(),
+            kw: defc.kw.clone(),
+            body: Rc::new(rename_in_bodyform(namemap, defc.body.clone())),
+        }),
         HelperForm::Defmacro(mac) => HelperForm::Defmacro(DefmacData {
             loc: mac.loc.clone(),
+            kw: mac.kw.clone(),
             nl: mac.nl.clone(),
             name: mac.name.to_vec(),
             args: mac.args.clone(),
@@ -268,9 +271,13 @@ fn rename_in_helperform(namemap: &HashMap<Vec<u8>, Vec<u8>>, h: &HelperForm) -> 
 
 fn rename_args_helperform(h: &HelperForm) -> HelperForm {
     match h {
-        HelperForm::Defconstant(l, n, body) => {
-            HelperForm::Defconstant(l.clone(), n.clone(), Rc::new(rename_args_bodyform(body)))
-        }
+        HelperForm::Defconstant(defc) => HelperForm::Defconstant(DefconstData {
+            loc: defc.loc.clone(),
+            nl: defc.nl.clone(),
+            kw: defc.kw.clone(),
+            name: defc.name.clone(),
+            body: Rc::new(rename_args_bodyform(defc.body.borrow())),
+        }),
         HelperForm::Defmacro(mac) => {
             let mut new_names: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
             for x in invent_new_names_sexp(mac.args.clone()).iter() {
@@ -284,6 +291,7 @@ fn rename_args_helperform(h: &HelperForm) -> HelperForm {
             let local_renamed_body = rename_args_compileform(mac.program.borrow());
             HelperForm::Defmacro(DefmacData {
                 loc: mac.loc.clone(),
+                kw: mac.kw.clone(),
                 nl: mac.nl.clone(),
                 name: mac.name.clone(),
                 args: local_renamed_arg,

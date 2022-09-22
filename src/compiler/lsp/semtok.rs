@@ -193,6 +193,7 @@ fn process_body_code(
                             }
                         }
                         HelperForm::Defmacro(mac) => {
+                            eprintln!("macro: {:?}", mac);
                             if &mac.name == a {
                                 let st = SemanticTokenSortable {
                                     loc: l.clone(),
@@ -236,6 +237,28 @@ pub fn do_semantic_tokens(
     let varcollection = HashMap::new();
     for form in frontend.helpers.iter() {
         match form {
+            HelperForm::Defconstant(defc) => {
+                if let Some(kw) = &defc.kw {
+                    collected_tokens.push(SemanticTokenSortable {
+                        loc: kw.clone(),
+                        token_type: TK_KEYWORD_IDX,
+                        token_mod: 0,
+                    });
+                }
+                collected_tokens.push(SemanticTokenSortable {
+                    loc: defc.nl.clone(),
+                    token_type: TK_VARIABLE_IDX,
+                    token_mod: (1 << TK_READONLY_BIT) | (1 << TK_DEFINITION_BIT),
+                });
+                process_body_code(
+                    &mut collected_tokens,
+                    goto_def,
+                    &HashMap::new(),
+                    &varcollection,
+                    frontend,
+                    defc.body.clone(),
+                );
+            }
             HelperForm::Defun(_, defun) => {
                 let mut argcollection = HashMap::new();
                 collected_tokens.push(SemanticTokenSortable {
@@ -271,6 +294,13 @@ pub fn do_semantic_tokens(
                     token_type: TK_FUNCTION_IDX,
                     token_mod: 1 << TK_DEFINITION_BIT,
                 });
+                if let Some(kwl) = &mac.kw {
+                    collected_tokens.push(SemanticTokenSortable {
+                        loc: kwl.clone(),
+                        token_type: TK_KEYWORD_IDX,
+                        token_mod: 0,
+                    });
+                }
                 collect_arg_tokens(&mut collected_tokens, &mut argcollection, mac.args.clone());
                 process_body_code(
                     &mut collected_tokens,
@@ -281,7 +311,6 @@ pub fn do_semantic_tokens(
                     mac.program.exp.clone(),
                 );
             }
-            _ => {}
         }
     }
 

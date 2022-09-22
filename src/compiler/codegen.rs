@@ -937,17 +937,17 @@ fn start_codegen(
     // Start compiler with all macros and constants
     for h in comp.helpers.iter() {
         use_compiler = match h.borrow() {
-            HelperForm::Defconstant(loc, name, body) => {
+            HelperForm::Defconstant(defc) => {
                 let expand_program = SExp::Cons(
-                    loc.clone(),
-                    Rc::new(SExp::Atom(loc.clone(), "mod".as_bytes().to_vec())),
+                    defc.loc.clone(),
+                    Rc::new(SExp::Atom(defc.loc.clone(), "mod".as_bytes().to_vec())),
                     Rc::new(SExp::Cons(
-                        loc.clone(),
-                        Rc::new(SExp::Nil(loc.clone())),
+                        defc.loc.clone(),
+                        Rc::new(SExp::Nil(defc.loc.clone())),
                         Rc::new(SExp::Cons(
-                            loc.clone(),
-                            Rc::new(primquote(loc.clone(), body.to_sexp())),
-                            Rc::new(SExp::Nil(loc.clone())),
+                            defc.loc.clone(),
+                            Rc::new(primquote(defc.loc.clone(), defc.body.to_sexp())),
+                            Rc::new(SExp::Nil(defc.loc.clone())),
                         )),
                     )),
                 );
@@ -963,13 +963,20 @@ fn start_codegen(
                     runner.clone(),
                     opts.prim_map(),
                     Rc::new(code),
-                    Rc::new(SExp::Nil(loc.clone())),
+                    Rc::new(SExp::Nil(defc.loc.clone())),
                 )
-                .map_err(|r| CompileErr(loc.clone(), format!("Error evaluating constant: {}", r)))
-                .and_then(|res| fail_if_present(loc.clone(), &use_compiler.constants, name, res))
+                .map_err(|r| {
+                    CompileErr(
+                        defc.loc.clone(),
+                        format!("Error evaluating constant: {}", r),
+                    )
+                })
+                .and_then(|res| {
+                    fail_if_present(defc.loc.clone(), &use_compiler.constants, &defc.name, res)
+                })
                 .map(|res| {
-                    let quoted = primquote(loc.clone(), res);
-                    use_compiler.add_constant(name, Rc::new(quoted))
+                    let quoted = primquote(defc.loc.clone(), res);
+                    use_compiler.add_constant(&defc.name, Rc::new(quoted))
                 })?
             }
             HelperForm::Defmacro(mac) => {

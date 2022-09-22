@@ -93,6 +93,7 @@ pub struct DefunData {
 pub struct DefmacData {
     pub loc: Srcloc,
     pub name: Vec<u8>,
+    pub kw: Option<Srcloc>,
     pub nl: Srcloc,
     pub args: Rc<SExp>,
     pub program: Rc<CompileForm>,
@@ -102,13 +103,14 @@ pub struct DefmacData {
 pub struct DefconstData {
     pub loc: Srcloc,
     pub name: Vec<u8>,
+    pub kw: Option<Srcloc>,
     pub nl: Srcloc,
     pub body: Rc<BodyForm>,
 }
 
 #[derive(Clone, Debug)]
 pub enum HelperForm {
-    Defconstant(Srcloc, Vec<u8>, Rc<BodyForm>),
+    Defconstant(DefconstData),
     Defmacro(DefmacData),
     Defun(bool, DefunData),
 }
@@ -268,7 +270,7 @@ impl CompileForm {
 impl HelperForm {
     pub fn name(&self) -> &Vec<u8> {
         match self {
-            HelperForm::Defconstant(_, name, _) => name,
+            HelperForm::Defconstant(defc) => &defc.name,
             HelperForm::Defmacro(mac) => &mac.name,
             HelperForm::Defun(_, defun) => &defun.name,
         }
@@ -276,7 +278,7 @@ impl HelperForm {
 
     pub fn loc(&self) -> Srcloc {
         match self {
-            HelperForm::Defconstant(l, _, _) => l.clone(),
+            HelperForm::Defconstant(defc) => defc.loc.clone(),
             HelperForm::Defmacro(mac) => mac.loc.clone(),
             HelperForm::Defun(_, defun) => defun.loc.clone(),
         }
@@ -284,12 +286,12 @@ impl HelperForm {
 
     pub fn to_sexp(&self) -> Rc<SExp> {
         match self {
-            HelperForm::Defconstant(loc, name, body) => Rc::new(list_to_cons(
-                loc.clone(),
+            HelperForm::Defconstant(defc) => Rc::new(list_to_cons(
+                defc.loc.clone(),
                 &[
-                    Rc::new(SExp::atom_from_string(loc.clone(), "defconstant")),
-                    Rc::new(SExp::atom_from_vec(loc.clone(), name)),
-                    body.to_sexp(),
+                    Rc::new(SExp::atom_from_string(defc.loc.clone(), "defconstant")),
+                    Rc::new(SExp::atom_from_vec(defc.loc.clone(), &defc.name)),
+                    defc.body.to_sexp(),
                 ],
             )),
             HelperForm::Defmacro(mac) => Rc::new(SExp::Cons(

@@ -6,8 +6,8 @@ use std::rc::Rc;
 use crate::classic::clvm::__type_compatibility__::bi_one;
 
 use crate::compiler::comptypes::{
-    list_to_cons, Binding, BodyForm, CompileErr, CompileForm, CompilerOpts, DefmacData, DefunData,
-    HelperForm, LetFormKind, ModAccum,
+    list_to_cons, Binding, BodyForm, CompileErr, CompileForm, CompilerOpts, DefconstData,
+    DefmacData, DefunData, HelperForm, LetFormKind, ModAccum,
 };
 use crate::compiler::preprocessor::preprocess;
 use crate::compiler::rename::rename_children_compileform;
@@ -69,7 +69,7 @@ fn collect_used_names_bodyform(body: &BodyForm) -> Vec<Vec<u8>> {
 
 fn collect_used_names_helperform(body: &HelperForm) -> Vec<Vec<u8>> {
     match body {
-        HelperForm::Defconstant(_, _, value) => collect_used_names_bodyform(value),
+        HelperForm::Defconstant(defc) => collect_used_names_bodyform(defc.body.borrow()),
         HelperForm::Defmacro(mac) => collect_used_names_compileform(mac.program.borrow()),
         HelperForm::Defun(_, defun) => collect_used_names_bodyform(&defun.body),
     }
@@ -335,8 +335,22 @@ pub fn compile_bodyform(body: Rc<SExp>) -> Result<BodyForm, CompileErr> {
     }
 }
 
-fn compile_defconstant(l: Srcloc, name: Vec<u8>, body: Rc<SExp>) -> Result<HelperForm, CompileErr> {
-    compile_bodyform(body).map(|bf| HelperForm::Defconstant(l, name.to_vec(), Rc::new(bf)))
+fn compile_defconstant(
+    l: Srcloc,
+    nl: Srcloc,
+    kwl: Option<Srcloc>,
+    name: Vec<u8>,
+    body: Rc<SExp>,
+) -> Result<HelperForm, CompileErr> {
+    compile_bodyform(body).map(|bf| {
+        HelperForm::Defconstant(DefconstData {
+            loc: l,
+            nl,
+            kw: kwl,
+            name: name.to_vec(),
+            body: Rc::new(bf),
+        })
+    })
 }
 
 fn location_span(l_: Srcloc, lst_: Rc<SExp>) -> Srcloc {
@@ -382,6 +396,7 @@ fn compile_defmacro(
     opts: Rc<dyn CompilerOpts>,
     l: Srcloc,
     nl: Srcloc,
+    kwl: Option<Srcloc>,
     name: Vec<u8>,
     args: Rc<SExp>,
     body: Rc<SExp>,
@@ -396,6 +411,7 @@ fn compile_defmacro(
         HelperForm::Defmacro(DefmacData {
             loc: l,
             nl,
+            kw: kwl,
             name,
             args: args.clone(),
             program: Rc::new(p),
@@ -468,12 +484,20 @@ pub fn compile_helperform(
 
     if let Some(matched) = body.proper_list().and_then(|pl| match_op_name_4(&pl)) {
         if matched.op_name == b"defconstant" {
-            compile_defconstant(l, matched.name.to_vec(), matched.args).map(Some)
+            compile_defconstant(
+                l,
+                matched.nl,
+                Some(matched.opl),
+                matched.name.to_vec(),
+                matched.args,
+            )
+            .map(Some)
         } else if matched.op_name == b"defmacro" {
             compile_defmacro(
                 opts,
                 l,
                 matched.nl,
+                Some(matched.opl),
                 matched.name.to_vec(),
                 matched.args,
                 matched.body,

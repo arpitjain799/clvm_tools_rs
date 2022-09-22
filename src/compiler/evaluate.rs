@@ -1198,9 +1198,9 @@ impl Evaluator {
 
     fn get_constant(&self, name: &[u8]) -> Option<Rc<BodyForm>> {
         for h in self.helpers.iter() {
-            if let HelperForm::Defconstant(_, n, body) = h {
-                if n == name {
-                    return Some(body.clone());
+            if let HelperForm::Defconstant(defc) = h {
+                if defc.name == name {
+                    return Some(defc.body.clone());
                 }
             }
         }
