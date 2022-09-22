@@ -77,7 +77,8 @@ jobs:
             /opt/python/cp38-cp38/bin/python -m venv venv && \
             if [ ! -f "activate" ]; then ln -s venv/bin/activate; fi && \
             . ./activate && \
-            pip install --upgrade pip
+            pip install --upgrade pip && \
+            cargo build
           '
         docker run --rm -v $(pwd):/io ghcr.io/pyo3/maturin build --release --strip --manylinux 2010
 
