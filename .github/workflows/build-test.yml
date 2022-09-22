@@ -79,9 +79,7 @@ jobs:
             . ./activate && \
             pip install --upgrade pip
           '
-        # Use --user to ensure that we're us and don't make an inaccessible
-        # lock file.
-        docker run --rm --user "$(id -u)":$(id -g)" -v $(pwd):/io ghcr.io/pyo3/maturin build --release --strip --manylinux 2010
+        docker run --rm --user "$(id -u)":"$(id -g)" -v $(pwd):/io ghcr.io/pyo3/maturin build --release --strip --manylinux 2010
 
     - name: Build alpine wheel via docker
       if: startsWith(matrix.os, 'ubuntu') && startsWith(matrix.python, '3.7')
