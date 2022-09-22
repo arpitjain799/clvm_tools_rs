@@ -56,7 +56,7 @@ jobs:
     - name: Build Linux in manylinux2010 with maturin on Python ${{ matrix.python }}
       if: startsWith(matrix.os, 'ubuntu')
       run: |
-        docker run --rm -v $(pwd):/io ghcr.io/pyo3/maturin build --no-sdist --release --strip --manylinux2010
+        docker run --rm -v $(pwd):/io ghcr.io/pyo3/maturin build --release --strip --manylinux2010
 
     - name: Build alpine wheel via docker
       if: startsWith(matrix.os, 'ubuntu') && startsWith(matrix.python, '3.7')
