@@ -7,7 +7,6 @@ use crate::compiler::comptypes::{BodyForm, CompileErr, CompileForm, CompilerOpts
 use crate::compiler::frontend::{compile_bodyform, compile_helperform};
 use crate::compiler::lsp::completion::PRIM_NAMES;
 use crate::compiler::lsp::parse::{grab_scope_doc_range, recover_scopes, ParseScope, ParsedDoc};
-use crate::compiler::lsp::patch::stringify_doc;
 use crate::compiler::lsp::types::{DocPosition, DocRange};
 use crate::compiler::sexp::{parse_sexp, SExp};
 use crate::compiler::srcloc::Srcloc;
@@ -72,11 +71,6 @@ pub fn reparse_subset(
         unparsed: HashSet::new(),
         errors: Vec::new(),
     };
-
-    eprintln!(
-        "reparse starting from ***\n{}\n***",
-        stringify_doc(doc).unwrap()
-    );
 
     // if it's a module, we can patch the prefix in, otherwise make a (mod ()
     // prefix for it.
@@ -228,7 +222,6 @@ pub fn reparse_subset(
                         result.args = parsed[0].clone();
                         continue;
                     } else if i == parse_as_body {
-                        eprintln!("redoing exp {}", parsed[0]);
                         result.exp = Some(ReparsedExp {
                             hash,
                             parsed: compile_bodyform(parsed[0].clone()),

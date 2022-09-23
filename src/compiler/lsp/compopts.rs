@@ -138,7 +138,6 @@ impl CompilerOpts for LSPCompilerOpts {
         symbol_table: &mut HashMap<String, String>,
     ) -> Result<SExp, CompileErr> {
         let me = Rc::new(self.clone());
-        eprintln!("compile_program {}", sexp);
         compile_pre_forms(allocator, runner, me, &[sexp], symbol_table)
     }
 }

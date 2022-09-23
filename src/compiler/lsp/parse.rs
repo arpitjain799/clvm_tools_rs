@@ -267,7 +267,6 @@ fn make_arg_set(set: &mut HashSet<SExp>, args: Rc<SExp>) {
 }
 
 fn make_inner_function_scopes(scopes: &mut Vec<ParseScope>, body: &BodyForm) {
-    eprintln!("make_inner_function_scopes {}", body.to_sexp());
     match body {
         BodyForm::Let(l, LetFormKind::Sequential, bindings, body) => {
             if bindings.is_empty() {
@@ -314,7 +313,6 @@ fn make_inner_function_scopes(scopes: &mut Vec<ParseScope>, body: &BodyForm) {
             let mut name_set = HashSet::new();
             for b in bindings.iter() {
                 let new_name = SExp::Atom(b.nl.clone(), b.name.clone());
-                eprintln!("scope introduces {}", new_name);
                 name_set.insert(new_name);
             }
 

@@ -1,10 +1,11 @@
+use std::borrow::Borrow;
 use std::path::Path;
 use std::rc::Rc;
 
 use lsp_types::{
     request::Completion, request::GotoDefinition, request::Initialize,
     request::SemanticTokensFullRequest, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
-    GotoDefinitionParams, GotoDefinitionResponse, Location, Position, Range,
+    GotoDefinitionParams, GotoDefinitionResponse, Location, Position, Range, Url,
 };
 
 use lsp_server::{ErrorCode, Message, RequestId, Response};
@@ -30,8 +31,6 @@ impl LSPServiceProvider {
         params: &GotoDefinitionParams,
     ) -> Result<Vec<Message>, String> {
         let mut res = Vec::new();
-
-        eprintln!("got gotoDefinition request #{}: {:?}", id, params);
         let mut goto_response = None;
         let docname = params
             .text_document_position_params
@@ -45,15 +44,11 @@ impl LSPServiceProvider {
             (docpos.character + 1) as usize,
         );
         if let Some(defs) = self.goto_defs.get(&docname) {
-            eprintln!("find {:?} in {:?}", wantloc, defs);
             for kv in defs.iter() {
                 if kv.0.loc.overlap(&wantloc) {
+                    let filename: &String = kv.1.file.borrow();
                     goto_response = Some(Location {
-                        uri: params
-                            .text_document_position_params
-                            .text_document
-                            .uri
-                            .clone(),
+                        uri: Url::parse(filename).unwrap(),
                         range: Range {
                             start: Position {
                                 line: (kv.1.line - 1) as u32,

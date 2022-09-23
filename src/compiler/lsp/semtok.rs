@@ -193,7 +193,6 @@ fn process_body_code(
                             }
                         }
                         HelperForm::Defmacro(mac) => {
-                            eprintln!("macro: {:?}", mac);
                             if &mac.name == a {
                                 let st = SemanticTokenSortable {
                                     loc: l.clone(),
@@ -391,10 +390,6 @@ impl LSPSemtokRequestHandler for LSPServiceProvider {
         id: RequestId,
         params: &SemanticTokensParams,
     ) -> Result<Vec<Message>, String> {
-        eprintln!(
-            "got semantic token request #{}: for file {}",
-            id, params.text_document.uri
-        );
         let uristring = params.text_document.uri.to_string();
         let mut res = self.parse_document_and_output_errors(&uristring);
 
