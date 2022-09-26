@@ -91,9 +91,9 @@ fn process_body_code(
     body: Rc<BodyForm>,
 ) {
     match body.borrow() {
-        BodyForm::Let(_, k, bindings, inner_body) => {
+        BodyForm::Let(k, letdata) => {
             let mut bindings_vars = varcollection.clone();
-            for b in bindings.clone() {
+            for b in letdata.bindings.iter() {
                 collected_tokens.push(SemanticTokenSortable {
                     loc: b.nl.clone(),
                     token_type: TK_VARIABLE_IDX,
@@ -127,7 +127,7 @@ fn process_body_code(
                 argcollection,
                 &bindings_vars,
                 frontend,
-                inner_body.clone(),
+                letdata.body.clone(),
             );
         }
         BodyForm::Quoted(SExp::Integer(l, _)) => {

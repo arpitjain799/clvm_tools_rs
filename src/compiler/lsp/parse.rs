@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use lsp_types::Position;
 
-use crate::compiler::comptypes::{BodyForm, CompileErr, CompileForm, HelperForm, LetFormKind};
+use crate::compiler::comptypes::{BodyForm, CompileErr, CompileForm, HelperForm, LetData, LetFormKind};
 use crate::compiler::lsp::reparse::{ReparsedExp, ReparsedHelper};
 use crate::compiler::lsp::types::{DocData, DocPosition, DocRange};
 use crate::compiler::sexp::SExp;
@@ -268,17 +268,17 @@ fn make_arg_set(set: &mut HashSet<SExp>, args: Rc<SExp>) {
 
 fn make_inner_function_scopes(scopes: &mut Vec<ParseScope>, body: &BodyForm) {
     match body {
-        BodyForm::Let(l, LetFormKind::Sequential, bindings, body_let) => {
-            if bindings.is_empty() {
-                make_inner_function_scopes(scopes, body_let);
+        BodyForm::Let(LetFormKind::Sequential, letdata) => {
+            if letdata.bindings.is_empty() {
+                make_inner_function_scopes(scopes, letdata.body.borrow());
                 return;
             }
 
-            let binding = &bindings[0];
-            let new_location = if bindings.len() == 1 {
-                body_let.loc()
+            let binding = &letdata.bindings[0];
+            let new_location = if letdata.bindings.len() == 1 {
+                letdata.body.loc()
             } else {
-                bindings[1].loc().ext(&l.ending())
+                letdata.bindings[1].loc().ext(&letdata.loc.ending())
             };
 
             let mut variables = HashSet::new();
@@ -289,10 +289,13 @@ fn make_inner_function_scopes(scopes: &mut Vec<ParseScope>, body: &BodyForm) {
             make_inner_function_scopes(
                 &mut inner_scopes,
                 &BodyForm::Let(
-                    new_location.clone(),
                     LetFormKind::Sequential,
-                    bindings.iter().skip(1).cloned().collect(),
-                    body_let.clone(),
+                    LetData {
+                        loc: new_location.clone(),
+                        kw: letdata.kw.clone(),
+                        bindings: letdata.bindings.iter().skip(1).cloned().collect(),
+                        body: letdata.body.clone(),
+                    }
                 ),
             );
 
@@ -304,23 +307,23 @@ fn make_inner_function_scopes(scopes: &mut Vec<ParseScope>, body: &BodyForm) {
                 containing: inner_scopes,
             });
         }
-        BodyForm::Let(_, LetFormKind::Parallel, bindings, body_let) => {
-            if bindings.is_empty() {
-                make_inner_function_scopes(scopes, body_let);
+        BodyForm::Let(LetFormKind::Parallel, letdata) => {
+            if letdata.bindings.is_empty() {
+                make_inner_function_scopes(scopes, letdata.body.borrow());
                 return;
             }
 
             let mut name_set = HashSet::new();
-            for b in bindings.iter() {
+            for b in letdata.bindings.iter() {
                 let new_name = SExp::Atom(b.nl.clone(), b.name.clone());
                 name_set.insert(new_name);
             }
 
             let mut inner_scopes = Vec::new();
-            make_inner_function_scopes(&mut inner_scopes, body_let);
+            make_inner_function_scopes(&mut inner_scopes, letdata.body.borrow());
 
             let new_scope = ParseScope {
-                region: bindings[0].loc.ext(&body_let.loc().ending()),
+                region: letdata.bindings[0].loc.ext(&letdata.body.loc().ending()),
                 kind: ScopeKind::Let,
                 variables: name_set,
                 functions: HashSet::new(),

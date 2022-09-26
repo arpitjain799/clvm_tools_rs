@@ -72,8 +72,16 @@ pub enum LetFormKind {
 }
 
 #[derive(Clone, Debug)]
+pub struct LetData {
+    pub loc: Srcloc,
+    pub kw: Option<Srcloc>,
+    pub bindings: Vec<Rc<Binding>>,
+    pub body: Rc<BodyForm>
+}
+
+#[derive(Clone, Debug)]
 pub enum BodyForm {
-    Let(Srcloc, LetFormKind, Vec<Rc<Binding>>, Rc<BodyForm>),
+    Let(LetFormKind, LetData),
     Quoted(SExp),
     Value(SExp),
     Call(Srcloc, Vec<Rc<BodyForm>>),
@@ -326,7 +334,7 @@ impl HelperForm {
 impl BodyForm {
     pub fn loc(&self) -> Srcloc {
         match self {
-            BodyForm::Let(loc, _, _, _) => loc.clone(),
+            BodyForm::Let(_, letdata) => letdata.loc.clone(),
             BodyForm::Quoted(a) => a.loc(),
             BodyForm::Call(loc, _) => loc.clone(),
             BodyForm::Value(a) => a.loc(),
@@ -335,25 +343,27 @@ impl BodyForm {
 
     pub fn to_sexp(&self) -> Rc<SExp> {
         match self {
-            BodyForm::Let(loc, kind, bindings, body) => {
+            BodyForm::Let(kind, letdata) => {
                 let translated_bindings: Vec<Rc<SExp>> =
-                    bindings.iter().map(|x| x.to_sexp()).collect();
-                let bindings_cons = list_to_cons(loc.clone(), &translated_bindings);
-                let translated_body = body.to_sexp();
+                    letdata.bindings.iter().map(|x| x.to_sexp()).collect();
+                let bindings_cons = list_to_cons(letdata.loc.clone(), &translated_bindings);
+                let translated_body = letdata.body.to_sexp();
                 let marker = match kind {
                     LetFormKind::Parallel => "let",
                     LetFormKind::Sequential => "let*",
                 };
+                let kw_loc =
+                    letdata.kw.clone().unwrap_or_else(|| letdata.loc.clone());
                 Rc::new(SExp::Cons(
-                    loc.clone(),
-                    Rc::new(SExp::atom_from_string(loc.clone(), marker)),
+                    letdata.loc.clone(),
+                    Rc::new(SExp::atom_from_string(kw_loc, marker)),
                     Rc::new(SExp::Cons(
-                        loc.clone(),
+                        letdata.loc.clone(),
                         Rc::new(bindings_cons),
                         Rc::new(SExp::Cons(
-                            loc.clone(),
+                            letdata.loc.clone(),
                             translated_body,
-                            Rc::new(SExp::Nil(loc.clone())),
+                            Rc::new(SExp::Nil(letdata.loc.clone())),
                         )),
                     )),
                 ))

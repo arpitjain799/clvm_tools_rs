@@ -7,7 +7,7 @@ use crate::classic::clvm::__type_compatibility__::bi_one;
 
 use crate::compiler::comptypes::{
     list_to_cons, Binding, BodyForm, CompileErr, CompileForm, CompilerOpts, DefconstData,
-    DefmacData, DefunData, HelperForm, LetFormKind, ModAccum,
+    DefmacData, DefunData, HelperForm, LetData, LetFormKind, ModAccum,
 };
 use crate::compiler::preprocessor::preprocess;
 use crate::compiler::rename::rename_children_compileform;
@@ -34,14 +34,14 @@ fn collect_used_names_binding(body: &Binding) -> Vec<Vec<u8>> {
 
 fn collect_used_names_bodyform(body: &BodyForm) -> Vec<Vec<u8>> {
     match body {
-        BodyForm::Let(_, _, bindings, expr_let) => {
+        BodyForm::Let(_, letdata) => {
             let mut result = Vec::new();
-            for b in bindings {
+            for b in letdata.bindings.iter() {
                 let mut new_binding_names = collect_used_names_binding(b);
                 result.append(&mut new_binding_names);
             }
 
-            let mut body_names = collect_used_names_bodyform(expr_let);
+            let mut body_names = collect_used_names_bodyform(letdata.body.borrow());
             result.append(&mut body_names);
             result
         }
@@ -284,10 +284,13 @@ pub fn compile_bodyform(body: Rc<SExp>) -> Result<BodyForm, CompileErr> {
                                 let let_bindings = make_let_bindings(Rc::new(bindings))?;
                                 let compiled_body = compile_bodyform(Rc::new(body))?;
                                 Ok(BodyForm::Let(
-                                    l.clone(),
                                     kind,
-                                    let_bindings,
-                                    Rc::new(compiled_body),
+                                    LetData {
+                                        loc: l.clone(),
+                                        kw: Some(l.clone()),
+                                        bindings: let_bindings,
+                                        body: Rc::new(compiled_body),
+                                    }
                                 ))
                             } else if *atom_name == "quote".as_bytes().to_vec() {
                                 if v.len() != 1 {

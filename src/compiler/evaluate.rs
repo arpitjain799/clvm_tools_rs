@@ -12,7 +12,7 @@ use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
 use crate::compiler::clvm::run;
 use crate::compiler::compiler::is_at_capture;
 use crate::compiler::comptypes::{
-    Binding, BodyForm, CompileErr, CompileForm, CompilerOpts, HelperForm, LetFormKind,
+    Binding, BodyForm, CompileErr, CompileForm, CompilerOpts, HelperForm, LetData, LetFormKind,
 };
 use crate::compiler::frontend::frontend;
 use crate::compiler::runtypes::RunFailure;
@@ -918,32 +918,32 @@ impl Evaluator {
         only_inline: bool,
     ) -> Result<Rc<BodyForm>, CompileErr> {
         match body.borrow() {
-            BodyForm::Let(_, LetFormKind::Parallel, bindings, body_let) => {
-                let updated_bindings = update_parallel_bindings(env, bindings);
+            BodyForm::Let(LetFormKind::Parallel, letdata) => {
+                let updated_bindings = update_parallel_bindings(env, &letdata.bindings);
                 self.shrink_bodyform_visited(
                     allocator,
                     visited,
                     prog_args,
                     &updated_bindings,
-                    body_let.clone(),
+                    letdata.body.clone(),
                     only_inline,
                 )
             }
-            BodyForm::Let(l, LetFormKind::Sequential, bindings, body_let) => {
-                if bindings.is_empty() {
+            BodyForm::Let(LetFormKind::Sequential, letdata) => {
+                if letdata.bindings.is_empty() {
                     self.shrink_bodyform_visited(
                         allocator,
                         visited,
                         prog_args,
                         env,
-                        body_let.clone(),
+                        letdata.body.clone(),
                         only_inline,
                     )
                 } else {
                     let first_binding_as_list: Vec<Rc<Binding>> =
-                        bindings.iter().take(1).cloned().collect();
+                        letdata.bindings.iter().take(1).cloned().collect();
                     let rest_of_bindings: Vec<Rc<Binding>> =
-                        bindings.iter().skip(1).cloned().collect();
+                        letdata.bindings.iter().skip(1).cloned().collect();
 
                     let updated_bindings = update_parallel_bindings(env, &first_binding_as_list);
                     self.shrink_bodyform_visited(
@@ -952,10 +952,13 @@ impl Evaluator {
                         prog_args,
                         &updated_bindings,
                         Rc::new(BodyForm::Let(
-                            l.clone(),
                             LetFormKind::Sequential,
-                            rest_of_bindings,
-                            body.clone(),
+                            LetData {
+                                loc: letdata.loc.clone(),
+                                kw: letdata.kw.clone(),
+                                bindings: rest_of_bindings,
+                                body: letdata.body.clone(),
+                            }
                         )),
                         only_inline,
                     )
