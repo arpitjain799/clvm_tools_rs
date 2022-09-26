@@ -233,7 +233,7 @@ pub fn do_semantic_tokens(
     frontend: &CompileForm,
 ) -> Response {
     let mut collected_tokens = Vec::new();
-    let varcollection = HashMap::new();
+    let mut varcollection = HashMap::new();
     for form in frontend.helpers.iter() {
         match form {
             HelperForm::Defconstant(defc) => {
@@ -249,6 +249,7 @@ pub fn do_semantic_tokens(
                     token_type: TK_VARIABLE_IDX,
                     token_mod: (1 << TK_READONLY_BIT) | (1 << TK_DEFINITION_BIT),
                 });
+                varcollection.insert(defc.name.clone(), defc.nl.clone());
                 process_body_code(
                     &mut collected_tokens,
                     goto_def,
