@@ -268,15 +268,15 @@ fn make_arg_set(set: &mut HashSet<SExp>, args: Rc<SExp>) {
 
 fn make_inner_function_scopes(scopes: &mut Vec<ParseScope>, body: &BodyForm) {
     match body {
-        BodyForm::Let(l, LetFormKind::Sequential, bindings, body) => {
+        BodyForm::Let(l, LetFormKind::Sequential, bindings, body_let) => {
             if bindings.is_empty() {
-                make_inner_function_scopes(scopes, body);
+                make_inner_function_scopes(scopes, body_let);
                 return;
             }
 
             let binding = &bindings[0];
             let new_location = if bindings.len() == 1 {
-                body.loc()
+                body_let.loc()
             } else {
                 bindings[1].loc().ext(&l.ending())
             };
@@ -292,7 +292,7 @@ fn make_inner_function_scopes(scopes: &mut Vec<ParseScope>, body: &BodyForm) {
                     new_location.clone(),
                     LetFormKind::Sequential,
                     bindings.iter().skip(1).cloned().collect(),
-                    body.clone(),
+                    body_let.clone(),
                 ),
             );
 
@@ -304,9 +304,9 @@ fn make_inner_function_scopes(scopes: &mut Vec<ParseScope>, body: &BodyForm) {
                 containing: inner_scopes,
             });
         }
-        BodyForm::Let(_, LetFormKind::Parallel, bindings, body) => {
+        BodyForm::Let(_, LetFormKind::Parallel, bindings, body_let) => {
             if bindings.is_empty() {
-                make_inner_function_scopes(scopes, body);
+                make_inner_function_scopes(scopes, body_let);
                 return;
             }
 
@@ -317,10 +317,10 @@ fn make_inner_function_scopes(scopes: &mut Vec<ParseScope>, body: &BodyForm) {
             }
 
             let mut inner_scopes = Vec::new();
-            make_inner_function_scopes(&mut inner_scopes, body);
+            make_inner_function_scopes(&mut inner_scopes, body_let);
 
             let new_scope = ParseScope {
-                region: bindings[0].loc.ext(&body.loc().ending()),
+                region: bindings[0].loc.ext(&body_let.loc().ending()),
                 kind: ScopeKind::Let,
                 variables: name_set,
                 functions: HashSet::new(),

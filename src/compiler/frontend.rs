@@ -34,14 +34,14 @@ fn collect_used_names_binding(body: &Binding) -> Vec<Vec<u8>> {
 
 fn collect_used_names_bodyform(body: &BodyForm) -> Vec<Vec<u8>> {
     match body {
-        BodyForm::Let(_, _, bindings, expr) => {
+        BodyForm::Let(_, _, bindings, expr_let) => {
             let mut result = Vec::new();
             for b in bindings {
                 let mut new_binding_names = collect_used_names_binding(b);
                 result.append(&mut new_binding_names);
             }
 
-            let mut body_names = collect_used_names_bodyform(expr);
+            let mut body_names = collect_used_names_bodyform(expr_let);
             result.append(&mut body_names);
             result
         }

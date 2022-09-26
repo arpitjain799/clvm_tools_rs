@@ -918,25 +918,25 @@ impl Evaluator {
         only_inline: bool,
     ) -> Result<Rc<BodyForm>, CompileErr> {
         match body.borrow() {
-            BodyForm::Let(_, LetFormKind::Parallel, bindings, body) => {
+            BodyForm::Let(_, LetFormKind::Parallel, bindings, body_let) => {
                 let updated_bindings = update_parallel_bindings(env, bindings);
                 self.shrink_bodyform_visited(
                     allocator,
                     visited,
                     prog_args,
                     &updated_bindings,
-                    body.clone(),
+                    body_let.clone(),
                     only_inline,
                 )
             }
-            BodyForm::Let(l, LetFormKind::Sequential, bindings, body) => {
+            BodyForm::Let(l, LetFormKind::Sequential, bindings, body_let) => {
                 if bindings.is_empty() {
                     self.shrink_bodyform_visited(
                         allocator,
                         visited,
                         prog_args,
                         env,
-                        body.clone(),
+                        body_let.clone(),
                         only_inline,
                     )
                 } else {

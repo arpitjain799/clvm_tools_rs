@@ -308,8 +308,8 @@ pub fn check_live_helper_calls(
                 }
             }
         }
-        BodyForm::Let(_l, _kind, _bindings, body) => {
-            return check_live_helper_calls(prims, scopes, body.borrow());
+        BodyForm::Let(_l, _kind, _bindings, body_let) => {
+            return check_live_helper_calls(prims, scopes, body_let.borrow());
         }
         _ => {}
     }

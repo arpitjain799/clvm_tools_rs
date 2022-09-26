@@ -117,7 +117,7 @@ fn make_binding_unique(b: &Binding) -> (Vec<u8>, Binding) {
 
 fn rename_in_bodyform(namemap: &HashMap<Vec<u8>, Vec<u8>>, b: Rc<BodyForm>) -> BodyForm {
     match b.borrow() {
-        BodyForm::Let(l, kind, bindings, body) => {
+        BodyForm::Let(l, kind, bindings, body_let) => {
             let new_bindings = bindings
                 .iter()
                 .map(|b| {
@@ -129,7 +129,7 @@ fn rename_in_bodyform(namemap: &HashMap<Vec<u8>, Vec<u8>>, b: Rc<BodyForm>) -> B
                     })
                 })
                 .collect();
-            let new_body = rename_in_bodyform(namemap, body.clone());
+            let new_body = rename_in_bodyform(namemap, body_let.clone());
             BodyForm::Let(l.clone(), kind.clone(), new_bindings, Rc::new(new_body))
         }
 
@@ -183,17 +183,17 @@ pub fn desugar_sequential_let_bindings(
 
 fn rename_args_bodyform(b: &BodyForm) -> BodyForm {
     match b.borrow() {
-        BodyForm::Let(_l, LetFormKind::Sequential, bindings, body) => {
+        BodyForm::Let(_l, LetFormKind::Sequential, bindings, body_let) => {
             // Renaming a sequential let is exactly as if the bindings were
             // nested in separate parallel lets.
             rename_args_bodyform(&desugar_sequential_let_bindings(
                 bindings,
-                body,
+                body_let,
                 bindings.len(),
             ))
         }
 
-        BodyForm::Let(l, LetFormKind::Parallel, bindings, body) => {
+        BodyForm::Let(l, LetFormKind::Parallel, bindings, body_let) => {
             let renames: Vec<(Vec<u8>, Binding)> = bindings
                 .iter()
                 .map(|x| make_binding_unique(x.borrow()))
@@ -216,7 +216,7 @@ fn rename_args_bodyform(b: &BodyForm) -> BodyForm {
                     })
                 })
                 .collect();
-            let locally_renamed_body = rename_in_bodyform(&local_namemap, body.clone());
+            let locally_renamed_body = rename_in_bodyform(&local_namemap, body_let.clone());
             BodyForm::Let(
                 l.clone(),
                 LetFormKind::Parallel,

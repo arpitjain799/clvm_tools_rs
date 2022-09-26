@@ -499,10 +499,10 @@ pub fn generate_expr_code(
     expr: Rc<BodyForm>,
 ) -> Result<CompiledCode, CompileErr> {
     match expr.borrow() {
-        BodyForm::Let(_l, LetFormKind::Parallel, _bindings, expr) => {
+        BodyForm::Let(_l, LetFormKind::Parallel, _bindings, expr_let) => {
             /* Depends on a defun having been desugared from this let and the let
             expressing rewritten. */
-            generate_expr_code(allocator, runner, opts, compiler, expr.clone())
+            generate_expr_code(allocator, runner, opts, compiler, expr_let.clone())
         }
         BodyForm::Quoted(q) => {
             let l = q.loc();
@@ -760,7 +760,7 @@ fn hoist_body_let_binding(
     body: Rc<BodyForm>,
 ) -> (Vec<HelperForm>, Rc<BodyForm>) {
     match body.borrow() {
-        BodyForm::Let(l, LetFormKind::Sequential, bindings, body) => {
+        BodyForm::Let(l, LetFormKind::Sequential, bindings, body_let) => {
             if bindings.is_empty() {
                 return (vec![], body.clone());
             }
@@ -769,7 +769,7 @@ fn hoist_body_let_binding(
             // Simply slice one binding and do it again.
             let new_sub_expr = if bindings.len() == 1 {
                 // There is one binding, so we just need to put body below
-                body.clone()
+                body_let.clone()
             } else {
                 // Slice other bindings
                 let sub_bindings = bindings.iter().skip(1).cloned().collect();
@@ -777,7 +777,7 @@ fn hoist_body_let_binding(
                     l.clone(),
                     LetFormKind::Sequential,
                     sub_bindings,
-                    body.clone(),
+                    body_let.clone(),
                 ))
             };
 
@@ -793,7 +793,7 @@ fn hoist_body_let_binding(
                 )),
             )
         }
-        BodyForm::Let(l, LetFormKind::Parallel, bindings, body) => {
+        BodyForm::Let(l, LetFormKind::Parallel, bindings, body_let) => {
             let mut out_defuns = Vec::new();
             let defun_name = gensym("letbinding".as_bytes().to_vec());
 
@@ -821,7 +821,7 @@ fn hoist_body_let_binding(
                 &defun_name,
                 args,
                 revised_bindings.to_vec(),
-                body.clone(),
+                body_let.clone(),
             );
             out_defuns.push(generated_defun);
 
