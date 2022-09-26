@@ -93,6 +93,13 @@ fn process_body_code(
     match body.borrow() {
         BodyForm::Let(k, letdata) => {
             let mut bindings_vars = varcollection.clone();
+            if let Some(kw) = &letdata.kw {
+                collected_tokens.push(SemanticTokenSortable {
+                    loc: kw.clone(),
+                    token_type: TK_KEYWORD_IDX,
+                    token_mod: 0
+                });
+            }
             for b in letdata.bindings.iter() {
                 collected_tokens.push(SemanticTokenSortable {
                     loc: b.nl.clone(),
