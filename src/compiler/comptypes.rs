@@ -76,7 +76,7 @@ pub struct LetData {
     pub loc: Srcloc,
     pub kw: Option<Srcloc>,
     pub bindings: Vec<Rc<Binding>>,
-    pub body: Rc<BodyForm>
+    pub body: Rc<BodyForm>,
 }
 
 #[derive(Clone, Debug)]
@@ -352,8 +352,7 @@ impl BodyForm {
                     LetFormKind::Parallel => "let",
                     LetFormKind::Sequential => "let*",
                 };
-                let kw_loc =
-                    letdata.kw.clone().unwrap_or_else(|| letdata.loc.clone());
+                let kw_loc = letdata.kw.clone().unwrap_or_else(|| letdata.loc.clone());
                 Rc::new(SExp::Cons(
                     letdata.loc.clone(),
                     Rc::new(SExp::atom_from_string(kw_loc, marker)),

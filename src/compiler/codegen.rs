@@ -780,7 +780,7 @@ fn hoist_body_let_binding(
                         kw: letdata.kw.clone(),
                         bindings: sub_bindings,
                         body: letdata.body.clone(),
-                    }
+                    },
                 ))
             };
 
@@ -795,7 +795,7 @@ fn hoist_body_let_binding(
                         kw: letdata.kw.clone(),
                         bindings: vec![letdata.bindings[0].clone()],
                         body: new_sub_expr,
-                    }
+                    },
                 )),
             )
         }

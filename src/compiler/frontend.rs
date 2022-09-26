@@ -290,7 +290,7 @@ pub fn compile_bodyform(body: Rc<SExp>) -> Result<BodyForm, CompileErr> {
                                         kw: Some(l.clone()),
                                         bindings: let_bindings,
                                         body: Rc::new(compiled_body),
-                                    }
+                                    },
                                 ))
                             } else if *atom_name == "quote".as_bytes().to_vec() {
                                 if v.len() != 1 {

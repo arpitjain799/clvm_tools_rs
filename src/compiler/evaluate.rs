@@ -958,7 +958,7 @@ impl Evaluator {
                                 kw: letdata.kw.clone(),
                                 bindings: rest_of_bindings,
                                 body: letdata.body.clone(),
-                            }
+                            },
                         )),
                         only_inline,
                     )

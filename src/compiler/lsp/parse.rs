@@ -4,7 +4,9 @@ use std::rc::Rc;
 
 use lsp_types::Position;
 
-use crate::compiler::comptypes::{BodyForm, CompileErr, CompileForm, HelperForm, LetData, LetFormKind};
+use crate::compiler::comptypes::{
+    BodyForm, CompileErr, CompileForm, HelperForm, LetData, LetFormKind,
+};
 use crate::compiler::lsp::reparse::{ReparsedExp, ReparsedHelper};
 use crate::compiler::lsp::types::{DocData, DocPosition, DocRange};
 use crate::compiler::sexp::SExp;
@@ -295,7 +297,7 @@ fn make_inner_function_scopes(scopes: &mut Vec<ParseScope>, body: &BodyForm) {
                         kw: letdata.kw.clone(),
                         bindings: letdata.bindings.iter().skip(1).cloned().collect(),
                         body: letdata.body.clone(),
-                    }
+                    },
                 ),
             );
 

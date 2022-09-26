@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::compiler::comptypes::{
-    Binding, BodyForm, CompileForm, DefconstData, DefmacData, DefunData, HelperForm, LetData, LetFormKind,
+    Binding, BodyForm, CompileForm, DefconstData, DefmacData, DefunData, HelperForm, LetData,
+    LetFormKind,
 };
 use crate::compiler::gensym::gensym;
 use crate::compiler::sexp::SExp;
@@ -118,7 +119,8 @@ fn make_binding_unique(b: &Binding) -> (Vec<u8>, Binding) {
 fn rename_in_bodyform(namemap: &HashMap<Vec<u8>, Vec<u8>>, b: Rc<BodyForm>) -> BodyForm {
     match b.borrow() {
         BodyForm::Let(kind, letdata) => {
-            let new_bindings = letdata.bindings
+            let new_bindings = letdata
+                .bindings
                 .iter()
                 .map(|b| {
                     Rc::new(Binding {
@@ -130,12 +132,15 @@ fn rename_in_bodyform(namemap: &HashMap<Vec<u8>, Vec<u8>>, b: Rc<BodyForm>) -> B
                 })
                 .collect();
             let new_body = rename_in_bodyform(namemap, letdata.body.clone());
-            BodyForm::Let(kind.clone(), LetData {
-                loc: letdata.loc.clone(),
-                kw: letdata.kw.clone(),
-                bindings: new_bindings,
-                body: Rc::new(new_body)
-            })
+            BodyForm::Let(
+                kind.clone(),
+                LetData {
+                    loc: letdata.loc.clone(),
+                    kw: letdata.kw.clone(),
+                    bindings: new_bindings,
+                    body: Rc::new(new_body),
+                },
+            )
         }
 
         BodyForm::Quoted(atom) => match atom.borrow() {
@@ -182,7 +187,7 @@ pub fn desugar_sequential_let_bindings(
                     kw: None,
                     bindings: vec![want_binding],
                     body: Rc::new(body.clone()),
-                }
+                },
             ),
             n - 1,
         )
@@ -202,7 +207,8 @@ fn rename_args_bodyform(b: &BodyForm) -> BodyForm {
         }
 
         BodyForm::Let(LetFormKind::Parallel, letdata) => {
-            let renames: Vec<(Vec<u8>, Binding)> = letdata.bindings
+            let renames: Vec<(Vec<u8>, Binding)> = letdata
+                .bindings
                 .iter()
                 .map(|x| make_binding_unique(x.borrow()))
                 .collect();
@@ -232,7 +238,7 @@ fn rename_args_bodyform(b: &BodyForm) -> BodyForm {
                     kw: letdata.kw.clone(),
                     bindings: new_bindings,
                     body: Rc::new(locally_renamed_body),
-                }
+                },
             )
         }
 
