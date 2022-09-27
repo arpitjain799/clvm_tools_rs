@@ -19,8 +19,8 @@ some partial "com" operators in there and our
 goals is to compile PROG as much as possible.
  */
 
-fn DEFAULT_MACROS_SRC() -> Vec<&'static str> {
-    return vec![
+fn default_macros_src() -> Vec<&'static str> {
+    vec![
         indoc! {"
         ; we have to compile this externally, since it uses itself
         ;(defmacro defmacro (name params body)
@@ -77,31 +77,48 @@ fn DEFAULT_MACROS_SRC() -> Vec<&'static str> {
                  (function (unquote C)))
               @)))
         "},
-    ];
+        indoc! {"
+        (q \"__chia__enlist\"
+            (a (q #a (q #a 2 (c 2 (c 3 (q))))
+                     (c (q #a (i 5
+                                 (q #c (q . 4)
+                                       (c 9 (c (a 2 (c 2 (c 13 (q))))
+                                               (q)))
+                                 )
+                                 (q 1))
+                               1)
+                        1))
+                2))
+        "},
+        /*
+         / operator at the clvm layer is becoming deprecated and
+        will be implemented using divmod.
+         */
+        indoc! {"
+        (defmacro / (A B) (qq (f (divmod (unquote A) (unquote B)))))
+        "},
+    ]
 }
 
 fn build_default_macro_lookup(
     allocator: &mut Allocator,
     eval_f: Rc<dyn TRunProgram>,
-    macros_src: &Vec<String>,
+    macros_src: &[String],
 ) -> NodePtr {
-    let run = assemble(allocator, &"(a (com 2 3) 1)".to_string()).unwrap();
+    let run = assemble(allocator, "(a (com 2 3) 1)").unwrap();
     let mut default_macro_lookup: NodePtr = allocator.null();
     for macro_src in macros_src {
-        let macro_sexp = assemble(allocator, &macro_src.to_string()).unwrap();
+        let macro_sexp = assemble(allocator, macro_src).unwrap();
         let env = allocator
             .new_pair(macro_sexp, default_macro_lookup)
             .unwrap();
         let new_macro = eval_f.run_program(allocator, run, env, None).unwrap().1;
         default_macro_lookup = allocator.new_pair(new_macro, default_macro_lookup).unwrap();
     }
-    return default_macro_lookup;
+    default_macro_lookup
 }
 
-pub fn DEFAULT_MACRO_LOOKUP(allocator: &mut Allocator, runner: Rc<dyn TRunProgram>) -> NodePtr {
-    return build_default_macro_lookup(
-        allocator,
-        runner.clone(),
-        &DEFAULT_MACROS_SRC().iter().map(|s| s.to_string()).collect(),
-    );
+pub fn default_macro_lookup(allocator: &mut Allocator, runner: Rc<dyn TRunProgram>) -> NodePtr {
+    let macro_srcs: Vec<String> = default_macros_src().iter().map(|s| s.to_string()).collect();
+    build_default_macro_lookup(allocator, runner.clone(), &macro_srcs)
 }

@@ -8,25 +8,25 @@ use num_bigint::ToBigInt;
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
 use clvm_rs::allocator::Allocator;
 
-use crate::classic::clvm::__type_compatibility__::{bi_one, Bytes, BytesFromType};
+use crate::classic::clvm::__type_compatibility__::bi_one;
 
 use crate::compiler::clvm::run;
-use crate::compiler::compiler::run_optimizer;
+use crate::compiler::compiler::{is_at_capture, run_optimizer};
 use crate::compiler::comptypes::{
-    cons_of_string_map, foldM, join_vecs_to_string, list_to_cons, mapM, with_heading, Binding,
-    BodyForm, Callable, CompileErr, CompileForm, CompiledCode, CompilerOpts, DefunCall, HelperForm,
-    InlineFunction, LetFormKind, PrimaryCodegen,
+    fold_m, join_vecs_to_string, list_to_cons, Binding, BodyForm, Callable, CompileErr,
+    CompileForm, CompiledCode, CompilerOpts, DefunCall, HelperForm, InlineFunction, LetFormKind,
+    PrimaryCodegen,
 };
 use crate::compiler::debug::{build_swap_table_mut, relabel};
 use crate::compiler::frontend::compile_bodyform;
 use crate::compiler::gensym::gensym;
 use crate::compiler::inline::{replace_in_inline, synthesize_args};
 use crate::compiler::optimize::optimize_expr;
-use crate::compiler::prims::{primapply, primcons, primquote, prims};
+use crate::compiler::prims::{primapply, primcons, primquote};
 use crate::compiler::runtypes::RunFailure;
-use crate::compiler::sexp::{decode_string, enlist, SExp};
+use crate::compiler::sexp::{decode_string, SExp};
 use crate::compiler::srcloc::Srcloc;
-use crate::util::{number_from_u8, u8_from_number};
+use crate::util::u8_from_number;
 
 /* As in the python code, produce a pair whose (thanks richard)
  *
@@ -56,12 +56,9 @@ fn cons_bodyform(loc: Srcloc, left: Rc<BodyForm>, right: Rc<BodyForm>) -> BodyFo
     BodyForm::Call(
         loc.clone(),
         vec![
-            Rc::new(BodyForm::Value(SExp::Atom(
-                loc.clone(),
-                "c".as_bytes().to_vec(),
-            ))), // Cons
-            left.clone(),
-            right.clone(),
+            Rc::new(BodyForm::Value(SExp::Atom(loc, "c".as_bytes().to_vec()))), // Cons
+            left,
+            right,
         ],
     )
 }
@@ -85,10 +82,10 @@ fn create_let_env_expression(args: Rc<SExp>) -> BodyForm {
 }
 
 fn helper_atom(h: &HelperForm) -> SExp {
-    SExp::Atom(h.loc(), h.name())
+    SExp::Atom(h.loc(), h.name().clone())
 }
 
-fn build_tree(l: Srcloc, s: usize, e: usize, helper_array: &Vec<HelperForm>) -> SExp {
+fn build_tree(l: Srcloc, s: usize, e: usize, helper_array: &[HelperForm]) -> SExp {
     if e - s == 1 {
         helper_atom(helper_array[s].borrow())
     } else {
@@ -99,18 +96,18 @@ fn build_tree(l: Srcloc, s: usize, e: usize, helper_array: &Vec<HelperForm>) -> 
     }
 }
 
-fn compute_code_shape(l: Srcloc, helpers: &Vec<HelperForm>) -> SExp {
+fn compute_code_shape(l: Srcloc, helpers: &[HelperForm]) -> SExp {
     let alen = helpers.len();
     if alen == 0 {
         SExp::Nil(l)
     } else if alen == 1 {
-        SExp::Atom(l, helpers[0].name())
+        SExp::Atom(l, helpers[0].name().clone())
     } else {
-        build_tree(l, 0, alen, &helpers)
+        build_tree(l, 0, alen, helpers)
     }
 }
 
-fn compute_env_shape(l: Srcloc, args: Rc<SExp>, helpers: &Vec<HelperForm>) -> SExp {
+fn compute_env_shape(l: Srcloc, args: Rc<SExp>, helpers: &[HelperForm]) -> SExp {
     let car = compute_code_shape(l.clone(), helpers);
     let cdr = args;
     SExp::Cons(l, Rc::new(car), cdr)
@@ -118,7 +115,7 @@ fn compute_env_shape(l: Srcloc, args: Rc<SExp>, helpers: &Vec<HelperForm>) -> SE
 
 fn create_name_lookup_(
     l: Srcloc,
-    name: &Vec<u8>,
+    name: &[u8],
     env: Rc<SExp>,
     find: Rc<SExp>,
 ) -> Result<u64, CompileErr> {
@@ -131,8 +128,8 @@ fn create_name_lookup_(
                     l.clone(),
                     format!(
                         "{} not found (via {})",
-                        decode_string(&name),
-                        decode_string(&a)
+                        decode_string(name),
+                        decode_string(a)
                     ),
                 ))
             }
@@ -146,27 +143,34 @@ fn create_name_lookup_(
                     l.clone(),
                     format!(
                         "{} not found (via {})",
-                        decode_string(&name),
+                        decode_string(name),
                         decode_string(&a)
                     ),
                 ))
             }
         }
         SExp::Cons(l, head, rest) => {
-            match create_name_lookup_(l.clone(), name, env.clone(), head.clone()) {
-                Err(_) => {
-                    create_name_lookup_(l.clone(), name, env, rest.clone()).map(|v| 2 * v + 1)
+            if let Some((capture, substructure)) = is_at_capture(head.clone(), rest.clone()) {
+                if *capture == *name {
+                    Ok(1_u64)
+                } else {
+                    create_name_lookup_(l.clone(), name, env, substructure)
                 }
-                Ok(v) => Ok(2 * v),
+            } else {
+                create_name_lookup_(l.clone(), name, env.clone(), head.clone())
+                    .map(|v| Ok(2 * v))
+                    .unwrap_or_else(|_| {
+                        create_name_lookup_(l.clone(), name, env, rest.clone()).map(|v| 2 * v + 1)
+                    })
             }
         }
         _ => Err(CompileErr(
-            l.clone(),
+            l,
             format!(
                 "operator or function atom {} not found checking {} in {}",
-                decode_string(&name),
-                find.to_string(),
-                env.to_string()
+                decode_string(name),
+                find,
+                env
             ),
         )),
     }
@@ -175,7 +179,7 @@ fn create_name_lookup_(
 fn create_name_lookup(
     compiler: &PrimaryCodegen,
     l: Srcloc,
-    name: &Vec<u8>,
+    name: &[u8],
 ) -> Result<Rc<SExp>, CompileErr> {
     compiler
         .constants
@@ -187,100 +191,18 @@ fn create_name_lookup(
         })
 }
 
-fn lookup_prim(
-    compiler: &PrimaryCodegen,
-    l: Srcloc,
-    name: &Vec<u8>,
-) -> Result<Rc<SExp>, CompileErr> {
-    compiler
-        .prims
-        .get(name)
-        .map(|x| Ok(x.clone()))
-        .unwrap_or_else(|| {
-            Err(CompileErr(
-                l.clone(),
-                format!("no such prim {}", decode_string(name)),
-            ))
-        })
-}
-
-fn codegen_to_sexp(opts: Rc<dyn CompilerOpts>, compiler: &PrimaryCodegen) -> SExp {
-    let l = Srcloc::start(&opts.filename());
-    let to_process: Vec<Rc<SExp>> = compiler
-        .to_process
-        .iter()
-        .map(|h| Rc::new(SExp::Atom(l.clone(), h.name())))
-        .collect();
-
-    with_heading(
-        l.clone(),
-        &"codegen".to_string(),
-        Rc::new(list_to_cons(
-            l.clone(),
-            &vec![
-                Rc::new(with_heading(
-                    l.clone(),
-                    &"prims".to_string(),
-                    Rc::new(cons_of_string_map(
-                        l.clone(),
-                        &|x: &Rc<SExp>| x.clone(),
-                        &compiler.prims,
-                    )),
-                )),
-                Rc::new(with_heading(
-                    l.clone(),
-                    &"macros".to_string(),
-                    Rc::new(cons_of_string_map(
-                        l.clone(),
-                        &|x: &Rc<SExp>| x.clone(),
-                        &compiler.macros,
-                    )),
-                )),
-                Rc::new(with_heading(
-                    l.clone(),
-                    &"defuns".to_string(),
-                    Rc::new(cons_of_string_map(
-                        l.clone(),
-                        &|dc: &DefunCall| {
-                            Rc::new(SExp::Cons(
-                                l.clone(),
-                                dc.required_env.clone(),
-                                Rc::new(SExp::Cons(
-                                    l.clone(),
-                                    dc.code.clone(),
-                                    Rc::new(SExp::Nil(l.clone())),
-                                )),
-                            ))
-                        },
-                        &compiler.defuns,
-                    )),
-                )),
-                Rc::new(with_heading(
-                    l.clone(),
-                    &"to_process".to_string(),
-                    Rc::new(list_to_cons(l.clone(), &to_process)),
-                )),
-                Rc::new(with_heading(
-                    l.clone(),
-                    &"env".to_string(),
-                    Rc::new(SExp::Cons(
-                        l.clone(),
-                        compiler.env.clone(),
-                        Rc::new(SExp::Nil(l.clone())),
-                    )),
-                )),
-                Rc::new(with_heading(
-                    l.clone(),
-                    &"final_expr".to_string(),
-                    Rc::new(SExp::Cons(
-                        l.clone(),
-                        compiler.final_expr.to_sexp(),
-                        Rc::new(SExp::Nil(l.clone())),
-                    )),
-                )),
-            ],
-        )),
-    )
+fn get_prim(loc: Srcloc, prims: Rc<HashMap<Vec<u8>, Rc<SExp>>>, name: &[u8]) -> Option<Rc<SExp>> {
+    if let Some(p) = prims.get(name) {
+        return Some(p.clone());
+    }
+    let myatom = SExp::Atom(loc, name.to_owned());
+    for kv in prims.iter() {
+        let val_borrowed: &SExp = kv.1.borrow();
+        if val_borrowed == &myatom {
+            return Some(Rc::new(myatom));
+        }
+    }
+    None
 }
 
 pub fn get_callable(
@@ -294,7 +216,7 @@ pub fn get_callable(
             let macro_def = compiler.macros.get(name);
             let inline = compiler.inlines.get(name);
             let defun = create_name_lookup(compiler, l.clone(), name);
-            let prim = compiler.prims.get(name);
+            let prim = get_prim(l.clone(), compiler.prims.clone(), name);
             let atom_is_com = *name == "com".as_bytes().to_vec();
             let atom_is_at = *name == "@".as_bytes().to_vec();
             match (macro_def, inline, defun, prim, atom_is_com, atom_is_at) {
@@ -321,13 +243,10 @@ pub fn get_callable(
                 )),
             }
         }
-        SExp::Integer(_, v) => Ok(Callable::CallPrim(
-            l.clone(),
-            SExp::Integer(l.clone(), v.clone()),
-        )),
+        SExp::Integer(_, v) => Ok(Callable::CallPrim(l.clone(), SExp::Integer(l, v.clone()))),
         _ => Err(CompileErr(
             atom.loc(),
-            format!("can't call object {}", atom.to_string()),
+            format!("can't call object {}", atom),
         )),
     }
 }
@@ -346,8 +265,6 @@ pub fn process_macro_call(
     let args_to_macro = list_to_cons(l.clone(), &converted_args);
     build_swap_table_mut(&mut swap_table, &args_to_macro);
 
-    let arg_strs: Vec<String> = args.iter().map(|x| x.to_sexp().to_string()).collect();
-
     run(
         allocator,
         runner.clone(),
@@ -356,21 +273,11 @@ pub fn process_macro_call(
         Rc::new(args_to_macro),
     )
     .map_err(|e| match e {
-        RunFailure::RunExn(ml, x) => CompileErr(
-            l,
-            format!("macro aborted at {} with {}", ml.to_string(), x.to_string()),
-        ),
-        RunFailure::RunErr(rl, e) => CompileErr(
-            l,
-            format!(
-                "error executing macro: {} {}",
-                rl.to_string(),
-                e.to_string()
-            ),
-        ),
+        RunFailure::RunExn(ml, x) => CompileErr(l, format!("macro aborted at {} with {}", ml, x)),
+        RunFailure::RunErr(rl, e) => CompileErr(l, format!("error executing macro: {} {}", rl, e)),
     })
     .and_then(|v| {
-        let relabeled_expr = relabel(&mut swap_table, &v);
+        let relabeled_expr = relabel(&swap_table, &v);
         compile_bodyform(Rc::new(relabeled_expr))
     })
     .and_then(|body| generate_expr_code(allocator, runner, opts, compiler, Rc::new(body)))
@@ -382,10 +289,10 @@ fn generate_args_code(
     opts: Rc<dyn CompilerOpts>,
     compiler: &PrimaryCodegen,
     l: Srcloc,
-    list: &Vec<Rc<BodyForm>>,
+    list: &[Rc<BodyForm>],
 ) -> Result<SExp, CompileErr> {
-    if list.len() == 0 {
-        Ok(SExp::Nil(l.clone()))
+    if list.is_empty() {
+        Ok(SExp::Nil(l))
     } else {
         let mut compiled_args: Vec<Rc<SExp>> = Vec::new();
         for hd in list.iter() {
@@ -399,7 +306,7 @@ fn generate_args_code(
             .map(|x| x.1)?;
             compiled_args.push(generated);
         }
-        Ok(list_to_cons(l.clone(), &compiled_args))
+        Ok(list_to_cons(l, &compiled_args))
     }
 }
 
@@ -424,7 +331,7 @@ fn process_defun_call(
     );
     Ok(CompiledCode(
         l.clone(),
-        Rc::new(primapply(l.clone(), lookup, Rc::new(env))),
+        Rc::new(primapply(l, lookup, Rc::new(env))),
     ))
 }
 
@@ -439,10 +346,10 @@ pub fn get_call_name(l: Srcloc, body: BodyForm) -> Result<Rc<SExp>, CompileErr> 
         _ => {}
     }
 
-    return Err(CompileErr(
+    Err(CompileErr(
         l,
-        format!("not yet callable {}", body.to_sexp().to_string()),
-    ));
+        format!("not yet callable {}", body.to_sexp()),
+    ))
 }
 
 fn compile_call(
@@ -467,7 +374,7 @@ fn compile_call(
     ));
 
     let compile_atom_head = |al: Srcloc, an: &Vec<u8>| {
-        let tl = list.iter().skip(1).map(|x| x.clone()).collect();
+        let tl = list.iter().skip(1).cloned().collect();
         get_callable(
             opts.clone(),
             compiler,
@@ -480,7 +387,7 @@ fn compile_call(
                 runner,
                 opts.clone(),
                 compiler,
-                l.clone(),
+                l,
                 tl,
                 Rc::new(code),
             ),
@@ -490,7 +397,7 @@ fn compile_call(
                 runner.clone(),
                 opts.clone(),
                 compiler,
-                l.clone(),
+                l,
                 &inline,
                 &tl,
             ),
@@ -523,13 +430,13 @@ fn compile_call(
                         )),
                         _ => Err(CompileErr(
                             al.clone(),
-                            format!("@ form only accepts integers at present"),
+                            "@ form only accepts integers at present".to_string(),
                         )),
                     }
                 } else {
                     Err(CompileErr(
                         al.clone(),
-                        format!("@ form accepts one argument"),
+                        "@ form accepts one argument".to_string(),
                     ))
                 }
             }
@@ -556,8 +463,14 @@ fn compile_call(
                         )),
                     );
 
+                    let mut unused_symbol_table = HashMap::new();
                     updated_opts
-                        .compile_program(allocator, runner, Rc::new(use_body))
+                        .compile_program(
+                            allocator,
+                            runner,
+                            Rc::new(use_body),
+                            &mut unused_symbol_table,
+                        )
                         .map(|code| {
                             CompiledCode(l.clone(), Rc::new(primquote(l.clone(), Rc::new(code))))
                         })
@@ -586,7 +499,7 @@ pub fn generate_expr_code(
     expr: Rc<BodyForm>,
 ) -> Result<CompiledCode, CompileErr> {
     match expr.borrow() {
-        BodyForm::Let(l, LetFormKind::Parallel, bindings, expr) => {
+        BodyForm::Let(_l, LetFormKind::Parallel, _bindings, expr) => {
             /* Depends on a defun having been desugared from this let and the let
             expressing rewritten. */
             generate_expr_code(allocator, runner, opts, compiler, expr.clone())
@@ -595,7 +508,7 @@ pub fn generate_expr_code(
             let l = q.loc();
             Ok(CompiledCode(
                 l.clone(),
-                Rc::new(primquote(l.clone(), Rc::new(q.clone()))),
+                Rc::new(primquote(l, Rc::new(q.clone()))),
             ))
         }
         BodyForm::Value(v) => {
@@ -644,7 +557,7 @@ pub fn generate_expr_code(
             }
         }
         BodyForm::Call(l, list) => {
-            if list.len() == 0 {
+            if list.is_empty() {
                 Err(CompileErr(
                     l.clone(),
                     "created a call with no forms".to_string(),
@@ -655,15 +568,32 @@ pub fn generate_expr_code(
         }
         _ => Err(CompileErr(
             expr.loc(),
-            format!("don't know how to compile {}", expr.to_sexp().to_string()),
+            format!("don't know how to compile {}", expr.to_sexp()),
         )),
     }
 }
 
 fn combine_defun_env(old_env: Rc<SExp>, new_args: Rc<SExp>) -> Rc<SExp> {
     match old_env.borrow() {
-        SExp::Cons(l, h, _) => Rc::new(SExp::Cons(l.clone(), h.clone(), new_args.clone())),
+        SExp::Cons(l, h, _) => Rc::new(SExp::Cons(l.clone(), h.clone(), new_args)),
         _ => old_env,
+    }
+}
+
+// Diverts to failure if a symbol is redefined.
+fn fail_if_present<T, R>(
+    loc: Srcloc,
+    map: &HashMap<Vec<u8>, T>,
+    name: &[u8],
+    result: R,
+) -> Result<R, CompileErr> {
+    if map.contains_key(name) {
+        Err(CompileErr(
+            loc.clone(),
+            format!("Cannot redefine {}", SExp::Atom(loc, name.to_owned())),
+        ))
+    } else {
+        Ok(result)
     }
 }
 
@@ -675,65 +605,10 @@ fn codegen_(
     h: &HelperForm,
 ) -> Result<PrimaryCodegen, CompileErr> {
     match h {
-        HelperForm::Defconstant(loc, name, body) => {
-            let expand_program = SExp::Cons(
-                loc.clone(),
-                Rc::new(SExp::Atom(loc.clone(), "mod".as_bytes().to_vec())),
-                Rc::new(SExp::Cons(
-                    loc.clone(),
-                    Rc::new(SExp::Nil(loc.clone())),
-                    Rc::new(SExp::Cons(
-                        loc.clone(),
-                        Rc::new(primquote(loc.clone(), body.to_sexp())),
-                        Rc::new(SExp::Nil(loc.clone())),
-                    )),
-                )),
-            );
-            let updated_opts = opts.set_compiler(compiler.clone());
-            let code =
-                updated_opts.compile_program(allocator, runner.clone(), Rc::new(expand_program))?;
-            run(
-                allocator,
-                runner,
-                opts.prim_map(),
-                Rc::new(code),
-                Rc::new(SExp::Nil(loc.clone())),
-            )
-            .map_err(|r| {
-                CompileErr(
-                    loc.clone(),
-                    format!("Error evaluating constant: {}", r.to_string()),
-                )
-            })
-            .map(|res| {
-                let quoted = primquote(loc.clone(), res);
-                compiler.add_constant(&name, Rc::new(quoted))
-            })
-        }
-
-        HelperForm::Defmacro(loc, name, args, body) => {
-            let macro_program = Rc::new(SExp::Cons(
-                loc.clone(),
-                Rc::new(SExp::Atom(loc.clone(), "mod".as_bytes().to_vec())),
-                body.to_sexp(),
-            ));
-
-            let updated_opts = opts.set_compiler(compiler.clone()).set_stdenv(false);
-
-            updated_opts
-                .compile_program(allocator, runner.clone(), macro_program)
-                .and_then(|code| {
-                    if opts.optimize() {
-                        run_optimizer(allocator, runner, Rc::new(code))
-                    } else {
-                        Ok(Rc::new(code))
-                    }
-                })
-                .map(|code| compiler.add_macro(name, code))
-        }
-
         HelperForm::Defun(loc, name, inline, args, body) => {
             if *inline {
+                // Note: this just replaces a dummy function inserted earlier.
+                // The real redefinition check is in dummy_functions.
                 Ok(compiler.add_inline(
                     name,
                     &InlineFunction {
@@ -778,8 +653,14 @@ fn codegen_(
                     )),
                 );
 
+                let mut unused_symbol_table = HashMap::new();
                 updated_opts
-                    .compile_program(allocator, runner.clone(), Rc::new(tocompile))
+                    .compile_program(
+                        allocator,
+                        runner.clone(),
+                        Rc::new(tocompile),
+                        &mut unused_symbol_table,
+                    )
                     .and_then(|code| {
                         if opts.optimize() {
                             run_optimizer(allocator, runner, Rc::new(code))
@@ -787,25 +668,25 @@ fn codegen_(
                             Ok(Rc::new(code))
                         }
                     })
+                    .and_then(|code| fail_if_present(loc.clone(), &compiler.inlines, name, code))
+                    .and_then(|code| fail_if_present(loc.clone(), &compiler.defuns, name, code))
                     .map(|code| {
                         compiler.add_defun(
                             name,
                             DefunCall {
                                 required_env: args.clone(),
-                                code: code,
+                                code,
                             },
                         )
                     })
             }
         }
+        _ => Ok(compiler.clone()),
     }
 }
 
 fn is_defun(b: &HelperForm) -> bool {
-    match b {
-        HelperForm::Defun(_, _, false, _, _) => true,
-        _ => false,
-    }
+    matches!(b, HelperForm::Defun(_, _, false, _, _))
 }
 
 pub fn empty_compiler(prim_map: Rc<HashMap<Vec<u8>, Rc<SExp>>>, l: Srcloc) -> PrimaryCodegen {
@@ -813,23 +694,25 @@ pub fn empty_compiler(prim_map: Rc<HashMap<Vec<u8>, Rc<SExp>>>, l: Srcloc) -> Pr
     let nil_rc = Rc::new(nil.clone());
 
     PrimaryCodegen {
-        prims: prim_map.clone(),
+        prims: prim_map,
         constants: HashMap::new(),
         inlines: HashMap::new(),
         macros: HashMap::new(),
         defuns: HashMap::new(),
         parentfns: HashSet::new(),
-        env: Rc::new(SExp::Cons(l.clone(), nil_rc.clone(), nil_rc.clone())),
+        env: Rc::new(SExp::Cons(l, nil_rc.clone(), nil_rc)),
         to_process: Vec::new(),
-        final_expr: Rc::new(BodyForm::Quoted(nil.clone())),
+        orig_help: Vec::new(),
+        final_expr: Rc::new(BodyForm::Quoted(nil)),
         final_code: None,
+        function_symbols: HashMap::new(),
     }
 }
 
 fn generate_let_defun(
-    compiler: &PrimaryCodegen,
+    _compiler: &PrimaryCodegen,
     l: Srcloc,
-    name: &Vec<u8>,
+    name: &[u8],
     args: Rc<SExp>,
     bindings: Vec<Rc<Binding>>,
     body: Rc<BodyForm>,
@@ -845,16 +728,10 @@ fn generate_let_defun(
         Rc::new(list_to_cons(l.clone(), &new_arguments)),
     );
 
-    HelperForm::Defun(
-        l.clone(),
-        name.clone(),
-        true,
-        Rc::new(inner_function_args),
-        body,
-    )
+    HelperForm::Defun(l, name.to_owned(), true, Rc::new(inner_function_args), body)
 }
 
-fn generate_let_args(l: Srcloc, blist: Vec<Rc<Binding>>) -> Vec<Rc<BodyForm>> {
+fn generate_let_args(_l: Srcloc, blist: Vec<Rc<Binding>>) -> Vec<Rc<BodyForm>> {
     blist.iter().map(|b| b.body.clone()).collect()
 }
 
@@ -865,19 +742,72 @@ fn hoist_body_let_binding(
     body: Rc<BodyForm>,
 ) -> (Vec<HelperForm>, Rc<BodyForm>) {
     match body.borrow() {
+        BodyForm::Let(l, LetFormKind::Sequential, bindings, body) => {
+            if bindings.is_empty() {
+                return (vec![], body.clone());
+            }
+
+            // If we're here, we're in the middle of hoisting.
+            // Simply slice one binding and do it again.
+            let new_sub_expr = if bindings.len() == 1 {
+                // There is one binding, so we just need to put body below
+                body.clone()
+            } else {
+                // Slice other bindings
+                let sub_bindings = bindings.iter().skip(1).cloned().collect();
+                Rc::new(BodyForm::Let(
+                    l.clone(),
+                    LetFormKind::Sequential,
+                    sub_bindings,
+                    body.clone(),
+                ))
+            };
+
+            hoist_body_let_binding(
+                compiler,
+                outer_context,
+                args,
+                Rc::new(BodyForm::Let(
+                    l.clone(),
+                    LetFormKind::Parallel,
+                    vec![bindings[0].clone()],
+                    new_sub_expr,
+                )),
+            )
+        }
         BodyForm::Let(l, LetFormKind::Parallel, bindings, body) => {
+            let mut out_defuns = Vec::new();
             let defun_name = gensym("letbinding".as_bytes().to_vec());
+
+            let mut revised_bindings = Vec::new();
+            for b in bindings.iter() {
+                let (mut new_helpers, new_binding) = hoist_body_let_binding(
+                    compiler,
+                    outer_context.clone(),
+                    args.clone(),
+                    b.body.clone(),
+                );
+                out_defuns.append(&mut new_helpers);
+                revised_bindings.push(Rc::new(Binding {
+                    loc: b.loc.clone(),
+                    name: b.name.clone(),
+                    body: new_binding,
+                }));
+            }
+
             let generated_defun = generate_let_defun(
                 compiler,
                 l.clone(),
                 &defun_name,
-                args.clone(),
-                bindings.to_vec(),
+                args,
+                revised_bindings.to_vec(),
                 body.clone(),
             );
-            let mut let_args = generate_let_args(l.clone(), bindings.to_vec());
+            out_defuns.push(generated_defun);
+
+            let mut let_args = generate_let_args(l.clone(), revised_bindings.to_vec());
             let pass_env = outer_context
-                .map(|x| create_let_env_expression(x))
+                .map(create_let_env_expression)
                 .unwrap_or_else(|| {
                     BodyForm::Call(
                         l.clone(),
@@ -894,13 +824,29 @@ fn hoist_body_let_binding(
                     )
                 });
 
-            let mut call_args = Vec::new();
-            call_args.push(Rc::new(BodyForm::Value(SExp::Atom(l.clone(), defun_name))));
-            call_args.push(Rc::new(pass_env.clone()));
+            let mut call_args = vec![
+                Rc::new(BodyForm::Value(SExp::Atom(l.clone(), defun_name))),
+                Rc::new(pass_env),
+            ];
             call_args.append(&mut let_args);
 
             let final_call = BodyForm::Call(l.clone(), call_args);
-            (vec![generated_defun], Rc::new(final_call.clone()))
+            (out_defuns, Rc::new(final_call))
+        }
+        BodyForm::Call(l, list) => {
+            let mut vres = Vec::new();
+            let mut new_call_list = vec![list[0].clone()];
+            for i in list.iter().skip(1) {
+                let (new_helper, new_arg) = hoist_body_let_binding(
+                    compiler,
+                    outer_context.clone(),
+                    args.clone(),
+                    i.clone(),
+                );
+                new_call_list.push(new_arg);
+                vres.append(&mut new_helper.clone());
+            }
+            (vres, Rc::new(BodyForm::Call(l.clone(), new_call_list)))
         }
         _ => (Vec::new(), body.clone()),
     }
@@ -908,16 +854,15 @@ fn hoist_body_let_binding(
 
 fn process_helper_let_bindings(
     compiler: &PrimaryCodegen,
-    helpers: &Vec<HelperForm>,
+    helpers: &[HelperForm],
 ) -> Vec<HelperForm> {
-    let mut subcompiler = compiler.clone();
-    let mut result = helpers.clone();
+    let mut result = helpers.to_owned();
     let mut i = 0;
 
     while i < result.len() {
         match result[i].clone() {
             HelperForm::Defun(l, name, inline, args, body) => {
-                let context = if (inline) { Some(args.clone()) } else { None };
+                let context = if inline { Some(args.clone()) } else { None };
                 let helper_result =
                     hoist_body_let_binding(compiler, context, args.clone(), body.clone());
                 let hoisted_helpers = helper_result.0;
@@ -928,12 +873,9 @@ fn process_helper_let_bindings(
 
                 i += 1;
 
-                for j in 0..hoisted_helpers.len() {
-                    result.insert(i + j, hoisted_helpers[j].clone());
+                for (j, hh) in hoisted_helpers.iter().enumerate() {
+                    result.insert(i + j, hh.clone());
                 }
-
-                subcompiler =
-                    compiler.set_env(combine_defun_env(compiler.env.clone(), args.clone()));
             }
             _ => {
                 i += 1;
@@ -941,39 +883,116 @@ fn process_helper_let_bindings(
         }
     }
 
-    return result;
+    result
 }
 
-fn start_codegen(opts: Rc<dyn CompilerOpts>, comp: CompileForm) -> PrimaryCodegen {
+fn start_codegen(
+    allocator: &mut Allocator,
+    runner: Rc<dyn TRunProgram>,
+    opts: Rc<dyn CompilerOpts>,
+    comp: CompileForm,
+) -> Result<PrimaryCodegen, CompileErr> {
     let mut use_compiler = match opts.compiler() {
         None => empty_compiler(opts.prim_map(), comp.loc.clone()),
         Some(c) => c,
     };
 
+    // Start compiler with all macros and constants
+    for h in comp.helpers.iter() {
+        use_compiler = match h.borrow() {
+            HelperForm::Defconstant(loc, name, body) => {
+                let expand_program = SExp::Cons(
+                    loc.clone(),
+                    Rc::new(SExp::Atom(loc.clone(), "mod".as_bytes().to_vec())),
+                    Rc::new(SExp::Cons(
+                        loc.clone(),
+                        Rc::new(SExp::Nil(loc.clone())),
+                        Rc::new(SExp::Cons(
+                            loc.clone(),
+                            Rc::new(primquote(loc.clone(), body.to_sexp())),
+                            Rc::new(SExp::Nil(loc.clone())),
+                        )),
+                    )),
+                );
+                let updated_opts = opts.set_compiler(use_compiler.clone());
+                let code = updated_opts.compile_program(
+                    allocator,
+                    runner.clone(),
+                    Rc::new(expand_program),
+                    &mut HashMap::new(),
+                )?;
+                run(
+                    allocator,
+                    runner.clone(),
+                    opts.prim_map(),
+                    Rc::new(code),
+                    Rc::new(SExp::Nil(loc.clone())),
+                )
+                .map_err(|r| CompileErr(loc.clone(), format!("Error evaluating constant: {}", r)))
+                .and_then(|res| fail_if_present(loc.clone(), &use_compiler.constants, name, res))
+                .map(|res| {
+                    let quoted = primquote(loc.clone(), res);
+                    use_compiler.add_constant(name, Rc::new(quoted))
+                })?
+            }
+            HelperForm::Defmacro(loc, name, _args, body) => {
+                let macro_program = Rc::new(SExp::Cons(
+                    loc.clone(),
+                    Rc::new(SExp::Atom(loc.clone(), "mod".as_bytes().to_vec())),
+                    body.to_sexp(),
+                ));
+
+                let updated_opts = opts
+                    .set_compiler(use_compiler.clone())
+                    .set_in_defun(false)
+                    .set_stdenv(false)
+                    .set_frontend_opt(false);
+
+                updated_opts
+                    .compile_program(
+                        allocator,
+                        runner.clone(),
+                        macro_program,
+                        &mut HashMap::new(),
+                    )
+                    .and_then(|code| {
+                        if opts.optimize() {
+                            run_optimizer(allocator, runner.clone(), Rc::new(code))
+                        } else {
+                            Ok(Rc::new(code))
+                        }
+                    })
+                    .map(|code| use_compiler.add_macro(name, code))?
+            }
+            _ => use_compiler,
+        };
+    }
+
     let hoisted_bindings = hoist_body_let_binding(&use_compiler, None, comp.args.clone(), comp.exp);
     let mut new_helpers = hoisted_bindings.0;
     let expr = hoisted_bindings.1;
     new_helpers.append(&mut comp.helpers.clone());
-    let let_helpers_with_expr = process_helper_let_bindings(&use_compiler.clone(), &new_helpers);
-    let live_helpers = let_helpers_with_expr
+    let let_helpers_with_expr = process_helper_let_bindings(&use_compiler, &new_helpers);
+    let live_helpers: Vec<HelperForm> = let_helpers_with_expr
         .iter()
         .filter(|x| is_defun(x))
-        .map(|x| x.clone())
+        .cloned()
         .collect();
 
     use_compiler.env = match opts.start_env() {
         Some(env) => env,
         None => Rc::new(compute_env_shape(
             comp.loc.clone(),
-            comp.args.clone(),
+            comp.args,
             &live_helpers,
         )),
     };
 
-    use_compiler.to_process = let_helpers_with_expr;
-    use_compiler.final_expr = expr.clone();
+    use_compiler.to_process = let_helpers_with_expr.clone();
+    use_compiler.orig_help = let_helpers_with_expr;
+    use_compiler.final_expr = expr;
 
-    use_compiler
+    Ok(use_compiler)
 }
 
 fn final_codegen(
@@ -1008,7 +1027,7 @@ fn finalize_env_(
     runner: Rc<dyn TRunProgram>,
     opts: Rc<dyn CompilerOpts>,
     c: &PrimaryCodegen,
-    l: Srcloc,
+    _l: Srcloc,
     env: Rc<SExp>,
 ) -> Result<Rc<SExp>, CompileErr> {
     match env.borrow() {
@@ -1026,10 +1045,10 @@ fn finalize_env_(
                             res,
                             &synthesize_args(res.args.clone()),
                         )
-                        .map(|x| x.1.clone()),
+                        .map(|x| x.1),
                         None => {
                             /* Parentfns are functions in progress in the parent */
-                            if !c.parentfns.get(v).is_none() {
+                            if c.parentfns.get(v).is_some() {
                                 Ok(Rc::new(SExp::Nil(l.clone())))
                             } else {
                                 Err(CompileErr(
@@ -1063,7 +1082,7 @@ fn finalize_env_(
                 l.clone(),
                 r.clone(),
             )
-            .map(|r| Rc::new(SExp::Cons(l.clone(), h.clone(), r.clone())))
+            .map(|r| Rc::new(SExp::Cons(l.clone(), h.clone(), r)))
         }),
 
         _ => Ok(env.clone()),
@@ -1090,21 +1109,26 @@ fn finalize_env(
 }
 
 fn dummy_functions(compiler: &PrimaryCodegen) -> Result<PrimaryCodegen, CompileErr> {
-    foldM(
+    fold_m(
         &|compiler: &PrimaryCodegen, form: &HelperForm| match form {
             HelperForm::Defun(_, name, false, _, _) => {
                 let mut c_copy = compiler.clone();
                 c_copy.parentfns.insert(name.clone());
-                return Ok(c_copy);
+                Ok(c_copy)
             }
-            HelperForm::Defun(_, name, true, args, body) => Ok(compiler.add_inline(
-                name,
-                &InlineFunction {
-                    name: name.clone(),
-                    args: args.clone(),
-                    body: body.clone(),
-                },
-            )),
+            HelperForm::Defun(loc, name, true, args, body) => Ok(compiler)
+                .and_then(|comp| fail_if_present(loc.clone(), &compiler.inlines, name, comp))
+                .and_then(|comp| fail_if_present(loc.clone(), &compiler.defuns, name, comp))
+                .map(|comp| {
+                    comp.add_inline(
+                        name,
+                        &InlineFunction {
+                            name: name.clone(),
+                            args: args.clone(),
+                            body: body.clone(),
+                        },
+                    )
+                }),
             _ => Ok(compiler.clone()),
         },
         compiler.clone(),
@@ -1117,13 +1141,22 @@ pub fn codegen(
     runner: Rc<dyn TRunProgram>,
     opts: Rc<dyn CompilerOpts>,
     cmod: &CompileForm,
+    symbol_table: &mut HashMap<String, String>,
 ) -> Result<SExp, CompileErr> {
-    let mut compiler = dummy_functions(&start_codegen(opts.clone(), cmod.clone()))?;
+    let mut compiler = dummy_functions(&start_codegen(
+        allocator,
+        runner.clone(),
+        opts.clone(),
+        cmod.clone(),
+    )?)?;
 
     let to_process = compiler.to_process.clone();
+
     for f in to_process {
         compiler = codegen_(allocator, runner.clone(), opts.clone(), &compiler, &f)?;
     }
+
+    *symbol_table = compiler.function_symbols.clone();
 
     final_codegen(allocator, runner.clone(), opts.clone(), &compiler).and_then(|c| {
         let final_env = finalize_env(allocator, runner.clone(), opts.clone(), &c)?;
@@ -1137,7 +1170,7 @@ pub fn codegen(
                     let final_code = primapply(
                         code.0.clone(),
                         Rc::new(primquote(code.0.clone(), code.1)),
-                        Rc::new(SExp::Integer(code.0.clone(), bi_one())),
+                        Rc::new(SExp::Integer(code.0, bi_one())),
                     );
 
                     Ok(final_code)
@@ -1148,7 +1181,7 @@ pub fn codegen(
                         Rc::new(primcons(
                             code.0.clone(),
                             Rc::new(primquote(code.0.clone(), final_env)),
-                            Rc::new(SExp::Integer(code.0.clone(), bi_one())),
+                            Rc::new(SExp::Integer(code.0, bi_one())),
                         )),
                     );
 

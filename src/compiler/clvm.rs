@@ -4,16 +4,15 @@ use std::rc::Rc;
 
 use clvm_rs::allocator;
 use clvm_rs::allocator::{Allocator, NodePtr};
-use clvm_rs::reduction::EvalErr;
 
-use num_bigint::{Sign, ToBigInt};
+use num_bigint::ToBigInt;
 
-use crate::classic::clvm::__type_compatibility__::{bi_one, bi_zero};
-use crate::classic::clvm_tools::stages::stage_0::{DefaultProgramRunner, TRunProgram};
+use crate::classic::clvm::__type_compatibility__::{bi_one, bi_zero, sha256, Bytes, BytesFromType};
+use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
 
 use crate::compiler::prims;
 use crate::compiler::runtypes::RunFailure;
-use crate::compiler::sexp::{decode_string, parse_sexp, SExp};
+use crate::compiler::sexp::{parse_sexp, SExp};
 use crate::compiler::srcloc::Srcloc;
 use crate::util::{number_from_u8, u8_from_number, Number};
 
@@ -31,6 +30,17 @@ pub enum RunStep {
     Step(Rc<SExp>, Rc<SExp>, Rc<RunStep>),
 }
 
+impl RunStep {
+    pub fn parent(&self) -> Option<Rc<RunStep>> {
+        match self {
+            RunStep::Done(_, _) => None,
+            RunStep::OpResult(_, _, p) => Some(p.clone()),
+            RunStep::Op(_, _, _, _, p) => Some(p.clone()),
+            RunStep::Step(_, _, p) => Some(p.clone()),
+        }
+    }
+}
+
 fn choose_path(
     l: Srcloc,
     orig: Number,
@@ -39,7 +49,7 @@ fn choose_path(
     context: Rc<SExp>,
 ) -> Result<Rc<SExp>, RunFailure> {
     if p == bi_one() {
-        Ok(context.clone())
+        Ok(context)
     } else {
         match context.borrow() {
             SExp::Cons(l, a, b) => {
@@ -60,7 +70,7 @@ fn choose_path(
 
             _ => Err(RunFailure::RunErr(
                 l,
-                format!("bad path {} in {}", orig, all.to_string()),
+                format!("bad path {} in {}", orig, all),
             )),
         }
     }
@@ -70,7 +80,7 @@ fn translate_head(
     allocator: &mut Allocator,
     runner: Rc<dyn TRunProgram>,
     prim_map: Rc<HashMap<Vec<u8>, Rc<SExp>>>,
-    l: Srcloc,
+    _l: Srcloc,
     sexp: Rc<SExp>,
     context: Rc<SExp>,
 ) -> Result<Rc<SExp>, RunFailure> {
@@ -85,7 +95,7 @@ fn translate_head(
             prim_map,
             l.clone(),
             Rc::new(SExp::Atom(l.clone(), v.clone())),
-            context.clone(),
+            context,
         ),
         SExp::Atom(l, v) => match prim_map.get(v) {
             None => translate_head(
@@ -94,7 +104,7 @@ fn translate_head(
                 prim_map,
                 l.clone(),
                 Rc::new(SExp::Integer(l.clone(), number_from_u8(v))),
-                context.clone(),
+                context,
             ),
             Some(v) => Ok(Rc::new(v.with_loc(l.clone()))),
         },
@@ -102,20 +112,20 @@ fn translate_head(
             None => Ok(sexp.clone()),
             Some(v) => Ok(Rc::new(v.with_loc(l.clone()))),
         },
-        SExp::Cons(l, a, nil) => match nil.borrow() {
-            SExp::Nil(l1) => run(allocator, runner, prim_map, sexp.clone(), context.clone()),
+        SExp::Cons(_l, _a, nil) => match nil.borrow() {
+            SExp::Nil(_l1) => run(allocator, runner, prim_map, sexp.clone(), context),
             _ => Err(RunFailure::RunErr(
                 sexp.loc(),
-                format!("Unexpected head form in clvm {}", sexp.to_string()),
+                format!("Unexpected head form in clvm {}", sexp),
             )),
         },
     }
 }
 
 fn eval_args(
-    allocator: &mut Allocator,
-    runner: Rc<dyn TRunProgram>,
-    prim_map: Rc<HashMap<Vec<u8>, Rc<SExp>>>,
+    _allocator: &mut Allocator,
+    _runner: Rc<dyn TRunProgram>,
+    _prim_map: Rc<HashMap<Vec<u8>, Rc<SExp>>>,
     head: Rc<SExp>,
     sexp_: Rc<SExp>,
     context_: Rc<SExp>,
@@ -126,27 +136,23 @@ fn eval_args(
 
     loop {
         match sexp.borrow() {
-            SExp::Nil(l) => {
+            SExp::Nil(_l) => {
                 return Ok(RunStep::Op(
                     head,
-                    context_.clone(),
+                    context_,
                     sexp.clone(),
                     Some(eval_list),
-                    parent.clone(),
+                    parent,
                 ));
             }
-            SExp::Cons(l, a, b) => {
+            SExp::Cons(_l, a, b) => {
                 eval_list.push(a.clone());
                 sexp = b.clone();
             }
             _ => {
                 return Err(RunFailure::RunErr(
                     sexp.loc(),
-                    format!(
-                        "bad argument list {} {}",
-                        sexp_.to_string(),
-                        context_.to_string()
-                    ),
+                    format!("bad argument list {} {}", sexp_, context_),
                 ));
             }
         }
@@ -159,37 +165,27 @@ pub fn convert_to_clvm_rs(
 ) -> Result<NodePtr, RunFailure> {
     match head.borrow() {
         SExp::Nil(_) => Ok(allocator.null()),
-        SExp::Atom(l, x) => allocator.new_atom(x).map_err(|e| {
-            RunFailure::RunErr(
-                head.loc(),
-                format!("failed to alloc atom {}", head.to_string()),
-            )
-        }),
-        SExp::QuotedString(_, _, x) => allocator.new_atom(x).map_err(|e| {
-            RunFailure::RunErr(
-                head.loc(),
-                format!("failed to alloc string {}", head.to_string()),
-            )
+        SExp::Atom(_l, x) => allocator
+            .new_atom(x)
+            .map_err(|_e| RunFailure::RunErr(head.loc(), format!("failed to alloc atom {}", head))),
+        SExp::QuotedString(_, _, x) => allocator.new_atom(x).map_err(|_e| {
+            RunFailure::RunErr(head.loc(), format!("failed to alloc string {}", head))
         }),
         SExp::Integer(_, i) => {
             if *i == bi_zero() {
                 Ok(allocator.null())
             } else {
-                allocator.new_atom(&u8_from_number(i.clone())).map_err(|e| {
-                    RunFailure::RunErr(
-                        head.loc(),
-                        format!("failed to alloc integer {}", head.to_string()),
-                    )
-                })
+                allocator
+                    .new_atom(&u8_from_number(i.clone()))
+                    .map_err(|_e| {
+                        RunFailure::RunErr(head.loc(), format!("failed to alloc integer {}", head))
+                    })
             }
         }
         SExp::Cons(_, a, b) => convert_to_clvm_rs(allocator, a.clone()).and_then(|head| {
             convert_to_clvm_rs(allocator, b.clone()).and_then(|tail| {
-                allocator.new_pair(head, tail).map_err(|e| {
-                    RunFailure::RunErr(
-                        a.loc(),
-                        format!("failed to alloc cons {}", head.to_string()),
-                    )
+                allocator.new_pair(head, tail).map_err(|_e| {
+                    RunFailure::RunErr(a.loc(), format!("failed to alloc cons {}", head))
                 })
             })
         }),
@@ -203,13 +199,18 @@ pub fn convert_from_clvm_rs(
 ) -> Result<Rc<SExp>, RunFailure> {
     match allocator.sexp(head) {
         allocator::SExp::Atom(h) => {
-            if h.len() == 0 {
+            if h.is_empty() {
                 Ok(Rc::new(SExp::Nil(loc)))
             } else {
-                Ok(Rc::new(SExp::Integer(
-                    loc,
-                    number_from_u8(allocator.buf(&h)),
-                )))
+                let atom_data = allocator.buf(&h);
+                let integer = number_from_u8(atom_data);
+                // Ensure that atom values that don't evaluate equal to integers
+                // are represented faithfully as atoms.
+                if u8_from_number(integer.clone()) == atom_data {
+                    Ok(Rc::new(SExp::Integer(loc, integer)))
+                } else {
+                    Ok(Rc::new(SExp::Atom(loc, atom_data.to_vec())))
+                }
             }
         }
         allocator::SExp::Pair(a, b) => {
@@ -249,9 +250,9 @@ fn apply_op(
         args.clone(),
     ));
     let application = Rc::new(SExp::Cons(
-        l.clone(),
+        l,
         head.clone(),
-        generate_argument_refs(5_i32.to_bigint().unwrap(), args.clone()),
+        generate_argument_refs(5_i32.to_bigint().unwrap(), args),
     ));
     let converted_app = convert_to_clvm_rs(allocator, application.clone())?;
     let converted_args = convert_to_clvm_rs(allocator, wrapped_args.clone())?;
@@ -261,12 +262,7 @@ fn apply_op(
         .map_err(|e| {
             RunFailure::RunErr(
                 head.loc(),
-                format!(
-                    "{} in {} {}",
-                    e.1,
-                    application.to_string(),
-                    wrapped_args.to_string()
-                ),
+                format!("{} in {} {}", e.1, application, wrapped_args),
             )
         })
         .and_then(|v| convert_from_clvm_rs(allocator, head.loc(), v.1))
@@ -280,7 +276,7 @@ fn atom_value(head: Rc<SExp>) -> Result<Number, RunFailure> {
         SExp::Atom(_, s) => Ok(number_from_u8(s)),
         SExp::Cons(l, _, _) => Err(RunFailure::RunErr(
             l.clone(),
-            format!("cons is not a number {}", head.to_string()),
+            format!("cons is not a number {}", head),
         )),
     }
 }
@@ -296,7 +292,7 @@ pub fn get_history_len(step: Rc<RunStep>) -> usize {
 
 pub fn truthy(sexp: Rc<SExp>) -> bool {
     // Fails for cons, but cons is truthy
-    atom_value(sexp.clone()).unwrap_or_else(|_| bi_one()) != bi_zero()
+    atom_value(sexp).unwrap_or_else(|_| bi_one()) != bi_zero()
 }
 
 pub fn combine(a: &RunStep, b: &RunStep) -> RunStep {
@@ -311,10 +307,12 @@ pub fn combine(a: &RunStep, b: &RunStep) -> RunStep {
                 parent.clone(),
             )
         }
-        (RunStep::Done(l, x), RunStep::Op(head, context, args, None, parent)) => {
+        (RunStep::Done(_l, _x), RunStep::Op(_head, _context, _args, None, parent)) => {
             combine(a, parent.borrow())
         }
-        (RunStep::Done(l, x), RunStep::Step(sexp, context, parent)) => combine(a, parent.borrow()),
+        (RunStep::Done(_l, _x), RunStep::Step(_sexp, _context, parent)) => {
+            combine(a, parent.borrow())
+        }
         _ => a.clone(),
     }
 }
@@ -322,7 +320,7 @@ pub fn combine(a: &RunStep, b: &RunStep) -> RunStep {
 pub fn flatten_signed_int(v: Number) -> Number {
     let mut sign_digits = v.to_signed_bytes_le();
     sign_digits.push(0);
-    return Number::from_signed_bytes_le(&sign_digits);
+    Number::from_signed_bytes_le(&sign_digits)
 }
 
 pub fn run_step(
@@ -338,7 +336,7 @@ pub fn run_step(
             let parent: &RunStep = p.borrow();
             return Ok(combine(&RunStep::Done(l.clone(), x.clone()), parent));
         }
-        RunStep::Done(l, x) => {}
+        RunStep::Done(_l, _x) => {}
         RunStep::Step(sexp, context, parent) => {
             match sexp.borrow() {
                 SExp::Integer(l, v) => {
@@ -396,8 +394,8 @@ pub fn run_step(
                         step = eval_args(
                             allocator,
                             runner.clone(),
-                            prim_map.clone(),
-                            head.clone(),
+                            prim_map,
+                            head,
                             b.clone(),
                             context.clone(),
                             parent.clone(),
@@ -411,7 +409,7 @@ pub fn run_step(
             match rest_mut.pop() {
                 Some(x) => {
                     step = RunStep::Step(
-                        x.clone(),
+                        x,
                         context.clone(),
                         Rc::new(RunStep::Op(
                             head.clone(),
@@ -433,7 +431,7 @@ pub fn run_step(
                 }
             }
         }
-        RunStep::Op(head, context, tail, None, parent) => {
+        RunStep::Op(head, _context, tail, None, parent) => {
             let aval = atom_value(head.clone())?;
             let apply_atom = 2_i32.to_bigint().unwrap();
             let if_atom = 3_i32.to_bigint().unwrap();
@@ -469,14 +467,14 @@ pub fn run_step(
                 None => {
                     return Err(RunFailure::RunErr(
                         tail.loc(),
-                        format!("Bad arguments given to cons {}", tail.to_string()),
+                        format!("Bad arguments given to cons {}", tail),
                     ));
                 }
                 Some(l) => {
                     if wanted_args != -1 && l.len() as i32 != wanted_args {
                         return Err(RunFailure::RunErr(
                             tail.loc(),
-                            format!("Wrong number of parameters to {}: {}", op, tail.to_string()),
+                            format!("Wrong number of parameters to {}: {}", op, tail),
                         ));
                     }
 
@@ -518,7 +516,7 @@ pub fn run_step(
                             _ => {
                                 return Err(RunFailure::RunErr(
                                     tail.loc(),
-                                    format!("Cons expected for {}, got {}", op, tail.to_string()),
+                                    format!("Cons expected for {}, got {}", op, tail),
                                 ));
                             }
                         }
@@ -554,7 +552,7 @@ pub fn run_step(
 pub fn start_step(sexp_: Rc<SExp>, context_: Rc<SExp>) -> RunStep {
     RunStep::Step(
         sexp_.clone(),
-        context_.clone(),
+        context_,
         Rc::new(RunStep::Done(sexp_.loc(), sexp_.clone())),
     )
 }
@@ -566,15 +564,12 @@ pub fn run(
     sexp_: Rc<SExp>,
     context_: Rc<SExp>,
 ) -> Result<Rc<SExp>, RunFailure> {
-    let mut step = start_step(sexp_.clone(), context_.clone());
+    let mut step = start_step(sexp_, context_);
 
     loop {
         step = run_step(allocator, runner.clone(), prim_map.clone(), &step)?;
-        match step {
-            RunStep::Done(_, x) => {
-                return Ok(x);
-            }
-            _ => {}
+        if let RunStep::Done(_, x) = step {
+            return Ok(x);
         }
     }
 }
@@ -582,20 +577,20 @@ pub fn run(
 pub fn parse_and_run(
     allocator: &mut Allocator,
     runner: Rc<dyn TRunProgram>,
-    file: &String,
-    content: &String,
-    args: &String,
+    file: &str,
+    content: &str,
+    args: &str,
 ) -> Result<Rc<SExp>, RunFailure> {
     let code =
         parse_sexp(Srcloc::start(file), content).map_err(|e| RunFailure::RunErr(e.0, e.1))?;
     let args = parse_sexp(Srcloc::start(file), args).map_err(|e| RunFailure::RunErr(e.0, e.1))?;
 
-    if code.len() == 0 {
+    if code.is_empty() {
         Err(RunFailure::RunErr(
             Srcloc::start(file),
             "no code".to_string(),
         ))
-    } else if args.len() == 0 {
+    } else if args.is_empty() {
         Err(RunFailure::RunErr(
             Srcloc::start(file),
             "no args".to_string(),
@@ -609,5 +604,35 @@ pub fn parse_and_run(
             code[0].clone(),
             args[0].clone(),
         )
+    }
+}
+
+fn sha256tree_from_atom(v: Vec<u8>) -> Vec<u8> {
+    sha256(
+        Bytes::new(Some(BytesFromType::Raw(vec![1])))
+            .concat(&Bytes::new(Some(BytesFromType::Raw(v)))),
+    )
+    .data()
+    .clone()
+}
+
+// sha256tree for modern style SExp
+pub fn sha256tree(s: Rc<SExp>) -> Vec<u8> {
+    match s.borrow() {
+        SExp::Cons(_l, a, b) => {
+            let t1 = sha256tree(a.clone());
+            let t2 = sha256tree(b.clone());
+            sha256(
+                Bytes::new(Some(BytesFromType::Raw(vec![2])))
+                    .concat(&Bytes::new(Some(BytesFromType::Raw(t1))))
+                    .concat(&Bytes::new(Some(BytesFromType::Raw(t2)))),
+            )
+            .data()
+            .clone()
+        }
+        SExp::Nil(_) => sha256tree_from_atom(vec![]),
+        SExp::Integer(_, i) => sha256tree_from_atom(u8_from_number(i.clone())),
+        SExp::QuotedString(_, _, v) => sha256tree_from_atom(v.clone()),
+        SExp::Atom(_, v) => sha256tree_from_atom(v.clone()),
     }
 }

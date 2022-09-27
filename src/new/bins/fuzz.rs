@@ -1,20 +1,18 @@
+use std::collections::HashMap;
 use std::rc::Rc;
 
-use clvm_rs::allocator::Allocator;
+use clvmr::allocator::Allocator;
 
 use clvm_tools_rs::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
 
 use clvm_tools_rs::compiler::prims;
-use clvm_tools_rs::compiler::srcloc::Srcloc;
 use clvm_tools_rs::compiler::clvm::run;
 use clvm_tools_rs::compiler::compiler::{ DefaultCompilerOpts, compile_file };
 
-use clvm_tools_rs::compiler::sexp::SExp;
 use clvm_tools_rs::compiler::fuzzer::FuzzProgram;
 use clvm_tools_rs::compiler::runtypes::RunFailure;
 
 use rand::random;
-use std::env;
 
 fn main() {
     let mut allocator = Allocator::new();
@@ -32,13 +30,14 @@ fn main() {
 
     prog.interpret(args.clone()).map(|res| {
         println!("interpreted: {}", res.to_string());
-    }).map_err(|e| println!("error interpreting: {:?}", e));
+    }).map_err(|e| println!("error interpreting: {:?}", e)).ok();
 
     compile_file(
         &mut allocator,
         runner.clone(),
         opts.clone(),
-        &prog.to_sexp().to_string()
+        &prog.to_sexp().to_string(),
+        &mut HashMap::new()
     ).map_err(|e| RunFailure::RunErr(e.0, e.1)).and_then(|compiled| {
         println!("compiled: {}", compiled.to_string());
 

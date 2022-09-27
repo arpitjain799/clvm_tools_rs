@@ -11,8 +11,12 @@ extern crate indoc;
 extern crate do_notation;
 
 #[macro_use]
-#[cfg(not(any(test, target_family = "wasm")))]
+#[cfg(all(not(test), not(target_family = "wasm"), feature = "extension-module"))]
 extern crate pyo3;
+
+extern crate tempfile;
+
+extern crate clvmr as clvm_rs;
 
 mod util;
 
@@ -20,7 +24,7 @@ pub mod classic;
 pub mod compiler;
 
 // Python impl
-#[cfg(not(any(test, target_family = "wasm")))]
+#[cfg(all(not(test), not(target_family = "wasm"), feature = "extension-module"))]
 mod py;
 
 #[cfg(test)]

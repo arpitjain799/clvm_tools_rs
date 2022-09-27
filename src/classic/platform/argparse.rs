@@ -12,14 +12,14 @@ use std::rc::Rc;
 use crate::classic::clvm::__type_compatibility__::Record;
 use crate::util::{index_of_match, skip_leading};
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Eq)]
 pub enum TArgOptionAction {
     Store,
     StoreTrue,
     Append,
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Eq)]
 pub enum NArgsSpec {
     KleeneStar,
     Plus,
@@ -36,13 +36,13 @@ pub enum ArgumentValue {
 }
 
 pub trait ArgumentValueConv {
-    fn convert(&self, s: &String) -> Result<ArgumentValue, String>;
+    fn convert(&self, s: &str) -> Result<ArgumentValue, String>;
 }
 
 struct EmptyConversion {}
 impl ArgumentValueConv for EmptyConversion {
-    fn convert(&self, s: &String) -> Result<ArgumentValue, String> {
-        return Ok(ArgumentValue::ArgString(None, s.to_string()));
+    fn convert(&self, s: &str) -> Result<ArgumentValue, String> {
+        Ok(ArgumentValue::ArgString(None, s.to_string()))
     }
 }
 
@@ -50,14 +50,14 @@ pub struct IntConversion {
     help_messager: Rc<dyn Fn() -> String>,
 }
 
-impl<'a> ArgumentValueConv for IntConversion {
-    fn convert(&self, v: &String) -> Result<ArgumentValue, String> {
+impl ArgumentValueConv for IntConversion {
+    fn convert(&self, v: &str) -> Result<ArgumentValue, String> {
         match v.parse::<i64>() {
-            Ok(n) => return Ok(ArgumentValue::ArgInt(n)),
+            Ok(n) => Ok(ArgumentValue::ArgInt(n)),
             _ => {
                 let m: &dyn Fn() -> String = self.help_messager.borrow();
                 let usage = m();
-                return Err(format!("{}\n\nError: Invalid parameter: {}", usage, v));
+                Err(format!("{}\n\nError: Invalid parameter: {}", usage, v))
             }
         }
     }
@@ -65,7 +65,7 @@ impl<'a> ArgumentValueConv for IntConversion {
 
 impl IntConversion {
     pub fn new(f: Rc<dyn Fn() -> String>) -> Self {
-        return IntConversion { help_messager: f };
+        IntConversion { help_messager: f }
     }
 }
 
@@ -82,39 +82,45 @@ pub struct Argument {
 
 impl Argument {
     pub fn new() -> Self {
-        return Argument {
+        Argument {
             action: TArgOptionAction::Store,
             typeofarg: Rc::new(EmptyConversion {}),
             default: None,
             help: "".to_string(),
             nargs: None,
-        };
+        }
     }
 
     pub fn set_action(self, a: TArgOptionAction) -> Self {
         let mut s = self;
         s.action = a;
-        return s;
+        s
     }
     pub fn set_type(self, t: Rc<dyn ArgumentValueConv>) -> Self {
         let mut s = self;
         s.typeofarg = t;
-        return s;
+        s
     }
     pub fn set_default(self, v: ArgumentValue) -> Self {
         let mut s = self;
         s.default = Some(v);
-        return s;
+        s
     }
     pub fn set_help(self, h: String) -> Self {
         let mut s = self;
         s.help = h;
-        return s;
+        s
     }
     pub fn set_n_args(self, n: NArgsSpec) -> Self {
         let mut s = self;
         s.nargs = Some(n);
-        return s;
+        s
+    }
+}
+
+impl Default for Argument {
+    fn default() -> Self {
+        Argument::new()
     }
 }
 
@@ -124,11 +130,12 @@ pub struct Arg {
     options: Argument,
 }
 
-pub fn is_optional(arg: &String) -> bool {
-    return arg.starts_with("-");
+pub fn is_optional(arg: &str) -> bool {
+    #[allow(clippy::single_char_pattern)]
+    arg.starts_with("-")
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TArgumentParserProps {
     pub description: String,
     pub prog: String,
@@ -137,7 +144,7 @@ pub struct TArgumentParserProps {
 #[derive(Debug, Clone)]
 pub struct ArgumentParser {
     prog: String,
-    desc: String,
+    // desc: String,
     positional_args: Vec<Arg>,
     optional_args: Vec<Arg>,
 }
@@ -145,8 +152,15 @@ pub struct ArgumentParser {
 impl ArgumentParser {
     pub fn new(props: Option<TArgumentParserProps>) -> ArgumentParser {
         let mut start = ArgumentParser {
-            prog: "prog".to_string(),
-            desc: "".to_string(),
+            prog: props
+                .as_ref()
+                .map(|x| x.prog.clone())
+                .unwrap_or_else(|| "prog".to_string()),
+            // FIXME: use desc
+            // desc: props
+            //    .as_ref()
+            //    .map(|x| x.description.clone())
+            //    .unwrap_or_else(|| "".to_string()),
             positional_args: vec![],
             optional_args: vec![],
         };
@@ -163,26 +177,26 @@ impl ArgumentParser {
             }
         }
 
-        return start;
+        start
     }
 
     pub fn add_argument(&mut self, arg_name: Vec<String>, options: Argument) {
         if arg_name.len() == 1 && !is_optional(&arg_name[0]) {
             self.positional_args.push(Arg {
                 names: arg_name,
-                options: options,
+                options,
             });
         } else {
             self.optional_args.push(Arg {
                 names: arg_name,
-                options: options,
+                options,
             });
         }
     }
 
     pub fn parse_args(
         &mut self,
-        args: &Vec<String>,
+        args: &[String],
     ) -> Result<HashMap<String, ArgumentValue>, String> {
         let normalized_args = self.normalize_args(args);
         let mut params: Record<String, ArgumentValue> = HashMap::new();
@@ -191,23 +205,22 @@ impl ArgumentParser {
         for optional_arg_k in &self.optional_args {
             let default_value = &optional_arg_k.options.default;
 
-            match default_value {
-                Some(dv) => match self.get_optional_arg_name(optional_arg_k) {
+            if let Some(dv) = default_value {
+                match self.get_optional_arg_name(optional_arg_k) {
                     Ok(name) => {
                         params.insert(name, dv.clone());
                     }
                     Err(e) => {
                         return Err(e);
                     }
-                },
-                _ => {}
+                }
             }
         }
 
         let mut input_positional_args: Vec<String> = vec![];
         let mut ioff = 0;
 
-        if normalized_args.len() > 0 {
+        if !normalized_args.is_empty() {
             for i in 0..normalized_args.len() {
                 if i + ioff >= normalized_args.len() {
                     break;
@@ -216,13 +229,13 @@ impl ArgumentParser {
                 let arg = &normalized_args[i + ioff];
 
                 // positional argument
-                if !is_optional(&arg) {
+                if !is_optional(arg) {
                     input_positional_args.push(arg.clone());
                     continue;
                 }
 
                 let optional_arg_idx = index_of_match(
-                    |a: &Arg| index_of_match(|a: &String| a == arg, &a.names) >= 0,
+                    |a: &Arg| index_of_match(|a: &String| arg.starts_with(a), &a.names) >= 0,
                     &self.optional_args,
                 );
 
@@ -232,16 +245,13 @@ impl ArgumentParser {
                 }
 
                 let optional_arg = &self.optional_args[optional_arg_idx as usize];
-                let name: String;
 
-                match self.get_optional_arg_name(&optional_arg) {
-                    Ok(n) => {
-                        name = n;
-                    }
+                let name = match self.get_optional_arg_name(optional_arg) {
+                    Ok(n) => n,
                     Err(e) => {
                         return Err(e);
                     }
-                }
+                };
 
                 if optional_arg.options.action == TArgOptionAction::StoreTrue {
                     params.insert(name, ArgumentValue::ArgBool(true));
@@ -253,25 +263,19 @@ impl ArgumentParser {
                 ioff += 1;
 
                 let value = &normalized_args[i + ioff];
-                if value == "" && optional_arg.options.default.is_none() {
+                if value.is_empty() && optional_arg.options.default.is_none() {
                     let usage = self.compile_help_messages();
                     return Err(format!("{}\n\nError: {} requires a value", usage, name));
                 }
                 if optional_arg.options.action == TArgOptionAction::Store {
-                    match converter.convert(&value) {
-                        Ok(c) => {
-                            params.insert(name, c);
-                        }
-                        _ => match &optional_arg.options.default {
-                            Some(v) => {
-                                params.insert(name, v.clone());
-                            }
-                            _ => {}
-                        },
+                    if let Ok(c) = converter.convert(value) {
+                        params.insert(name, c);
+                    } else if let Some(v) = &optional_arg.options.default {
+                        params.insert(name, v.clone());
                     }
                 } else if optional_arg.options.action == TArgOptionAction::Append {
                     match params.get(&name) {
-                        Some(ArgumentValue::ArgArray(l)) => match converter.convert(&value) {
+                        Some(ArgumentValue::ArgArray(l)) => match converter.convert(value) {
                             Ok(v) => {
                                 let mut lcopy = l.clone();
                                 lcopy.push(v);
@@ -286,17 +290,13 @@ impl ArgumentParser {
                                 None => {}
                             },
                         },
-                        _ => match converter.convert(&value) {
-                            Ok(v) => {
+                        _ => {
+                            if let Ok(v) = converter.convert(value) {
                                 params.insert(name, ArgumentValue::ArgArray(vec![v]));
+                            } else if let Some(v) = &optional_arg.options.default {
+                                params.insert(name, ArgumentValue::ArgArray(vec![v.clone()]));
                             }
-                            _ => match &optional_arg.options.default {
-                                Some(v) => {
-                                    params.insert(name, ArgumentValue::ArgArray(vec![v.clone()]));
-                                }
-                                None => {}
-                            },
-                        },
+                        }
                     }
                 } else {
                     let usage = self.compile_help_messages();
@@ -311,7 +311,7 @@ impl ArgumentParser {
         let mut i = 0;
         for positional_arg_k in &self.positional_args {
             let empty_string = "".to_string();
-            let mut input_arg = if i < input_positional_args.len() {
+            let input_arg = if i < input_positional_args.len() {
                 &input_positional_args[i]
             } else {
                 &empty_string
@@ -322,13 +322,12 @@ impl ArgumentParser {
             let converter = self.get_converter(Some(positional_arg_k.options.typeofarg.clone()));
 
             match nargs {
-                None => match converter.convert(&input_arg) {
-                    Ok(v) => {
+                None => {
+                    if let Ok(v) = converter.convert(input_arg) {
                         params.insert(name.to_string(), v);
                         i += 1;
                     }
-                    _ => {}
-                },
+                }
                 Some(NArgsSpec::Definite(nargs)) => {
                     for _j in 0..nargs - 1 {
                         if i >= input_positional_args.len() {
@@ -340,59 +339,27 @@ impl ArgumentParser {
                         }
 
                         let input_arg = &input_positional_args[i];
-                        match params.get(name) {
-                            Some(ArgumentValue::ArgArray(l)) => {
-                                match converter.convert(&input_arg) {
-                                    Ok(v) => {
-                                        let mut lcopy = l.clone();
-                                        lcopy.push(v);
-                                        params.insert(
-                                            name.to_string(),
-                                            ArgumentValue::ArgArray(lcopy),
-                                        );
-                                    }
-                                    _ => {}
-                                }
+                        if let Some(ArgumentValue::ArgArray(l)) = params.get(name) {
+                            if let Ok(v) = converter.convert(input_arg) {
+                                let mut lcopy = l.clone();
+                                lcopy.push(v);
+                                params.insert(name.to_string(), ArgumentValue::ArgArray(lcopy));
                             }
-                            _ => match converter.convert(&input_arg) {
-                                Ok(v) => {
-                                    params
-                                        .insert(name.to_string(), ArgumentValue::ArgArray(vec![v]));
-                                }
-                                _ => {}
-                            },
+                        } else if let Ok(v) = converter.convert(input_arg) {
+                            params.insert(name.to_string(), ArgumentValue::ArgArray(vec![v]));
                         }
                         i += 1;
                     }
                 }
                 Some(NArgsSpec::Optional) => {
                     if i >= input_positional_args.len() {
-                        match &positional_arg_k.options.default {
-                            None => match converter.convert(&"".to_string()) {
-                                Ok(v) => {
-                                    params.insert(name.to_string(), v);
-                                }
-                                _ => {}
-                            },
-                            Some(_) => match converter.convert(&"".to_string()) {
-                                Ok(v) => {
-                                    params.insert(name.to_string(), v);
-                                }
-                                _ => {}
-                            },
+                        if let Ok(v) = converter.convert("") {
+                            params.insert(name.to_string(), v);
                         }
-
-                        i += 1;
-                    } else {
-                        match converter.convert(&input_arg) {
-                            Ok(v) => {
-                                params.insert(name.to_string(), v);
-                            }
-                            _ => {}
-                        }
-
-                        i += 1;
+                    } else if let Ok(v) = converter.convert(input_arg) {
+                        params.insert(name.to_string(), v);
                     }
+                    i += 1;
                 }
 
                 _ => {
@@ -411,44 +378,27 @@ impl ArgumentParser {
                         continue;
                     }
 
-                    for i in 0..input_positional_args.len() {
-                        input_arg = &input_positional_args[i];
-                        match params.get(name) {
-                            Some(ArgumentValue::ArgArray(l)) => {
-                                match converter.convert(&input_arg) {
-                                    Ok(v) => {
-                                        let mut lcopy = l.clone();
-                                        lcopy.push(v);
-                                        params.insert(
-                                            name.to_string(),
-                                            ArgumentValue::ArgArray(lcopy),
-                                        );
-                                    }
-                                    _ => {}
-                                }
+                    for input_arg in input_positional_args.iter() {
+                        if let Some(ArgumentValue::ArgArray(l)) = params.get(name) {
+                            if let Ok(v) = converter.convert(input_arg) {
+                                let mut lcopy = l.clone();
+                                lcopy.push(v);
+                                params.insert(name.to_string(), ArgumentValue::ArgArray(lcopy));
                             }
-                            _ => match converter.convert(&input_arg) {
-                                Ok(v) => {
-                                    params
-                                        .insert(name.to_string(), ArgumentValue::ArgArray(vec![v]));
-                                }
-                                _ => {}
-                            },
+                        } else if let Ok(v) = converter.convert(input_arg) {
+                            params.insert(name.to_string(), ArgumentValue::ArgArray(vec![v]));
                         }
                     }
                 }
             }
         }
 
-        match params.get(&"help".to_string()) {
-            Some(_) => {
-                let usage = self.compile_help_messages();
-                return Err(usage);
-            }
-            _ => {}
+        if params.get(&"help".to_string()).is_some() {
+            let usage = self.compile_help_messages();
+            return Err(usage);
         }
 
-        return Ok(params);
+        Ok(params)
     }
 
     pub fn compile_help_messages(&self) -> String {
@@ -459,12 +409,12 @@ impl ArgumentParser {
                 _ => "".to_string(),
             };
 
-            if a.options.help != "" {
+            if !a.options.help.is_empty() {
                 msg += &("  ".to_string() + &a.options.help);
                 msg = msg.replace("%(prog)", &self.prog);
                 msg = msg.replace("%(default)", &default_value);
             }
-            return msg;
+            msg
         };
 
         let mut arg_conversions = vec![];
@@ -479,14 +429,14 @@ impl ArgumentParser {
             arg_conversions.join(" ")
         )];
 
-        if self.positional_args.len() > 0 {
+        if !self.positional_args.is_empty() {
             messages.push("".to_string());
             messages.push("positional arguments:".to_string());
             for a in &self.positional_args {
                 messages.push(iterator(&a.clone()));
             }
         }
-        if self.optional_args.len() > 0 {
+        if !self.optional_args.is_empty() {
             messages.push("".to_string());
             messages.push("optional arguments:".to_string());
             for a in &self.optional_args {
@@ -494,7 +444,7 @@ impl ArgumentParser {
             }
         }
 
-        return messages.join("\n");
+        messages.join("\n")
     }
 
     /**
@@ -505,8 +455,8 @@ impl ArgumentParser {
      *   "-xxxxx" => ["-x", "xxxx"]
      * @param args - arguments passed
      */
-    pub fn normalize_args(&self, args: &Vec<String>) -> Vec<String> {
-        if self.optional_args.len() < 1 {
+    pub fn normalize_args(&self, args: &[String]) -> Vec<String> {
+        if self.optional_args.is_empty() {
             return args.to_vec();
         }
 
@@ -516,7 +466,7 @@ impl ArgumentParser {
             let mut optional_arg_without_space_found = false;
 
             // Only short form args like '-x' are targets.
-            if arg.starts_with("-") && !arg.starts_with("--") {
+            if arg.starts_with("--") {
                 norm.push(arg.to_string());
                 continue;
             }
@@ -524,10 +474,10 @@ impl ArgumentParser {
             for k in 0..self.optional_args.len() - 1 {
                 let index = index_of_match(
                     |n: &String| {
-                        return n.starts_with(&"-".to_string())
+                        n.starts_with(&"-".to_string())
                             && !n.starts_with(&"--".to_string())
                             && n != arg
-                            && arg.starts_with(n);
+                            && arg.starts_with(n)
                     },
                     &self.optional_args[k].names,
                 );
@@ -554,30 +504,33 @@ impl ArgumentParser {
             }
         }
 
-        return norm;
+        norm
     }
 
     pub fn get_optional_arg_name(&self, arg: &Arg) -> Result<String, String> {
         let names = &arg.names;
 
-        let double_hyphen_arg_index = index_of_match(|n: &String| n.starts_with("--"), &names);
+        let double_hyphen_arg_index = index_of_match(|n: &String| n.starts_with("--"), names);
 
         if double_hyphen_arg_index > -1 {
             let name = &names[double_hyphen_arg_index as usize];
-            let first_non_dash = skip_leading(&name, "-").replace("-", "_");
+            #[allow(clippy::single_char_pattern)]
+            let first_non_dash = skip_leading(name, "-").replace("-", "_");
             return Ok(first_non_dash);
         }
 
+        #[allow(clippy::single_char_pattern)]
         let single_hyphen_arg_index = index_of_match(
             |n: &String| n.starts_with("-") && !n.starts_with("--"),
-            &names,
+            names,
         );
         if single_hyphen_arg_index > -1 {
             let name = &names[single_hyphen_arg_index as usize];
-            let first_non_dash = skip_leading(&name, "-").replace("-", "_");
+            #[allow(clippy::single_char_pattern)]
+            let first_non_dash = skip_leading(name, "-").replace("-", "_");
             return Ok(first_non_dash);
         }
-        return Err("Invalid argument name".to_string());
+        Err("Invalid argument name".to_string())
     }
 
     fn get_converter(
@@ -585,8 +538,8 @@ impl ArgumentParser {
         typeofarg: Option<Rc<dyn ArgumentValueConv>>,
     ) -> Rc<dyn ArgumentValueConv> {
         match typeofarg {
-            None => return Rc::new(EmptyConversion {}),
-            Some(ty) => return ty,
+            None => Rc::new(EmptyConversion {}),
+            Some(ty) => ty,
         }
     }
 }
