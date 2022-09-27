@@ -17,6 +17,8 @@ use crate::compiler::prims::prims;
 use crate::compiler::srcloc::Srcloc;
 use crate::util::{number_from_u8, u8_from_number, Number};
 
+pub const MAX_SEXP_COST: usize = 15;
+
 // Compiler view of SExp
 #[derive(Clone, Debug)]
 pub enum SExp {
@@ -27,23 +29,34 @@ pub enum SExp {
     Atom(Srcloc, Vec<u8>),
 }
 
-const MAX_DEPTH : u8 = 2;
-
-fn random_sexp<R: Rng + ?Sized>(rng: &mut R, depth: u8) -> SExp {
-    let selection = rng.gen_range(0..=1);
-    if selection == 0 || depth >= MAX_DEPTH {
+pub fn random_sexp<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> SExp {
+    if remaining < 2 {
         SExp::random_atom()
     } else {
-        let a: SExp = random_sexp(rng, depth + 1);
-        let b: SExp = random_sexp(rng, depth + 1);
-        SExp::Cons(Srcloc::start(&"*rng*".to_string()), Rc::new(a), Rc::new(b))
+        let loc = || Srcloc::start("*rng*");
+        let alternative: usize = rng.gen_range(0..=2);
+        match alternative {
+            0 => { // list
+                let length = rng.gen_range(1..=remaining);
+                let costs = vec![remaining / length; length];
+                enlist(loc(), costs.iter().map(|c| Rc::new(random_sexp(rng, *c))).collect())
+            },
+            1 => { // cons
+                let left_cost = rng.gen_range(1..=remaining);
+                let right_cost = remaining - left_cost;
+                SExp::Cons(loc(), Rc::new(random_sexp(rng, left_cost)), Rc::new(random_sexp(rng, right_cost)))
+            },
+            _ => { // atom
+                SExp::random_atom()
+            }
+        }
     }
 }
 
 // Thanks: https://stackoverflow.com/questions/48490049/how-do-i-choose-a-random-value-from-an-enum
 impl Distribution<SExp> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> SExp {
-        random_sexp(rng, 0)
+        random_sexp(rng, MAX_SEXP_COST)
     }
 }
 
