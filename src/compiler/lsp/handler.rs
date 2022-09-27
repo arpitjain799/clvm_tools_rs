@@ -50,7 +50,7 @@ impl LSPServiceProvider {
         );
         if let Some(defs) = self.goto_defs.get(&docname) {
             for kv in defs.iter() {
-                if is_real_include(&kv.1) && kv.0.loc.overlap(&wantloc) {
+                if is_real_include(kv.1) && kv.0.loc.overlap(&wantloc) {
                     let filename: &String = kv.1.file.borrow();
                     goto_response = Some(Location {
                         uri: Url::parse(filename).unwrap(),
