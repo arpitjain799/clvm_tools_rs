@@ -141,7 +141,14 @@ fn can_receive_did_open_file_and_give_semantic_tokens() {
         vec![
             SemanticToken {
                 delta_line: 0,
-                delta_start: 9,
+                delta_start: 1,
+                length: 3,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 8,
                 length: 5,
                 token_type: TK_KEYWORD_IDX,
                 token_modifiers_bitset: 0,

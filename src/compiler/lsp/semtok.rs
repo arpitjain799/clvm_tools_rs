@@ -7,7 +7,7 @@ use lsp_server::{Message, RequestId, Response};
 use lsp_types::{SemanticToken, SemanticTokens, SemanticTokensParams};
 
 use crate::compiler::comptypes::{BodyForm, CompileForm, HelperForm, LetFormKind};
-use crate::compiler::lsp::parse::IncludeData;
+use crate::compiler::lsp::parse::ParsedDoc;
 use crate::compiler::lsp::types::{DocPosition, DocRange, LSPServiceProvider};
 use crate::compiler::lsp::{
     TK_COMMENT_IDX, TK_DEFINITION_BIT, TK_FUNCTION_IDX, TK_KEYWORD_IDX, TK_MACRO_IDX,
@@ -245,20 +245,18 @@ pub fn do_semantic_tokens(
     lines: &[Rc<Vec<u8>>],
     comments: &HashMap<usize, usize>,
     goto_def: &mut BTreeMap<SemanticTokenSortable, Srcloc>,
-    mod_kw: &Option<Srcloc>,
-    includes: &HashMap<Vec<u8>, IncludeData>,
-    frontend: &CompileForm,
+    parsed: &ParsedDoc,
 ) -> Response {
     let mut collected_tokens = Vec::new();
     let mut varcollection = HashMap::new();
-    if let Some(modloc) = mod_kw {
+    if let Some(modloc) = &parsed.mod_kw {
         collected_tokens.push(SemanticTokenSortable {
             loc: modloc.clone(),
             token_type: TK_KEYWORD_IDX,
             token_mod: 0,
         });
     }
-    for (_, incl) in includes.iter() {
+    for (_, incl) in parsed.includes.iter() {
         collected_tokens.push(SemanticTokenSortable {
             loc: incl.kw.clone(),
             token_type: TK_KEYWORD_IDX,
@@ -270,7 +268,7 @@ pub fn do_semantic_tokens(
             token_mod: 0,
         });
     }
-    for form in frontend.helpers.iter() {
+    for form in parsed.compiled.helpers.iter() {
         match form {
             HelperForm::Defconstant(defc) => {
                 if let Some(kw) = &defc.kw {
@@ -291,7 +289,7 @@ pub fn do_semantic_tokens(
                     goto_def,
                     &HashMap::new(),
                     &varcollection,
-                    frontend,
+                    &parsed.compiled,
                     defc.body.clone(),
                 );
             }
@@ -319,7 +317,7 @@ pub fn do_semantic_tokens(
                     goto_def,
                     &argcollection,
                     &varcollection,
-                    frontend,
+                    &parsed.compiled,
                     defun.body.clone(),
                 );
             }
@@ -343,7 +341,7 @@ pub fn do_semantic_tokens(
                     goto_def,
                     &argcollection,
                     &varcollection,
-                    frontend,
+                    &parsed.compiled,
                     mac.program.exp.clone(),
                 );
             }
@@ -354,15 +352,15 @@ pub fn do_semantic_tokens(
     collect_arg_tokens(
         &mut collected_tokens,
         &mut argcollection,
-        frontend.args.clone(),
+        parsed.compiled.args.clone(),
     );
     process_body_code(
         &mut collected_tokens,
         goto_def,
         &argcollection,
         &varcollection,
-        frontend,
-        frontend.exp.clone(),
+        &parsed.compiled,
+        parsed.compiled.exp.clone(),
     );
 
     for (l, c) in comments.iter() {
@@ -439,9 +437,7 @@ impl LSPSemtokRequestHandler for LSPServiceProvider {
                 &doc.text,
                 &doc.comments,
                 &mut our_goto_defs,
-                &frontend.mod_kw,
-                &frontend.includes,
-                &frontend.compiled,
+                &frontend,
             );
             self.goto_defs.insert(uristring.clone(), our_goto_defs);
             res.push(Message::Response(resp));
