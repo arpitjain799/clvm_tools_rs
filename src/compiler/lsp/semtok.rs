@@ -7,6 +7,7 @@ use lsp_server::{Message, RequestId, Response};
 use lsp_types::{SemanticToken, SemanticTokens, SemanticTokensParams};
 
 use crate::compiler::comptypes::{BodyForm, CompileForm, HelperForm, LetFormKind};
+use crate::compiler::lsp::parse::IncludeData;
 use crate::compiler::lsp::types::{DocPosition, DocRange, LSPServiceProvider};
 use crate::compiler::lsp::{
     TK_COMMENT_IDX, TK_DEFINITION_BIT, TK_FUNCTION_IDX, TK_KEYWORD_IDX, TK_MACRO_IDX,
@@ -237,10 +238,23 @@ pub fn do_semantic_tokens(
     lines: &[Rc<Vec<u8>>],
     comments: &HashMap<usize, usize>,
     goto_def: &mut BTreeMap<SemanticTokenSortable, Srcloc>,
+    includes: &HashMap<Vec<u8>, IncludeData>,
     frontend: &CompileForm,
 ) -> Response {
     let mut collected_tokens = Vec::new();
     let mut varcollection = HashMap::new();
+    for (_, incl) in includes.iter() {
+        collected_tokens.push(SemanticTokenSortable {
+            loc: incl.kw.clone(),
+            token_type: TK_KEYWORD_IDX,
+            token_mod: 0,
+        });
+        collected_tokens.push(SemanticTokenSortable {
+            loc: incl.nl.clone(),
+            token_type: TK_STRING_IDX,
+            token_mod: 0,
+        });
+    }
     for form in frontend.helpers.iter() {
         match form {
             HelperForm::Defconstant(defc) => {
@@ -410,6 +424,7 @@ impl LSPSemtokRequestHandler for LSPServiceProvider {
                 &doc.text,
                 &doc.comments,
                 &mut our_goto_defs,
+                &frontend.includes,
                 &frontend.compiled,
             );
             self.goto_defs.insert(uristring.clone(), our_goto_defs);

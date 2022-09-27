@@ -30,12 +30,20 @@ pub struct ParseScope {
 }
 
 #[derive(Debug, Clone)]
+pub struct IncludeData {
+    pub loc: Srcloc,
+    pub nl: Srcloc,
+    pub kw: Srcloc,
+    pub filename: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
 pub struct ParsedDoc {
     pub compiled: CompileForm,
     pub scopes: ParseScope,
     pub helpers: HashMap<Vec<u8>, ReparsedHelper>,
     pub exp: Option<ReparsedExp>,
-    pub includes: HashMap<Vec<u8>, Vec<u8>>,
+    pub includes: HashMap<Vec<u8>, IncludeData>,
     pub hash_to_name: HashMap<Vec<u8>, Vec<u8>>,
     pub errors: Vec<CompileErr>,
 }

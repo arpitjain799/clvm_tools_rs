@@ -6,7 +6,9 @@ use crate::compiler::clvm::sha256tree_from_atom;
 use crate::compiler::comptypes::{BodyForm, CompileErr, CompileForm, CompilerOpts, HelperForm};
 use crate::compiler::frontend::{compile_bodyform, compile_helperform};
 use crate::compiler::lsp::completion::PRIM_NAMES;
-use crate::compiler::lsp::parse::{grab_scope_doc_range, recover_scopes, ParseScope, ParsedDoc};
+use crate::compiler::lsp::parse::{
+    grab_scope_doc_range, recover_scopes, IncludeData, ParseScope, ParsedDoc,
+};
 use crate::compiler::lsp::types::{DocPosition, DocRange};
 use crate::compiler::sexp::{parse_sexp, SExp};
 use crate::compiler::srcloc::Srcloc;
@@ -32,22 +34,27 @@ pub struct ReparsedModule {
     pub helpers: HashMap<Vec<u8>, ReparsedHelper>,
     pub exp: Option<ReparsedExp>,
     pub unparsed: HashSet<Vec<u8>>,
-    pub includes: HashMap<Vec<u8>, Vec<u8>>,
+    pub includes: HashMap<Vec<u8>, IncludeData>,
     pub errors: Vec<CompileErr>,
 }
 
 pub fn parse_include(
     _opts: Rc<dyn CompilerOpts>, // Needed to resolve new files when we do that.
     sexp: Rc<SExp>,
-) -> Option<Vec<u8>> {
+) -> Option<IncludeData> {
     sexp.proper_list().and_then(|l| {
         if l.len() != 2 {
             return None;
         }
 
-        if let (SExp::Atom(_, incl), SExp::Atom(_, fname)) = (l[0].borrow(), l[1].borrow()) {
+        if let (SExp::Atom(kl, incl), SExp::Atom(nl, fname)) = (l[0].borrow(), l[1].borrow()) {
             if incl == b"include" {
-                return Some(fname.clone());
+                return Some(IncludeData {
+                    loc: sexp.loc(),
+                    kw: kl.clone(),
+                    nl: nl.clone(),
+                    filename: fname.clone(),
+                });
             }
         }
 
