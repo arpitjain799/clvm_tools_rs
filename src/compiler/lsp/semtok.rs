@@ -97,7 +97,7 @@ fn process_body_code(
                 collected_tokens.push(SemanticTokenSortable {
                     loc: kw.clone(),
                     token_type: TK_KEYWORD_IDX,
-                    token_mod: 0
+                    token_mod: 0,
                 });
             }
             for b in letdata.bindings.iter() {

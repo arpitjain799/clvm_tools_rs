@@ -24,6 +24,11 @@ pub trait LSPServiceMessageHandler {
     fn handle_message_from_string(&mut self, msg: String) -> Result<Vec<Message>, String>;
 }
 
+fn is_real_include(l: &Srcloc) -> bool {
+    let borrowed_file: &String = l.file.borrow();
+    !borrowed_file.starts_with('*')
+}
+
 impl LSPServiceProvider {
     fn goto_definition(
         &mut self,
@@ -45,7 +50,7 @@ impl LSPServiceProvider {
         );
         if let Some(defs) = self.goto_defs.get(&docname) {
             for kv in defs.iter() {
-                if kv.0.loc.overlap(&wantloc) {
+                if is_real_include(&kv.1) && kv.0.loc.overlap(&wantloc) {
                     let filename: &String = kv.1.file.borrow();
                     goto_response = Some(Location {
                         uri: Url::parse(filename).unwrap(),
