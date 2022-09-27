@@ -245,11 +245,19 @@ pub fn do_semantic_tokens(
     lines: &[Rc<Vec<u8>>],
     comments: &HashMap<usize, usize>,
     goto_def: &mut BTreeMap<SemanticTokenSortable, Srcloc>,
+    mod_kw: &Option<Srcloc>,
     includes: &HashMap<Vec<u8>, IncludeData>,
     frontend: &CompileForm,
 ) -> Response {
     let mut collected_tokens = Vec::new();
     let mut varcollection = HashMap::new();
+    if let Some(modloc) = mod_kw {
+        collected_tokens.push(SemanticTokenSortable {
+            loc: modloc.clone(),
+            token_type: TK_KEYWORD_IDX,
+            token_mod: 0,
+        });
+    }
     for (_, incl) in includes.iter() {
         collected_tokens.push(SemanticTokenSortable {
             loc: incl.kw.clone(),
@@ -431,6 +439,7 @@ impl LSPSemtokRequestHandler for LSPServiceProvider {
                 &doc.text,
                 &doc.comments,
                 &mut our_goto_defs,
+                &frontend.mod_kw,
                 &frontend.includes,
                 &frontend.compiled,
             );

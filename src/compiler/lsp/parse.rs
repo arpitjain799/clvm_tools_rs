@@ -39,6 +39,7 @@ pub struct IncludeData {
 
 #[derive(Debug, Clone)]
 pub struct ParsedDoc {
+    pub mod_kw: Option<Srcloc>,
     pub compiled: CompileForm,
     pub scopes: ParseScope,
     pub helpers: HashMap<Vec<u8>, ReparsedHelper>,
@@ -52,6 +53,7 @@ impl ParsedDoc {
     pub fn new(startloc: Srcloc) -> Self {
         let nil = SExp::Nil(startloc.clone());
         ParsedDoc {
+            mod_kw: None,
             includes: HashMap::new(),
             scopes: ParseScope {
                 region: startloc.clone(),

@@ -30,6 +30,7 @@ pub struct ReparsedExp {
 }
 
 pub struct ReparsedModule {
+    pub mod_kw: Option<Srcloc>,
     pub args: Rc<SExp>,
     pub helpers: HashMap<Vec<u8>, ReparsedHelper>,
     pub exp: Option<ReparsedExp>,
@@ -71,6 +72,7 @@ pub fn reparse_subset(
     prev_helpers: &HashMap<Vec<u8>, ReparsedHelper>,
 ) -> ReparsedModule {
     let mut result = ReparsedModule {
+        mod_kw: None,
         args: compiled.args.clone(),
         helpers: HashMap::new(),
         exp: None,
@@ -119,9 +121,10 @@ pub fn reparse_subset(
     {
         let mut form_error_start = 0;
         if !prefix_parse.is_empty() {
-            if let SExp::Atom(_, m) = prefix_parse[0].borrow() {
+            if let SExp::Atom(l, m) = prefix_parse[0].borrow() {
                 have_mod = m == b"mod";
                 form_error_start = 2;
+                result.mod_kw = Some(l.clone());
             }
             if have_mod && prefix_parse.len() == 2 {
                 took_args = true;
@@ -408,6 +411,7 @@ pub fn combine_new_with_old_parse(
     }
 
     ParsedDoc {
+        mod_kw: reparse.mod_kw.clone(),
         compiled: compile_with_dead_helpers_removed,
         errors: out_errors,
         scopes,
