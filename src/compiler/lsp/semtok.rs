@@ -179,6 +179,13 @@ fn process_body_code(
                 token_mod: 0,
             });
         }
+        BodyForm::Value(SExp::QuotedString(l, _, _)) => {
+            collected_tokens.push(SemanticTokenSortable {
+                loc: l.clone(),
+                token_type: TK_STRING_IDX,
+                token_mod: 0,
+            });
+        }
         BodyForm::Call(_, args) => {
             if args.is_empty() {
                 return;
