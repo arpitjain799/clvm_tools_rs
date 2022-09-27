@@ -189,14 +189,14 @@ fn process_body_code(
                 for f in frontend.helpers.iter() {
                     match f {
                         HelperForm::Defun(_inline, defun) => {
+                            let st = SemanticTokenSortable {
+                                loc: l.clone(),
+                                token_type: TK_FUNCTION_IDX,
+                                token_mod: 0,
+                            };
+                            collected_tokens.push(st.clone());
                             if &defun.name == a {
-                                let st = SemanticTokenSortable {
-                                    loc: l.clone(),
-                                    token_type: TK_FUNCTION_IDX,
-                                    token_mod: 0,
-                                };
-                                gotodef.insert(st.clone(), defun.nl.clone());
-                                collected_tokens.push(st);
+                                gotodef.insert(st, defun.nl.clone());
                                 break;
                             }
                         }
