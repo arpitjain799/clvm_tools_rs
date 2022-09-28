@@ -6,6 +6,7 @@ use crate::compiler::lsp::{
     LSPServiceMessageHandler, LSPServiceProvider, TK_DEFINITION_BIT, TK_FUNCTION_IDX,
     TK_KEYWORD_IDX,
 };
+use crate::compiler::lsp::parse::IncludeData;
 
 use lsp_server::{Message, Notification, Request, RequestId};
 use lsp_types::{
@@ -642,7 +643,7 @@ fn test_reparse_subset_1() {
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
     let combined = run_reparse_steps(
         loc,
-        opts.clone(),
+        opts,
         &file,
         &["(mod X (defun F (X) (+ X 1)) (F X))".to_string()],
     );
@@ -659,7 +660,7 @@ fn test_reparse_subset_2() {
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
     let combined = run_reparse_steps(
         loc,
-        opts.clone(),
+        opts,
         &file,
         &["(mod X (defun F (X) (+ X 1)) X)".to_string()],
     );
@@ -676,7 +677,7 @@ fn test_reparse_subset_3() {
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
     let combined2 = run_reparse_steps(
         loc,
-        opts.clone(),
+        opts,
         &file,
         &[
             "(mod X (defun F (X) (+ X 1)) X)".to_string(),
@@ -696,7 +697,7 @@ fn test_reparse_subset_4() {
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
     let combined = run_reparse_steps(
         loc,
-        opts.clone(),
+        opts,
         &file,
         &["(mod X (include test.clib) (defun F (X) (+ X 1)) X)".to_string()],
     );
@@ -712,7 +713,7 @@ fn test_warn_call_of_undefined_function() {
     let file = "file:///test.cl".to_string();
     let loc = Srcloc::start(&file);
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
-    let combined = run_reparse_steps(loc, opts.clone(), &file, &["(mod X (F 3))".to_string()]);
+    let combined = run_reparse_steps(loc, opts, &file, &["(mod X (F 3))".to_string()]);
     assert_eq!(!combined.errors.is_empty(), true);
 }
 
@@ -723,7 +724,7 @@ fn test_mod_ends_in_defun_error() {
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
     let combined = run_reparse_steps(
         loc,
-        opts.clone(),
+        opts,
         &file,
         &["(mod X (defun F (X) (+ X 1)))".to_string()],
     );
@@ -737,7 +738,7 @@ fn test_list_ends_in_defun_no_error() {
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
     let combined = run_reparse_steps(
         loc,
-        opts.clone(),
+        opts,
         &file,
         &["( (defun F (X) (+ X 1)) )".to_string()],
     );
@@ -751,7 +752,7 @@ fn test_mod_can_cease_reporting_wrong_function_error() {
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
     let combined = run_reparse_steps(
         loc,
-        opts.clone(),
+        opts,
         &file,
         &[
             "(mod X (defun F (X) (+ X 1)))".to_string(),
@@ -761,3 +762,72 @@ fn test_mod_can_cease_reporting_wrong_function_error() {
     );
     assert_eq!(combined.errors.len(), 0);
 }
+
+#[test]
+fn include_is_annotated() {
+    let file = "file:///test.cl".to_string();
+    let loc = Srcloc::start(&file);
+    let opts = Rc::new(DefaultCompilerOpts::new(&file));
+    let combined = run_reparse_steps(
+        loc,
+        opts,
+        &file,
+        &[
+            indoc!{"
+(mod X
+  (include hithere) ()
+  )"}.to_string()
+        ],
+    );
+    let includes_flat: Vec<IncludeData> =
+        combined.includes.iter().map(|(_,v)| v.clone()).collect();
+    assert_eq!(includes_flat[0].kw.line, 2);
+    assert_eq!(includes_flat[0].kw.col, 4);
+    assert_eq!(includes_flat[0].nl.line, 2);
+    assert_eq!(includes_flat[0].nl.col, 12);
+}
+
+#[test]
+fn basic_functions_are_annotated() {
+    let mut lsp = LSPServiceProvider::new(
+        Rc::new(FSFileReader::new()),
+        Rc::new(EPrintWriter::new()),
+        true,
+    );
+    let file = "file:test.cl".to_string();
+    let open_msg = make_did_open_message(&file, 1, "((defun F () (x)))".to_string());
+    let sem_tok = make_get_semantic_tokens_msg(&file, 2);
+    lsp.handle_message(&open_msg)
+        .expect("should be ok to take open msg");
+    let r2 = lsp
+        .handle_message(&sem_tok)
+        .expect("should be ok to send sem tok");
+    let decoded_tokens: SemanticTokens = serde_json::from_str(&get_msg_params(&r2[0])).unwrap();
+    assert_eq!(
+        decoded_tokens.data,
+        vec![
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 2,
+                length: 5,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 6,
+                length: 1,
+                token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 1,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 6,
+                length: 1,
+                token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 0,
+            },
+        ]
+    );
+}
+
