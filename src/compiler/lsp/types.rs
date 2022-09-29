@@ -494,9 +494,9 @@ impl LSPServiceProvider {
 
     pub fn get_workspace_root(&self) -> Option<PathBuf> {
         if let Some(InitState::Initialized(init)) = &self.init {
-            init.root_uri.as_ref().and_then(|uri| {
-                uri.to_file_path().ok()
-            })
+            init.root_uri
+                .as_ref()
+                .and_then(|uri| uri.to_file_path().ok())
         } else {
             None
         }
