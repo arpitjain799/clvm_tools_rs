@@ -1,7 +1,7 @@
 import {readFileSync} from 'fs';
 import {argv} from 'process';
 import {bytestring, run_program} from './stepper';
-import {compile, compose_run_function} from './build/clvm_tools_rs.js';
+import {compile, compose_run_function} from 'clvm_tools_rs';
 
 var fact_hex = readFileSync('./tests/fact.clvm.hex').toString('utf8');
 var fact_sym_txt = readFileSync('./tests/fact.sym').toString('utf8');

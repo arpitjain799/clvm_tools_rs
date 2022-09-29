@@ -79,6 +79,7 @@ process.stdin.on('data', function(chunk) {
     }
 });
 
+clvm_tools_rs.then((clvm_tools_rs) => {
 let lsp_id = clvm_tools_rs.create_lsp_service(function(name) {
     try {
         return fs.readFileSync(name, 'utf8');
@@ -113,3 +114,4 @@ stdin_reader.deliver_msg = function(m) {
         }
     }
 };
+});

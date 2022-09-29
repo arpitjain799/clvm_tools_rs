@@ -1,4 +1,4 @@
-import * as clvm_tools_rs from './build/clvm_tools_rs.js';
+import * as clvm_tools_rs from 'clvm_tools_rs';
 import {hexlify, unhexlify} from 'binascii';
 
 export function bytestring(s) {
