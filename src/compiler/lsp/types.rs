@@ -422,9 +422,10 @@ impl LSPServiceProvider {
                     &self.config.include_paths,
                     &decode_string(&incfile.filename),
                 ) {
-                    if let Some(file_uri) = self.get_workspace_root().and_then(|r| {
-                        r.join(filename).to_str().map(|f| f.to_owned())
-                    }) {
+                    if let Some(file_uri) = self
+                        .get_workspace_root()
+                        .and_then(|r| r.join(filename).to_str().map(|f| f.to_owned()))
+                    {
                         self.save_doc(file_uri.clone(), file_body);
                         self.ensure_parsed_document(&file_uri);
                         if let Some(p) = self.get_parsed(&file_uri) {
@@ -494,7 +495,7 @@ impl LSPServiceProvider {
     pub fn get_workspace_root(&self) -> Option<PathBuf> {
         if let Some(InitState::Initialized(init)) = &self.init {
             init.root_uri.as_ref().and_then(|uri| {
-                return uri.to_file_path().ok();
+                uri.to_file_path().ok()
             })
         } else {
             None
