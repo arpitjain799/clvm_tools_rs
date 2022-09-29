@@ -4,7 +4,7 @@ use std::cmp::{Ordering, PartialOrd};
 use std::collections::{BTreeMap, HashMap};
 use std::default::Default;
 use std::mem::swap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use lsp_server::{ExtractError, Message, Notification, Request, RequestId};
@@ -422,12 +422,15 @@ impl LSPServiceProvider {
                     &self.config.include_paths,
                     &decode_string(&incfile.filename),
                 ) {
-                    let file_uri = format!("file://{}", filename);
-                    self.save_doc(file_uri.clone(), file_body);
-                    self.ensure_parsed_document(&file_uri);
-                    if let Some(p) = self.get_parsed(&file_uri) {
-                        for (hash, helper) in p.helpers.iter() {
-                            new_helpers.helpers.insert(hash.clone(), helper.clone());
+                    if let Some(file_uri) = self.get_workspace_root().and_then(|r| {
+                        r.join(filename).to_str().map(|f| f.to_owned())
+                    }) {
+                        self.save_doc(file_uri.clone(), file_body);
+                        self.ensure_parsed_document(&file_uri);
+                        if let Some(p) = self.get_parsed(&file_uri) {
+                            for (hash, helper) in p.helpers.iter() {
+                                new_helpers.helpers.insert(hash.clone(), helper.clone());
+                            }
                         }
                     }
                 }
@@ -488,16 +491,10 @@ impl LSPServiceProvider {
         }
     }
 
-    pub fn get_workspace_root(&self) -> Option<String> {
+    pub fn get_workspace_root(&self) -> Option<PathBuf> {
         if let Some(InitState::Initialized(init)) = &self.init {
             init.root_uri.as_ref().and_then(|uri| {
-                let us = uri.to_string();
-                if us.starts_with("file://") {
-                    let truncated_name: Vec<u8> = us.as_bytes().iter().skip(7).copied().collect();
-                    return Some(decode_string(&truncated_name));
-                }
-
-                None
+                return uri.to_file_path().ok();
             })
         } else {
             None
