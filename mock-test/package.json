@@ -1,5 +1,8 @@
 {
   "name": "clvm_tools_rs_mock_test",
+  "scripts": {
+    "build": "node_modules/.bin/webpack"
+  },
   "dependencies": {
     "binascii": "^0.0.2",
     "browserify": "^17.0.0",
