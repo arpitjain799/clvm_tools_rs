@@ -4,8 +4,9 @@ use std::rc::Rc;
 
 use lsp_types::{
     request::Completion, request::GotoDefinition, request::Initialize,
-    request::SemanticTokensFullRequest, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
-    GotoDefinitionParams, GotoDefinitionResponse, Location, Position, Range, Url,
+    request::SemanticTokensFullRequest, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
+    DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, Location, Position,
+    Range, Url,
 };
 
 use lsp_server::{ErrorCode, Message, RequestId, Response};
@@ -80,6 +81,28 @@ impl LSPServiceProvider {
 
         Ok(res)
     }
+
+    fn reconfigure(&mut self) -> Option<ConfigJson> {
+        self.get_config_path()
+            .and_then(|config_path| self.fs.read(&config_path).ok())
+            .and_then(|config_data| serde_json::from_str(&decode_string(&config_data)).ok())
+            .map(|config: ConfigJson| {
+                let mut result = config.clone();
+                result.include_paths.clear();
+
+                for p in config.include_paths.iter() {
+                    if p.starts_with('.') {
+                        if let Some(path_str) = self.get_relative_path(p) {
+                            result.include_paths.push(path_str.to_owned());
+                        }
+                    } else if let Some(ps) = Path::new(p).to_str() {
+                        result.include_paths.push(ps.to_owned());
+                    }
+                }
+
+                result
+            })
+    }
 }
 
 impl LSPServiceMessageHandler for LSPServiceProvider {
@@ -91,29 +114,7 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                     if let Ok((_, params)) = cast::<Initialize>(req.clone()) {
                         self.init = Some(InitState::Initialized(Rc::new(params)));
                         // Try to read the config data
-                        if let Some(config) = self
-                            .get_config_path()
-                            .and_then(|config_path| self.fs.read(&config_path).ok())
-                            .and_then(|config_data| {
-                                serde_json::from_str(&decode_string(&config_data)).ok()
-                            })
-                            .map(|config: ConfigJson| {
-                                let mut result = config.clone();
-                                result.include_paths.clear();
-
-                                for p in config.include_paths.iter() {
-                                    if p.starts_with('.') {
-                                        if let Some(path_str) = self.get_relative_path(p) {
-                                            result.include_paths.push(path_str.to_owned());
-                                        }
-                                    } else if let Some(ps) = Path::new(p).to_str() {
-                                        result.include_paths.push(ps.to_owned());
-                                    }
-                                }
-
-                                result
-                            })
-                        {
+                        if let Some(config) = self.reconfigure() {
                             // We have a config file and can read the filesystem.
                             self.config = config;
                         }
@@ -179,12 +180,40 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                     } else {
                         eprintln!("cast failed in didOpen");
                     }
+                } else if not.method == "workspace/didChangeWatchedFiles" {
+                    let stringified_params = serde_json::to_string(&not.params).unwrap();
+                    if let Ok(params) =
+                        serde_json::from_str::<DidChangeWatchedFilesParams>(&stringified_params)
+                    {
+                        for change in params.changes.iter() {
+                            let doc_id = change.uri.to_string();
+
+                            if doc_id.ends_with("chialisp.json") {
+                                if let Some(config) = self.reconfigure() {
+                                    // We have a config file and can read the filesystem.
+                                    eprintln!("reconfigured");
+                                    self.config = config;
+                                    self.parsed_documents.clear();
+                                    self.goto_defs.clear();
+                                }
+                            }
+                        }
+                    }
                 } else if not.method == "textDocument/didChange" {
                     let stringified_params = serde_json::to_string(&not.params).unwrap();
                     if let Ok(params) =
                         serde_json::from_str::<DidChangeTextDocumentParams>(&stringified_params)
                     {
                         let doc_id = params.text_document.uri.to_string();
+
+                        if doc_id.ends_with("chialisp.json") {
+                            if let Some(config) = self.reconfigure() {
+                                // We have a config file and can read the filesystem.
+                                eprintln!("reconfigured");
+                                self.config = config;
+                            }
+                        }
+
                         self.apply_document_patch(
                             &doc_id,
                             params.text_document.version,
