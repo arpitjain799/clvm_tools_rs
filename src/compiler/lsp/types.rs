@@ -13,11 +13,12 @@ use lsp_types::{
     CompletionOptions, Diagnostic, InitializeParams, OneOf, Position, PublishDiagnosticsParams,
     Range, SemanticTokenModifier, SemanticTokenType, SemanticTokensFullOptions,
     SemanticTokensLegend, SemanticTokensOptions, SemanticTokensServerCapabilities,
-    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
-    WorkDoneProgressOptions,
+    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, WorkDoneProgressOptions,
 };
 
+use percent_encoding::percent_decode;
 use serde::{Deserialize, Serialize};
+use url::{Host, Url};
 
 use crate::compiler::lsp::compopts::{get_file_content, LSPCompilerOpts};
 use crate::compiler::lsp::parse::{make_simple_ranges, ParsedDoc};
@@ -63,6 +64,64 @@ pub const TK_OPERATOR_IDX: u32 = 8;
 pub const TK_DEFINITION_BIT: u32 = 0;
 pub const TK_READONLY_BIT: u32 = 1;
 pub const TK_DOCUMENTATION_BIT: u32 = 2;
+
+pub struct ToFilePathErr;
+
+// Note: to_file_path is only present on native builds, but we're building to
+// wasm.
+//
+// The code isn't ungeneric, so we'll express it here.
+pub trait HasFilePath {
+    fn our_to_file_path(&self) -> Result<PathBuf, ToFilePathErr>;
+}
+
+fn file_url_segments_to_pathbuf(
+    host: Option<Vec<u8>>,
+    segments: std::str::Split<'_, char>,
+) -> Result<PathBuf, ToFilePathErr> {
+    if host.is_some() {
+        return Err(ToFilePathErr);
+    }
+
+    let mut bytes = Vec::new();
+
+    for segment in segments {
+        bytes.push(b'/');
+        bytes.extend(percent_decode(segment.as_bytes()));
+    }
+
+    // A windows drive letter must end with a slash.
+    if bytes.len() > 2
+        && matches!(bytes[bytes.len() - 2], b'a'..=b'z' | b'A'..=b'Z')
+        && matches!(bytes[bytes.len() - 1], b':' | b'|')
+    {
+        bytes.push(b'/');
+    }
+
+    let path = PathBuf::from(decode_string(&bytes));
+
+    debug_assert!(
+        path.is_absolute(),
+        "to_file_path() failed to produce an absolute Path"
+    );
+
+    Ok(path)
+}
+
+impl HasFilePath for Url {
+    fn our_to_file_path(&self) -> Result<PathBuf, ToFilePathErr> {
+        if let Some(segments) = self.path_segments() {
+            let host = match self.host() {
+                None | Some(Host::Domain("localhost")) => None,
+                Some(h) if self.scheme() == "file" => Some(h.to_string().as_bytes().to_owned()),
+                _ => return Err(ToFilePathErr),
+            };
+
+            return file_url_segments_to_pathbuf(host, segments);
+        }
+        Err(ToFilePathErr)
+    }
+}
 
 pub trait IFileReader {
     fn read(&self, name: &str) -> Result<Vec<u8>, String>;
@@ -496,7 +555,8 @@ impl LSPServiceProvider {
         if let Some(InitState::Initialized(init)) = &self.init {
             init.root_uri
                 .as_ref()
-                .and_then(|uri| uri.to_file_path().ok())
+                .and_then(|uri| Url::parse(uri.as_str()).ok())
+                .and_then(|uri| uri.our_to_file_path().ok())
         } else {
             None
         }
