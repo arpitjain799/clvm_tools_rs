@@ -2,11 +2,11 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::compiler::lsp::parse::IncludeData;
 use crate::compiler::lsp::{
     LSPServiceMessageHandler, LSPServiceProvider, TK_DEFINITION_BIT, TK_FUNCTION_IDX,
     TK_KEYWORD_IDX,
 };
-use crate::compiler::lsp::parse::IncludeData;
 
 use lsp_server::{Message, Notification, Request, RequestId};
 use lsp_types::{
@@ -736,12 +736,7 @@ fn test_list_ends_in_defun_no_error() {
     let file = "file:///test.cl".to_string();
     let loc = Srcloc::start(&file);
     let opts = Rc::new(DefaultCompilerOpts::new(&file));
-    let combined = run_reparse_steps(
-        loc,
-        opts,
-        &file,
-        &["( (defun F (X) (+ X 1)) )".to_string()],
-    );
+    let combined = run_reparse_steps(loc, opts, &file, &["( (defun F (X) (+ X 1)) )".to_string()]);
     assert_eq!(combined.errors.is_empty(), true);
 }
 
@@ -772,15 +767,14 @@ fn include_is_annotated() {
         loc,
         opts,
         &file,
-        &[
-            indoc!{"
+        &[indoc! {"
 (mod X
   (include hithere) ()
-  )"}.to_string()
-        ],
+  )"}
+        .to_string()],
     );
     let includes_flat: Vec<IncludeData> =
-        combined.includes.iter().map(|(_,v)| v.clone()).collect();
+        combined.includes.iter().map(|(_, v)| v.clone()).collect();
     assert_eq!(includes_flat[0].kw.line, 2);
     assert_eq!(includes_flat[0].kw.col, 4);
     assert_eq!(includes_flat[0].nl.line, 2);
@@ -830,4 +824,3 @@ fn basic_functions_are_annotated() {
         ]
     );
 }
-
