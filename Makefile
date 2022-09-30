@@ -1,5 +1,5 @@
 all:
-	cargo build --release
+	cargo build --release --no-default-features
 	cargo build --release --target wasm32-unknown-unknown
 	wasm-pack build
 	npm link ./pkg
