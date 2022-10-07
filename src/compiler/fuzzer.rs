@@ -5,9 +5,13 @@ use rand::prelude::Distribution;
 use rand::Rng;
 use rand::random;
 use std::borrow::Borrow;
+use std::cell::RefCell;
+use std::mem::swap;
 use std::rc::Rc;
 
+use crate::classic::clvm::__type_compatibility__::{bi_one, bi_zero};
 use crate::compiler::clvm::truthy;
+use crate::compiler::codegen::create_name_lookup_;
 use crate::compiler::sexp::{SExp, enlist, random_sexp};
 use crate::compiler::srcloc::Srcloc;
 use crate::compiler::runtypes::RunFailure;
@@ -21,8 +25,16 @@ use crate::classic::clvm::casts::{
     TConvertOption,
     bigint_to_bytes
 };
+use crate::util::Number;
 
-const MAX_LIST_BOUND: usize = 15;
+const MAX_STEPS: usize = 1000;
+const MAX_OPS: usize = 50000;
+const MAX_LIST_BOUND: usize = 3;
+
+thread_local! {
+    pub static SEXP_REGISTRY: RefCell<Vec<Rc<SExp>>> = RefCell::new(Vec::new());
+    pub static OP_REGISTRY: RefCell<Vec<Rc<FuzzOperation>>> = RefCell::new(Vec::new());
+}
 
 // We don't actually need all operators here, just a good selection with
 // semantics that are distinguishable.
@@ -57,6 +69,38 @@ pub struct FuzzProgram {
     pub args: ArgListType,
     pub functions: Vec<FuzzFunction>,
     pub body: FuzzOperation,
+}
+
+fn register_op(op: FuzzOperation) -> Rc<FuzzOperation> {
+    let rc = Rc::new(op);
+    OP_REGISTRY.with(|r_cell| {
+        r_cell.replace_with(|v| {
+            if v.len() > MAX_OPS {
+                panic!("too many ops");
+            }
+            let mut work = Vec::new();
+            swap(&mut work, v);
+            work.push(rc.clone());
+            work
+        });
+    });
+    rc
+}
+
+fn register_sexp(sexp: SExp) -> Rc<SExp> {
+    let rc = Rc::new(sexp);
+    SEXP_REGISTRY.with(|r_cell| {
+        r_cell.replace_with(|v| {
+            if v.len() > MAX_OPS {
+                panic!("too many ops");
+            }
+            let mut work = Vec::new();
+            swap(&mut work, v);
+            work.push(rc.clone());
+            work
+        });
+    });
+    rc
 }
 
 fn atom_list(sexp: &SExp) -> Vec<String> {
@@ -115,15 +159,15 @@ fn make_operator(op: String, args: Vec<SExp>) -> SExp {
         let i = args.len() - i_reverse - 1;
         result = SExp::Cons(
             loc.clone(),
-            Rc::new(args[i].clone()),
-            Rc::new(result)
+            register_sexp(args[i].clone()),
+            register_sexp(result)
         );
     }
 
     SExp::Cons(
         loc.clone(),
-        Rc::new(SExp::atom_from_string(loc.clone(), &op)),
-        Rc::new(result)
+        register_sexp(SExp::atom_from_string(loc.clone(), &op)),
+        register_sexp(result)
     )
 }
 
@@ -145,8 +189,8 @@ fn distribute_args(a: ArgListType, fun: &FuzzProgram, bindings: &Vec<Vec<FuzzOpe
                 rest_result.0,
                 SExp::Cons(
                     loc.clone(),
-                    Rc::new(arginputs[argn as usize].clone()),
-                    Rc::new(rest_result.1)
+                    register_sexp(arginputs[argn as usize].clone()),
+                    register_sexp(rest_result.1)
                 )
             )
         },
@@ -174,7 +218,7 @@ fn distribute_args(a: ArgListType, fun: &FuzzProgram, bindings: &Vec<Vec<FuzzOpe
                 );
             let res =
                 if spine {
-                    SExp::Cons(l.clone(), Rc::new(first_res.1), Rc::new(rest_res.1))
+                    SExp::Cons(l.clone(), register_sexp(first_res.1), register_sexp(rest_res.1))
                 } else {
                     make_operator(
                         "c".to_string(), vec!(first_res.1, rest_res.1)
@@ -199,7 +243,7 @@ fn random_args(loc: Srcloc, a: ArgListType) -> SExp {
         ArgListType::ProperList(0) => SExp::Nil(loc.clone()),
         ArgListType::ProperList(n) => {
             let loc = Srcloc::start("*rng*");
-            enlist(loc, (0..n).map(|_| Rc::new(random())).collect())
+            enlist(loc, (0..n).map(|_| register_sexp(random())).collect())
         },
         ArgListType::Structure(SExp::Nil(l)) => SExp::Nil(l.clone()),
         ArgListType::Structure(SExp::Cons(_,a,b)) => {
@@ -207,8 +251,8 @@ fn random_args(loc: Srcloc, a: ArgListType) -> SExp {
             let borrowed_b: &SExp = b.borrow();
             SExp::Cons(
                 loc.clone(),
-                Rc::new(random_args(loc.clone(), ArgListType::Structure(borrowed_a.clone()))),
-                Rc::new(random_args(loc.clone(), ArgListType::Structure(borrowed_b.clone())))
+                register_sexp(random_args(loc.clone(), ArgListType::Structure(borrowed_a.clone()))),
+                register_sexp(random_args(loc.clone(), ArgListType::Structure(borrowed_b.clone())))
             )
         },
         ArgListType::Structure(_) => {
@@ -231,8 +275,8 @@ impl FuzzOperation {
             FuzzOperation::Quote(s) => {
                 SExp::Cons(
                     loc.clone(),
-                    Rc::new(SExp::atom_from_string(loc.clone(), &"q".to_string())),
-                    Rc::new(s.clone())
+                    register_sexp(SExp::atom_from_string(loc.clone(), &"q".to_string())),
+                    register_sexp(s.clone())
                 )
             },
             FuzzOperation::If(cond,ct,cf) => make_operator(
@@ -274,16 +318,16 @@ impl FuzzOperation {
                     bindings_done =
                         SExp::Cons(
                             loc.clone(),
-                            Rc::new(SExp::Cons(
+                            register_sexp(SExp::Cons(
                                 loc.clone(),
-                                Rc::new(SExp::atom_from_string(loc.clone(), &binding_name)),
-                                Rc::new(SExp::Cons(
+                                register_sexp(SExp::atom_from_string(loc.clone(), &binding_name)),
+                                register_sexp(SExp::Cons(
                                     loc.clone(),
-                                    Rc::new(b.to_sexp(fun, bindings)),
-                                    Rc::new(SExp::Nil(loc.clone()))
+                                    register_sexp(b.to_sexp(fun, bindings)),
+                                    register_sexp(SExp::Nil(loc.clone()))
                                 ))
                             )),
-                            Rc::new(bindings_done)
+                            register_sexp(bindings_done)
                         );
                 }
 
@@ -319,8 +363,8 @@ impl FuzzOperation {
                     );
                 SExp::Cons(
                     loc.clone(),
-                    Rc::new(SExp::atom_from_string(loc.clone(), &called_fun.0)),
-                    Rc::new(args.1)
+                    register_sexp(SExp::atom_from_string(loc.clone(), &called_fun.0)),
+                    register_sexp(args.1)
                 )
             }
         }
@@ -346,17 +390,17 @@ fn random_operation<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> FuzzOpera
         match alternative {
             0 => FuzzOperation::Argref(rng.gen()),
             1 => FuzzOperation::If(
-                Rc::new(random_operation(rng, remaining - 1)),
-                Rc::new(random_operation(rng, remaining - 1)),
-                Rc::new(random_operation(rng, remaining - 1))
+                register_op(random_operation(rng, remaining - 1)),
+                register_op(random_operation(rng, remaining - 1)),
+                register_op(random_operation(rng, remaining - 1))
             ),
             2 => FuzzOperation::Multiply(
-                Rc::new(random_operation(rng, remaining - 1)),
-                Rc::new(random_operation(rng, remaining - 1))
+                register_op(random_operation(rng, remaining - 1)),
+                register_op(random_operation(rng, remaining - 1))
             ),
             3 => FuzzOperation::Sub(
-                Rc::new(random_operation(rng, remaining - 1)),
-                Rc::new(random_operation(rng, remaining - 1))
+                register_op(random_operation(rng, remaining - 1)),
+                register_op(random_operation(rng, remaining - 1))
             ),
             4 => {
                 let bound: usize = rng.gen_range(0..=MAX_LIST_BOUND);
@@ -376,7 +420,7 @@ fn random_operation<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> FuzzOpera
                             random_operation(rng, remaining - 1)
                         }).
                         collect(),
-                    Rc::new(rng.gen())
+                    register_op(rng.gen())
                 )
             },
             6 => make_random_call(rng, remaining - 1),
@@ -387,16 +431,21 @@ fn random_operation<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> FuzzOpera
 
 impl Distribution<FuzzOperation> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> FuzzOperation {
-        random_operation(rng, 0)
+        random_operation(rng, MAX_LIST_BOUND)
+    }
+}
+
+fn random_arglist<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> ArgListType {
+    let truncated_len = (remaining % 255) as u8;
+    match rng.gen_range(0..=1) {
+        0 => ArgListType::ProperList(rng.gen_range(0..=truncated_len)),
+        _ => ArgListType::Structure(random_sexp(rng, remaining))
     }
 }
 
 impl Distribution<ArgListType> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> ArgListType {
-        match rng.gen_range(0..=1) {
-            0 => ArgListType::ProperList(rng.gen_range(0..=5)),
-            _ => ArgListType::Structure(random())
-        }
+        random_arglist(rng, MAX_LIST_BOUND)
     }
 }
 
@@ -413,11 +462,11 @@ impl ArgListType {
                         collect();
                     args = SExp::Cons(
                         args.loc(),
-                        Rc::new(SExp::atom_from_vec(
+                        register_sexp(SExp::atom_from_vec(
                             loc.clone(),
                             &random_bytes
                         )),
-                        Rc::new(args.clone())
+                        register_sexp(args.clone())
                     );
                 }
                 args
@@ -430,7 +479,7 @@ impl ArgListType {
                 let bclone = bborrow.clone();
                 let arg_a = ArgListType::Structure(aclone).random_args();
                 let arg_b = ArgListType::Structure(bclone).random_args();
-                SExp::Cons(l.clone(), Rc::new(arg_a), Rc::new(arg_b))
+                SExp::Cons(l.clone(), register_sexp(arg_a), register_sexp(arg_b))
             },
             ArgListType::Structure(_) => random(),
         }
@@ -445,10 +494,10 @@ impl ArgListType {
                     let i = n - i_reverse;
                     args = SExp::Cons(
                         args.loc(),
-                        Rc::new(SExp::atom_from_string(
+                        register_sexp(SExp::atom_from_string(
                             loc.clone(), &format!("arg_{}", i)
                         )),
-                        Rc::new(args.clone())
+                        register_sexp(args.clone())
                     );
                 }
                 args
@@ -458,14 +507,18 @@ impl ArgListType {
     }
 }
 
+fn random_function<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> FuzzFunction {
+    FuzzFunction {
+        inline: rng.gen(),
+        number: 0,
+        args: random_arglist(rng, remaining - 1),
+        body: random_operation(rng, remaining - 1)
+    }
+}
+
 impl Distribution<FuzzFunction> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> FuzzFunction {
-        FuzzFunction {
-            inline: rng.sample(self),
-            number: 0,
-            args: rng.sample(self),
-            body: rng.sample(self)
-        }
+        random_function(rng, MAX_LIST_BOUND)
     }
 }
 
@@ -493,17 +546,17 @@ impl FuzzFunction {
         let body_sexp = self.body.to_sexp(&self.to_program(fun), &Vec::new());
         SExp::Cons(
             fuzzloc.clone(),
-            Rc::new(initial_atom),
-            Rc::new(SExp::Cons(
+            register_sexp(initial_atom),
+            register_sexp(SExp::Cons(
                 fuzzloc.clone(),
-                Rc::new(name_atom),
-                Rc::new(SExp::Cons(
+                register_sexp(name_atom),
+                register_sexp(SExp::Cons(
                     fuzzloc.clone(),
-                    Rc::new(args_sexp),
-                    Rc::new(SExp::Cons(
+                    register_sexp(args_sexp),
+                    register_sexp(SExp::Cons(
                         fuzzloc.clone(),
-                        Rc::new(body_sexp),
-                        Rc::new(SExp::Nil(fuzzloc.clone()))
+                        register_sexp(body_sexp),
+                        register_sexp(SExp::Nil(fuzzloc.clone()))
                     ))
                 ))
             ))
@@ -522,27 +575,31 @@ impl FuzzFunction {
 /*
  * Produce chialisp frontend code with an expected result
  */
-impl Distribution<FuzzProgram> for Standard {
-    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> FuzzProgram {
-        let funs = (1..=MAX_LIST_BOUND).map(|_| rng.gen())
-            .enumerate()
-            .map(|(i, f) : (usize, FuzzFunction)| {
-                let mut fcopy = f.clone();
-                fcopy.number = i as u8;
-                fcopy
-            }).
-            collect();
-        FuzzProgram {
-            args: random(),
-            functions: funs,
-            body: random_operation(rng, 0)
-        }
+fn random_program<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> FuzzProgram {
+    let funs = (1..=MAX_LIST_BOUND).map(|_| rng.gen())
+        .enumerate()
+        .map(|(i, f) : (usize, FuzzFunction)| {
+            let mut fcopy = f.clone();
+            fcopy.number = i as u8;
+            fcopy
+        }).
+        collect();
+    FuzzProgram {
+        args: random(),
+        functions: funs,
+        body: random_operation(rng, remaining)
     }
 }
 
-fn evaluate_to_numbers(prog: &FuzzProgram, args: &SExp, bindings: &Vec<Vec<FuzzOperation>>, a: &FuzzOperation, b: &FuzzOperation) -> Result<(BigInt, BigInt), RunFailure> {
-    let a_val = interpret_program(prog, args, bindings, a)?;
-    let b_val = interpret_program(prog, args, bindings, b)?;
+impl Distribution<FuzzProgram> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> FuzzProgram {
+        random_program(rng, MAX_LIST_BOUND)
+    }
+}
+
+fn evaluate_to_numbers(prog: &FuzzProgram, args: &SExp, bindings: &Vec<Vec<FuzzOperation>>, a: &FuzzOperation, b: &FuzzOperation, steps: usize) -> Result<(BigInt, BigInt), RunFailure> {
+    let a_val = interpret_program(prog, args, bindings, a, steps - 1)?;
+    let b_val = interpret_program(prog, args, bindings, b, steps - 1)?;
     match (&a_val, &b_val) {
         (SExp::Integer(_, a), SExp::Integer(_, b)) => {
             Ok((a.clone(), b.clone()))
@@ -575,48 +632,76 @@ fn byte_vec_of_sexp(val: &SExp) -> Result<Vec<u8>, RunFailure> {
     }
 }
 
-fn interpret_program(prog: &FuzzProgram, args: &SExp, bindings: &Vec<Vec<FuzzOperation>>, expr: &FuzzOperation) -> Result<SExp, RunFailure> {
-    let loc = Srcloc::start(&"*interp*".to_string());
-    eprintln!("interpret_program {} with args {} and expr {}", prog.to_sexp(), args, expr.to_sexp(prog, bindings));
+fn choose_path(path: Number, args: Rc<SExp>) -> Result<Rc<SExp>, RunFailure> {
+    if path == bi_one() {
+        Ok(args)
+    } else {
+        match args.borrow() {
+            SExp::Cons(_,a,b) => {
+                let odd = bi_one() & path.clone();
+                if odd != bi_zero() {
+                    choose_path(path >> 1, b.clone())
+                } else {
+                    choose_path(path >> 1, a.clone())
+                }
+            },
+            _ => Err(RunFailure::RunErr(args.loc(), "path into atom".to_string()))
+        }
+    }
+}
 
+fn interpret_program(prog: &FuzzProgram, args: &SExp, bindings: &Vec<Vec<FuzzOperation>>, expr: &FuzzOperation, steps: usize) -> Result<SExp, RunFailure> {
+    if steps < 1 {
+        return Err(RunFailure::RunErr(args.loc(), "too many steps taken".to_string()));
+    }
+    let loc = Srcloc::start(&"*interp*".to_string());
     match &expr {
         FuzzOperation::Argref(n) => {
-            let (_, argval) = select_argument(*n, prog, bindings);
+            let (argname, _) = select_argument(*n, prog, bindings);
+            let argpath = create_name_lookup_(
+                args.loc(),
+                &argname.as_bytes(),
+                register_sexp(prog.args.to_sexp()),
+                register_sexp(prog.args.to_sexp())
+            ).map_err(|e| RunFailure::RunErr(e.0.clone(), e.1.clone()))?;
+            let argval = choose_path(argpath.to_bigint().unwrap(), register_sexp(args.clone()))?;
+            let argval_borrow: &SExp = argval.borrow();
             interpret_program(
                 prog,
                 args,
                 bindings,
-                &argval
+                &FuzzOperation::Quote(argval_borrow.clone()),
+                steps - 1
             )
         },
         FuzzOperation::Quote(exp) => Ok(exp.clone()),
         FuzzOperation::If(cond,iftrue,iffalse) => {
             let borrowed_cond: &FuzzOperation = cond.borrow();
-            interpret_program(prog, args, bindings, borrowed_cond).map(|cond_res| {
-                truthy(Rc::new(cond_res))
+            interpret_program(prog, args, bindings, borrowed_cond, steps - 1).map(|cond_res| {
+                truthy(register_sexp(cond_res))
             }).and_then(|cond_res| {
                 if cond_res {
                     let borrowed_iftrue: &FuzzOperation = iftrue.borrow();
-                    interpret_program(prog, args, bindings, borrowed_iftrue)
+                    interpret_program(prog, args, bindings, borrowed_iftrue, steps - 1)
                 } else {
                     let borrowed_iffalse: &FuzzOperation = iffalse.borrow();
-                    interpret_program(prog, args, bindings, borrowed_iffalse)
+                    interpret_program(prog, args, bindings, borrowed_iffalse, steps - 1)
                 }
             })
         },
         FuzzOperation::Multiply(a,b) => {
-            let (a_val, b_val) = evaluate_to_numbers(prog, args, bindings, a.borrow(), b.borrow())?;
+            let (a_val, b_val) = evaluate_to_numbers(prog, args, bindings, a.borrow(), b.borrow(), steps - 1)?;
             Ok(SExp::Integer(loc, a_val * b_val))
         },
         FuzzOperation::Sub(a,b) => {
-            let (a_val, b_val) = evaluate_to_numbers(prog, args, bindings, a.borrow(), b.borrow())?;
+            let (a_val, b_val) = evaluate_to_numbers(prog, args, bindings, a.borrow(), b.borrow(), steps - 1)?;
             Ok(SExp::Integer(loc, a_val - b_val))
         },
         FuzzOperation::Sha256(lst) => {
             let loc = Srcloc::start(&"*sha256*".to_string());
             let mut bytes_stream = Stream::new(None);
             for elt in lst.iter() {
-                let output = interpret_program(prog, args, bindings, &elt)?;
+                let output = interpret_program(prog, args, bindings, &elt, steps - 1)?;
                 let output_bytes = byte_vec_of_sexp(&output)?;
                 bytes_stream.write(
                     Bytes::new(Some(BytesFromType::Raw(output_bytes)))
@@ -627,7 +712,7 @@ fn interpret_program(prog: &FuzzProgram, args: &SExp, bindings: &Vec<Vec<FuzzOpe
         FuzzOperation::Let(new_bindings,body) => {
             let mut total_bindings = bindings.clone();
             total_bindings.push(new_bindings.clone());
-            interpret_program(prog, args, &total_bindings, body.borrow())
+            interpret_program(prog, args, &total_bindings, body.borrow(), steps - 1)
         },
         FuzzOperation::Call(fun,call_args) => {
             let called_fun = select_call(*fun, prog);
@@ -635,7 +720,7 @@ fn interpret_program(prog: &FuzzProgram, args: &SExp, bindings: &Vec<Vec<FuzzOpe
 
             // Interpret all arguments.
             for a in call_args.iter() {
-                reified_args.push(interpret_program(prog, args, bindings, a)?);
+                reified_args.push(interpret_program(prog, args, bindings, a, steps - 1)?);
             }
 
             // Use reified arguments since we're assuming they're sexp.
@@ -653,7 +738,8 @@ fn interpret_program(prog: &FuzzProgram, args: &SExp, bindings: &Vec<Vec<FuzzOpe
                 &called_fun.1.to_program(prog),
                 &distributed_args.1,
                 &Vec::new(),
-                &called_fun.1.body.clone()
+                &called_fun.1.body.clone(),
+                steps - 1
             )
         }
     }
@@ -676,6 +762,6 @@ impl FuzzProgram {
     }
 
     pub fn interpret(&self, args: SExp) -> Result<SExp, RunFailure> {
-        interpret_program(self, &args, &Vec::new(), &self.body)
+        interpret_program(self, &args, &Vec::new(), &self.body, MAX_STEPS)
     }
 }

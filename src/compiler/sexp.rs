@@ -29,9 +29,25 @@ pub enum SExp {
     Atom(Srcloc, Vec<u8>),
 }
 
+pub fn random_atom<R: Rng + ?Sized>(rng: &mut R) -> SExp {
+    let mut bytevec: Vec<u8> = Vec::new();
+    let mut len = 0;
+    loop {
+        let mut n: u8 = rng.gen();
+        n %= 40;
+        len += 1;
+        if n < 26 && len < 6 {
+            bytevec.push(n + 97); // lowercase a
+        } else {
+            break;
+        }
+    }
+    SExp::Atom(Srcloc::start(&"*rng*".to_string()), bytevec)
+}
+
 pub fn random_sexp<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> SExp {
     if remaining < 2 {
-        SExp::random_atom()
+        random_atom(rng)
     } else {
         let loc = || Srcloc::start("*rng*");
         let alternative: usize = rng.gen_range(0..=2);
