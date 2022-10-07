@@ -268,24 +268,24 @@ pub fn do_semantic_tokens(
             token_mod: 0,
         });
         match &incl.kind {
-            IncludeKind::Include => { },
+            IncludeKind::Include => {}
             IncludeKind::CompileFile(il) => {
                 collected_tokens.push(SemanticTokenSortable {
                     loc: il.clone(),
                     token_type: TK_VARIABLE_IDX,
-                    token_mod: TK_DEFINITION_BIT
+                    token_mod: TK_DEFINITION_BIT,
                 });
-            },
-            IncludeKind::EmbedFile(il,kl) => {
+            }
+            IncludeKind::EmbedFile(il, kl) => {
                 collected_tokens.push(SemanticTokenSortable {
                     loc: il.clone(),
                     token_type: TK_VARIABLE_IDX,
-                    token_mod: TK_DEFINITION_BIT
+                    token_mod: TK_DEFINITION_BIT,
                 });
                 collected_tokens.push(SemanticTokenSortable {
                     loc: kl.clone(),
                     token_type: TK_KEYWORD_IDX,
-                    token_mod: 0
+                    token_mod: 0,
                 });
             }
         }

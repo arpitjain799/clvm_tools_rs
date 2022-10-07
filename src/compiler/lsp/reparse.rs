@@ -57,26 +57,34 @@ pub fn parse_include(
                 }
             }
         } else if l.len() == 3 {
-            if let (SExp::Atom(kl, incl), SExp::Atom(il, _), SExp::Atom(nl, fname)) = (l[0].borrow(), l[1].borrow(), l[2].borrow()) {
+            if let (SExp::Atom(kl, incl), SExp::Atom(il, _), SExp::Atom(nl, fname)) =
+                (l[0].borrow(), l[1].borrow(), l[2].borrow())
+            {
                 if incl == b"compile-file" {
                     return Some(IncludeData {
                         loc: sexp.loc(),
                         kw: kl.clone(),
                         nl: nl.clone(),
                         kind: IncludeKind::CompileFile(il.clone()),
-                        filename: fname.clone()
+                        filename: fname.clone(),
                     });
                 }
             }
         } else if l.len() == 4 {
-            if let (SExp::Atom(kl, incl), SExp::Atom(il, _), SExp::Atom(tl, _), SExp::Atom(nl, fname)) = (l[0].borrow(), l[1].borrow(), l[2].borrow(), l[3].borrow()) {
+            if let (
+                SExp::Atom(kl, incl),
+                SExp::Atom(il, _),
+                SExp::Atom(tl, _),
+                SExp::Atom(nl, fname),
+            ) = (l[0].borrow(), l[1].borrow(), l[2].borrow(), l[3].borrow())
+            {
                 if incl == b"embed-file" {
                     return Some(IncludeData {
                         loc: sexp.loc(),
                         kw: kl.clone(),
                         nl: nl.clone(),
                         kind: IncludeKind::EmbedFile(il.clone(), tl.clone()),
-                        filename: fname.clone()
+                        filename: fname.clone(),
                     });
                 }
             }

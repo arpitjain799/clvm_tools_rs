@@ -24,7 +24,7 @@ pub enum ScopeKind {
 pub enum IncludeKind {
     Include,
     CompileFile(Srcloc),
-    EmbedFile(Srcloc,Srcloc)
+    EmbedFile(Srcloc, Srcloc),
 }
 
 #[derive(Debug, Clone)]
