@@ -5,7 +5,7 @@ use std::rc::Rc;
 use crate::compiler::lsp::parse::IncludeData;
 use crate::compiler::lsp::{
     LSPServiceMessageHandler, LSPServiceProvider, TK_DEFINITION_BIT, TK_FUNCTION_IDX,
-    TK_KEYWORD_IDX,
+    TK_KEYWORD_IDX, TK_STRING_IDX, TK_VARIABLE_IDX,
 };
 
 use lsp_server::{Message, Notification, Request, RequestId};
@@ -819,6 +819,101 @@ fn basic_functions_are_annotated() {
                 delta_start: 6,
                 length: 1,
                 token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 0,
+            },
+        ]
+    );
+}
+
+#[test]
+fn compile_file_is_annotated() {
+    let mut lsp = LSPServiceProvider::new(
+        Rc::new(FSFileReader::new()),
+        Rc::new(EPrintWriter::new()),
+        true,
+    );
+    let file = "file:test.cl".to_string();
+    let open_msg = make_did_open_message(&file, 1, "( (compile-file test t1.cl) )".to_string());
+    let sem_tok = make_get_semantic_tokens_msg(&file, 2);
+    lsp.handle_message(&open_msg)
+        .expect("should be ok to take open msg");
+    let r2 = lsp
+        .handle_message(&sem_tok)
+        .expect("should be ok to send sem tok");
+    let decoded_tokens: SemanticTokens = serde_json::from_str(&get_msg_params(&r2[0])).unwrap();
+    assert_eq!(
+        decoded_tokens.data,
+        vec![
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 3,
+                length: 12,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 13,
+                length: 4,
+                token_type: TK_VARIABLE_IDX,
+                token_modifiers_bitset: TK_DEFINITION_BIT,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 5,
+                length: 5,
+                token_type: TK_STRING_IDX,
+                token_modifiers_bitset: 0,
+            },
+        ]
+    );
+}
+
+#[test]
+fn embed_file_is_annotated() {
+    let mut lsp = LSPServiceProvider::new(
+        Rc::new(FSFileReader::new()),
+        Rc::new(EPrintWriter::new()),
+        true,
+    );
+    let file = "file:test.cl".to_string();
+    let open_msg = make_did_open_message(&file, 1, "( (embed-file test sexp t1.cl) )".to_string());
+    let sem_tok = make_get_semantic_tokens_msg(&file, 2);
+    lsp.handle_message(&open_msg)
+        .expect("should be ok to take open msg");
+    let r2 = lsp
+        .handle_message(&sem_tok)
+        .expect("should be ok to send sem tok");
+    let decoded_tokens: SemanticTokens = serde_json::from_str(&get_msg_params(&r2[0])).unwrap();
+    assert_eq!(
+        decoded_tokens.data,
+        vec![
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 3,
+                length: 10,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 11,
+                length: 4,
+                token_type: TK_VARIABLE_IDX,
+                token_modifiers_bitset: TK_DEFINITION_BIT,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 5,
+                length: 4,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 5,
+                length: 5,
+                token_type: TK_STRING_IDX,
                 token_modifiers_bitset: 0,
             },
         ]

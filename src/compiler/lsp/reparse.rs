@@ -7,7 +7,7 @@ use crate::compiler::comptypes::{BodyForm, CompileErr, CompileForm, CompilerOpts
 use crate::compiler::frontend::{compile_bodyform, compile_helperform};
 use crate::compiler::lsp::completion::PRIM_NAMES;
 use crate::compiler::lsp::parse::{
-    grab_scope_doc_range, recover_scopes, IncludeData, ParseScope, ParsedDoc,
+    grab_scope_doc_range, recover_scopes, IncludeData, IncludeKind, ParseScope, ParsedDoc,
 };
 use crate::compiler::lsp::types::{DocPosition, DocRange};
 use crate::compiler::sexp::{parse_sexp, SExp};
@@ -44,18 +44,41 @@ pub fn parse_include(
     sexp: Rc<SExp>,
 ) -> Option<IncludeData> {
     sexp.proper_list().and_then(|l| {
-        if l.len() != 2 {
-            return None;
-        }
-
-        if let (SExp::Atom(kl, incl), SExp::Atom(nl, fname)) = (l[0].borrow(), l[1].borrow()) {
-            if incl == b"include" {
-                return Some(IncludeData {
-                    loc: sexp.loc(),
-                    kw: kl.clone(),
-                    nl: nl.clone(),
-                    filename: fname.clone(),
-                });
+        if l.len() == 2 {
+            if let (SExp::Atom(kl, incl), SExp::Atom(nl, fname)) = (l[0].borrow(), l[1].borrow()) {
+                if incl == b"include" {
+                    return Some(IncludeData {
+                        loc: sexp.loc(),
+                        kw: kl.clone(),
+                        nl: nl.clone(),
+                        kind: IncludeKind::Include,
+                        filename: fname.clone(),
+                    });
+                }
+            }
+        } else if l.len() == 3 {
+            if let (SExp::Atom(kl, incl), SExp::Atom(il, _), SExp::Atom(nl, fname)) = (l[0].borrow(), l[1].borrow(), l[2].borrow()) {
+                if incl == b"compile-file" {
+                    return Some(IncludeData {
+                        loc: sexp.loc(),
+                        kw: kl.clone(),
+                        nl: nl.clone(),
+                        kind: IncludeKind::CompileFile(il.clone()),
+                        filename: fname.clone()
+                    });
+                }
+            }
+        } else if l.len() == 4 {
+            if let (SExp::Atom(kl, incl), SExp::Atom(il, _), SExp::Atom(tl, _), SExp::Atom(nl, fname)) = (l[0].borrow(), l[1].borrow(), l[2].borrow(), l[3].borrow()) {
+                if incl == b"embed-file" {
+                    return Some(IncludeData {
+                        loc: sexp.loc(),
+                        kw: kl.clone(),
+                        nl: nl.clone(),
+                        kind: IncludeKind::EmbedFile(il.clone(), tl.clone()),
+                        filename: fname.clone()
+                    });
+                }
             }
         }
 

@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
 use crate::compiler::lsp::compopts::{get_file_content, LSPCompilerOpts};
-use crate::compiler::lsp::parse::{make_simple_ranges, ParsedDoc};
+use crate::compiler::lsp::parse::{make_simple_ranges, IncludeKind, ParsedDoc};
 use crate::compiler::lsp::patch::stringify_doc;
 use crate::compiler::lsp::reparse::{combine_new_with_old_parse, reparse_subset};
 use crate::compiler::lsp::semtok::SemanticTokenSortable;
@@ -471,7 +471,8 @@ impl LSPServiceProvider {
             );
 
             for (_, incfile) in new_helpers.includes.iter() {
-                if incfile.filename == b"*standard-cl-21*"
+                if incfile.kind != IncludeKind::Include
+                    || incfile.filename == b"*standard-cl-21*"
                     || incfile.filename == b"*standard-cl-22*"
                 {
                     continue;

@@ -7,7 +7,7 @@ use lsp_server::{Message, RequestId, Response};
 use lsp_types::{SemanticToken, SemanticTokens, SemanticTokensParams};
 
 use crate::compiler::comptypes::{BodyForm, CompileForm, HelperForm, LetFormKind};
-use crate::compiler::lsp::parse::ParsedDoc;
+use crate::compiler::lsp::parse::{IncludeKind, ParsedDoc};
 use crate::compiler::lsp::types::{DocPosition, DocRange, LSPServiceProvider};
 use crate::compiler::lsp::{
     TK_COMMENT_IDX, TK_DEFINITION_BIT, TK_FUNCTION_IDX, TK_KEYWORD_IDX, TK_MACRO_IDX,
@@ -267,6 +267,28 @@ pub fn do_semantic_tokens(
             token_type: TK_STRING_IDX,
             token_mod: 0,
         });
+        match &incl.kind {
+            IncludeKind::Include => { },
+            IncludeKind::CompileFile(il) => {
+                collected_tokens.push(SemanticTokenSortable {
+                    loc: il.clone(),
+                    token_type: TK_VARIABLE_IDX,
+                    token_mod: TK_DEFINITION_BIT
+                });
+            },
+            IncludeKind::EmbedFile(il,kl) => {
+                collected_tokens.push(SemanticTokenSortable {
+                    loc: il.clone(),
+                    token_type: TK_VARIABLE_IDX,
+                    token_mod: TK_DEFINITION_BIT
+                });
+                collected_tokens.push(SemanticTokenSortable {
+                    loc: kl.clone(),
+                    token_type: TK_KEYWORD_IDX,
+                    token_mod: 0
+                });
+            }
+        }
     }
     for form in parsed.compiled.helpers.iter() {
         match form {

@@ -20,6 +20,13 @@ pub enum ScopeKind {
     Let,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IncludeKind {
+    Include,
+    CompileFile(Srcloc),
+    EmbedFile(Srcloc,Srcloc)
+}
+
 #[derive(Debug, Clone)]
 pub struct ParseScope {
     pub region: Srcloc,
@@ -34,6 +41,7 @@ pub struct IncludeData {
     pub loc: Srcloc,
     pub nl: Srcloc,
     pub kw: Srcloc,
+    pub kind: IncludeKind,
     pub filename: Vec<u8>,
 }
 
