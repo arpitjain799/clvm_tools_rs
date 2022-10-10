@@ -1057,3 +1057,32 @@ fn test_modern_inline_at_capture() {
 
     assert_eq!(result.1, "clvm raise in (8 5) (() 99)");
 }
+
+#[test]
+fn test_parse_sexp() {
+    let list =
+        parse_sexp(Srcloc::start("*test*"), "( ( hi-there \"test\"))").expect("this should parse");
+    assert_eq!(format!("{}", list[0]), "((hi-there \"test\"))");
+}
+
+#[test]
+fn test_parse_sexp_2() {
+    let list =
+        parse_sexp(Srcloc::start("*test*"), "(\"foo\")").expect("should parse");
+    assert_eq!(format!("{}", list[0]), "(\"foo\")");
+}
+
+
+#[test]
+fn test_parse_sexp_3() {
+    let list =
+        parse_sexp(Srcloc::start("*test*"), "(\"foo.bar\")").expect("should parse");
+    assert_eq!(format!("{}", list[0]), "(\"foo.bar\")");
+}
+
+#[test]
+fn test_parse_sexp_4() {
+    let list =
+        parse_sexp(Srcloc::start("*test*"), "(mod () (include \"foo.bar\") 9)").expect("should parse");
+    assert_eq!(format!("{}", list[0]), "(mod () (include \"foo.bar\") 9)");
+}

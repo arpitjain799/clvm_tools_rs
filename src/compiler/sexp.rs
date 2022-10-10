@@ -1,7 +1,6 @@
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
 use rand::Rng;
-use rand::random;
 use std::borrow::Borrow;
 use std::fmt::Display;
 use std::hash::{Hash, Hasher};
@@ -29,20 +28,24 @@ pub enum SExp {
     Atom(Srcloc, Vec<u8>),
 }
 
-pub fn random_atom<R: Rng + ?Sized>(rng: &mut R) -> SExp {
+pub fn random_atom_name<R: Rng + ?Sized>(rng: &mut R, min_size: usize) -> Vec<u8> {
     let mut bytevec: Vec<u8> = Vec::new();
     let mut len = 0;
     loop {
         let mut n: u8 = rng.gen();
         n %= 40;
         len += 1;
-        if n < 26 && len < 6 {
-            bytevec.push(n + 97); // lowercase a
+        if n < 26 || len < min_size {
+            bytevec.push((n % 26) + 97); // lowercase a
         } else {
             break;
         }
     }
-    SExp::Atom(Srcloc::start(&"*rng*".to_string()), bytevec)
+    bytevec
+}
+
+pub fn random_atom<R: Rng + ?Sized>(rng: &mut R) -> SExp {
+    SExp::Atom(Srcloc::start(&"*rng*".to_string()), random_atom_name(rng, 1))
 }
 
 pub fn random_sexp<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> SExp {
@@ -63,7 +66,7 @@ pub fn random_sexp<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> SExp {
                 SExp::Cons(loc(), Rc::new(random_sexp(rng, left_cost)), Rc::new(random_sexp(rng, right_cost)))
             },
             _ => { // atom
-                SExp::random_atom()
+                random_atom(rng)
             }
         }
     }
@@ -481,22 +484,6 @@ impl SExp {
             SExp::Nil(_) => Ok(bi_zero()),
             _ => Err((self.loc(), format!("wanted atom got cons cell {}", self))),
         }
-    }
-
-    pub fn random_atom() -> SExp {
-        let mut bytevec: Vec<u8> = Vec::new();
-        let mut len = 0;
-        loop {
-            let mut n: u8 = random();
-            n %= 40;
-            len += 1;
-            if n < 26 && len < 6 {
-                bytevec.push(n + 97); // lowercase a
-            } else {
-                break;
-            }
-        }
-        SExp::Atom(Srcloc::start(&"*rng*".to_string()), bytevec)
     }
 }
 

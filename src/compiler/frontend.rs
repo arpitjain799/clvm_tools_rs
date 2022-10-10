@@ -201,7 +201,7 @@ fn args_to_expression_list(body: Rc<SExp>) -> Result<Vec<Rc<BodyForm>>, CompileE
 fn make_let_bindings(body: Rc<SExp>) -> Result<Vec<Rc<Binding>>, CompileErr> {
     let err = Err(CompileErr(
         body.loc(),
-        "Bad binding tail ".to_string() + &body.to_string(),
+        format!("Bad binding tail in {}", body)
     ));
     match body.borrow() {
         SExp::Nil(_) => Ok(vec![]),
