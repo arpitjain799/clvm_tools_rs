@@ -1,18 +1,21 @@
 use num_bigint::{BigInt, ToBigInt};
+use num_traits::ToPrimitive;
 
 use rand::distributions::Standard;
-use rand::prelude::Distribution;
+use rand::prelude::*;
 use rand::Rng;
 use rand::random;
+use rand_chacha::ChaCha8Rng;
 use std::borrow::Borrow;
 use std::cell::RefCell;
+use std::cmp::max;
 use std::mem::swap;
 use std::rc::Rc;
 
 use crate::classic::clvm::__type_compatibility__::{bi_one, bi_zero};
 use crate::compiler::clvm::truthy;
 use crate::compiler::codegen::create_name_lookup_;
-use crate::compiler::sexp::{SExp, decode_string, enlist, random_atom_name, random_sexp};
+use crate::compiler::sexp::{SExp, enlist, random_atom_name, random_sexp};
 use crate::compiler::srcloc::Srcloc;
 use crate::compiler::runtypes::RunFailure;
 use crate::classic::clvm::__type_compatibility__::{
@@ -25,8 +28,9 @@ use crate::classic::clvm::casts::{
     TConvertOption,
     bigint_to_bytes
 };
-use crate::util::Number;
+use crate::util::{Number, number_from_u8};
 
+const MIN_ARGLIST: usize = 3;
 const MAX_STEPS: usize = 1000;
 const MAX_OPS: usize = 50000;
 const MAX_LIST_BOUND: usize = 3;
@@ -117,18 +121,18 @@ fn register_sexp(sexp: SExp) -> Rc<SExp> {
     rc
 }
 
-fn atom_list(sexp: &SExp) -> Vec<String> {
+fn atom_list(sexp: &SExp) -> Vec<Vec<u8>> {
     match sexp {
         SExp::Nil(_) => vec!(),
         SExp::Atom(_,v) => {
             if v.is_empty() {
                 vec!()
             } else {
-                vec!(sexp.to_string())
+                vec!(v.clone())
             }
         },
-        SExp::QuotedString(_,_,_) => vec!(sexp.to_string()),
-        SExp::Integer(_,_) => vec!(sexp.to_string()),
+        SExp::QuotedString(_,_,_) => vec!(),
+        SExp::Integer(_,_) => vec!(),
         SExp::Cons(_,a,b) => {
             let mut a_vec = atom_list(a.borrow());
             let b_vec = atom_list(b.borrow());
@@ -141,16 +145,25 @@ fn atom_list(sexp: &SExp) -> Vec<String> {
 }
 
 
-fn select_argument(num: usize, fun: &FuzzProgram, bindings: &[Vec<FuzzBinding>]) -> (String, Option<FuzzOperation>) {
+fn select_argument(num: usize, fun: &FuzzProgram, bindings: &[Vec<FuzzBinding>]) -> (SExp, Option<FuzzOperation>) {
+    let args_sexp = fun.args.to_sexp();
     let select_group = (num >> 8) % (bindings.len() + 1);
     if select_group == bindings.len() {
         // Select from arguments
-        let arg_list = atom_list(&fun.args.to_sexp());
-        let selected_arg = arg_list[num & 0xff % arg_list.len()].clone();
-        (
-            selected_arg,
-            None
-        )
+        let arg_list = atom_list(&args_sexp);
+        let nil = SExp::Nil(args_sexp.loc());
+        if arg_list.is_empty() {
+            (
+                nil.clone(),
+                Some(FuzzOperation::Quote(nil))
+            )
+        } else {
+            let selected_arg = arg_list[num & 0xff % arg_list.len()].clone();
+            (
+                SExp::Atom(args_sexp.loc(), selected_arg),
+                None
+            )
+        }
     } else {
         // Select a binding group using the second byte,
         let group = &bindings[select_group];
@@ -158,7 +171,7 @@ fn select_argument(num: usize, fun: &FuzzProgram, bindings: &[Vec<FuzzBinding>])
         let selected_binding = &group[select_binding];
         // Select a binding using the first byte.
         (
-            decode_string(&selected_binding.name),
+            SExp::Atom(args_sexp.loc(), selected_binding.name.clone()),
             Some(selected_binding.expr.clone())
         )
     }
@@ -303,7 +316,7 @@ impl FuzzOperation {
                 let argument = select_argument(
                     *argument_num as usize, fun, &bindings
                 );
-                SExp::atom_from_string(loc.clone(), &argument.0)
+                argument.0
             },
             FuzzOperation::Quote(s) => {
                 SExp::Cons(
@@ -468,17 +481,29 @@ impl Distribution<FuzzOperation> for Standard {
     }
 }
 
+fn min_arglist(remaining: usize) -> usize { max(remaining, MIN_ARGLIST) }
+
+fn random_arglist_cons<R: Rng + ?Sized>(rng: &mut R, loc: &Srcloc, remaining: usize) -> SExp {
+    if rng.gen() || remaining < 1 {
+        SExp::Atom(loc.clone(), random_atom_name(rng, 2))
+    } else {
+        let left = random_arglist_cons(rng, loc, remaining - 1);
+        let right = random_arglist_cons(rng, loc, remaining - 1);
+        SExp::Cons(
+            loc.clone(),
+            Rc::new(left),
+            Rc::new(right)
+        )
+    }
+}
+
 fn random_arglist<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> ArgListType {
+    let loc = Srcloc::start("*arglist*");
     let truncated_len = (remaining % 255) as u8;
     if rng.gen() {
         ArgListType::ProperList(rng.gen_range(0..=truncated_len))
     } else {
-        let loc = Srcloc::start("*arglist*");
-        ArgListType::Structure(SExp::Cons(
-            loc.clone(),
-            Rc::new(random_sexp(rng, remaining - 1)),
-            Rc::new(random_sexp(rng, remaining - 1))
-        ))
+        ArgListType::Structure(random_arglist_cons(rng, &loc, min_arglist(remaining)))
     }
 }
 
@@ -712,7 +737,7 @@ fn interpret_program(prog: &FuzzProgram, args: &SExp, bindings: &[Vec<FuzzBindin
                 // Select argument from env.
                 let argpath = create_name_lookup_(
                     args.loc(),
-                    &argname.as_bytes(),
+                    &argname.to_string().as_bytes(),
                     register_sexp(prog.args.to_sexp()),
                     register_sexp(prog.args.to_sexp())
                 ).map_err(|e| RunFailure::RunErr(e.0.clone(), e.1.clone()))?;
@@ -829,4 +854,12 @@ impl Distribution<FuzzOldProgram> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> FuzzOldProgram {
         random_old_program(rng, MAX_LIST_BOUND)
     }
+}
+
+pub fn make_random_u64_seed() -> u64 {
+    let mut rng = ChaCha8Rng::from_entropy();
+    let random_seed = random_atom_name(&mut rng, 10);
+    let random_seed_as_bigint =
+        number_from_u8(&random_seed) & 0xffffffffffff_u64.to_bigint().unwrap();
+    random_seed_as_bigint.to_u64().unwrap()
 }
