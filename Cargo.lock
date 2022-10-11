@@ -104,6 +104,7 @@ dependencies = [
  "pyo3",
  "pyo3-build-config 0.15.2",
  "rand",
+ "rand_chacha",
  "serde_json",
  "sha2",
  "tempfile",
