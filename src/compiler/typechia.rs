@@ -12,7 +12,7 @@ use crate::classic::clvm::__type_compatibility__::{bi_one, bi_zero};
 use crate::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
 
 use crate::compiler::compiler::{is_at_capture, DefaultCompilerOpts};
-use crate::compiler::comptypes::{BodyForm, CompileErr, CompileForm, HelperForm};
+use crate::compiler::comptypes::{BodyForm, CompileErr, CompileForm, CompilerOpts, HelperForm};
 use crate::compiler::evaluate::{build_argument_captures, dequote, Evaluator};
 use crate::compiler::frontend::frontend;
 use crate::compiler::sexp::{decode_string, SExp};
@@ -540,29 +540,12 @@ pub fn context_from_args_and_type(
     }
 }
 
-fn handle_macro(
+pub fn type_level_macro_transform(
     program: &CompileForm,
-    form_args: Rc<SExp>,
-    _args: Rc<SExp>,
     form: Rc<CompileForm>,
     loc: Srcloc,
     provided_args: &[Rc<BodyForm>],
-) -> Result<Expr, CompileErr> {
-    // It is a macro, we need to interpret it in our way:
-    // We'll compile and run the code itself on a
-    // representation of the argument list and return the
-    // result.  We'll interpret the result in the following
-    // but we'll treat com as com^ whose type will be
-    // (forall s (forall t (t -> (Exec (s -> t)))))
-    // Given an 'a' operator:
-    // (forall s
-    //   (forall t
-    //     ((Pair (Exec (s -> t)) (Pair s ())) -> t)
-    //     )
-    //    )
-    // And given a well typed 'i' operator:
-    // (forall t ((Pair Any (Pair t (Pair t ()))) -> t))
-    // We should be able to type things that come our way
+) -> Result<Rc<BodyForm>, CompileErr> {
     let call_args: Vec<Rc<BodyForm>> = provided_args
         .iter()
         .skip(1)
@@ -588,17 +571,48 @@ fn handle_macro(
         true,
     )?;
     let parsed_macro_output = frontend(opts.clone(), vec![result.to_sexp()])?;
-    let exp_result = ev.shrink_bodyform(
+    ev.shrink_bodyform(
         &mut allocator,
         Rc::new(SExp::Nil(loc.clone())),
         &arg_env,
         parsed_macro_output.exp,
         false,
+    )
+}
+
+fn handle_macro(
+    opts: Rc<dyn CompilerOpts>,
+    program: &CompileForm,
+    form_args: Rc<SExp>,
+    form: Rc<CompileForm>,
+    loc: Srcloc,
+    provided_args: &[Rc<BodyForm>],
+) -> Result<Expr, CompileErr> {
+    // It is a macro, we need to interpret it in our way:
+    // We'll compile and run the code itself on a
+    // representation of the argument list and return the
+    // result.  We'll interpret the result in the following
+    // but we'll treat com as com^ whose type will be
+    // (forall s (forall t (t -> (Exec (s -> t)))))
+    // Given an 'a' operator:
+    // (forall s
+    //   (forall t
+    //     ((Pair (Exec (s -> t)) (Pair s ())) -> t)
+    //     )
+    //    )
+    // And given a well typed 'i' operator:
+    // (forall t ((Pair Any (Pair t (Pair t ()))) -> t))
+    // We should be able to type things that come our way
+    let exp_result = type_level_macro_transform(
+        program,
+        form,
+        loc.clone(),
+        provided_args
     )?;
     match dequote(loc.clone(), exp_result) {
         Ok(dequoted) => {
-            let last_reparse = frontend(opts, vec![dequoted])?;
-            let final_res = chialisp_to_expr(program, form_args, last_reparse.exp)?;
+            let last_reparse = frontend(opts.clone(), vec![dequoted])?;
+            let final_res = chialisp_to_expr(opts, program, form_args, last_reparse.exp)?;
             Ok(final_res)
         }
         Err(_) => {
@@ -612,6 +626,7 @@ fn handle_macro(
 }
 
 fn chialisp_to_expr(
+    opts: Rc<dyn CompilerOpts>,
     program: &CompileForm,
     form_args: Rc<SExp>,
     body: Rc<BodyForm>,
@@ -632,12 +647,14 @@ fn chialisp_to_expr(
                 Rc::new(Expr::EApp(
                     Rc::new(Expr::EVar(Var("c^".to_string(), l.clone()))),
                     Rc::new(chialisp_to_expr(
+                        opts.clone(),
                         program,
                         form_args.clone(),
                         Rc::new(BodyForm::Quoted(a_borrowed.clone())),
                     )?),
                 )),
                 Rc::new(chialisp_to_expr(
+                    opts.clone(),
                     program,
                     form_args,
                     Rc::new(BodyForm::Quoted(b_borrowed.clone())),
@@ -653,10 +670,8 @@ fn chialisp_to_expr(
         BodyForm::Let(l, _kind, _bindings, _letbody) => {
             // Inline via the evaluator
             let mut allocator = Allocator::new();
-            let file_borrowed: &String = l.file.borrow();
-            let opts = Rc::new(DefaultCompilerOpts::new(file_borrowed));
             let runner = Rc::new(DefaultProgramRunner::new());
-            let evaluator = Evaluator::new(opts, runner, program.helpers.clone()).disable_calls();
+            let evaluator = Evaluator::new(opts.clone(), runner, program.helpers.clone()).disable_calls();
             let beta_reduced = evaluator.shrink_bodyform(
                 &mut allocator,
                 Rc::new(SExp::Nil(l.clone())),
@@ -664,13 +679,13 @@ fn chialisp_to_expr(
                 body.clone(),
                 false,
             )?;
-            chialisp_to_expr(program, form_args, beta_reduced)
+            chialisp_to_expr(opts, program, form_args, beta_reduced)
         }
         BodyForm::Call(l, lst) => {
             let mut arg_expr = Expr::EUnit(l.clone());
             for i_rev in 0..lst.len() - 1 {
                 let i = lst.len() - i_rev - 1;
-                let new_expr = chialisp_to_expr(program, form_args.clone(), lst[i].clone())?;
+                let new_expr = chialisp_to_expr(opts.clone(), program, form_args.clone(), lst[i].clone())?;
                 arg_expr = Expr::EApp(
                     Rc::new(Expr::EApp(
                         Rc::new(Expr::EVar(Var("c^".to_string(), l.clone()))),
@@ -685,9 +700,9 @@ fn chialisp_to_expr(
                     if let HelperForm::Defmacro(_, name, args, form) = &h {
                         if name == n1 {
                             return handle_macro(
+                                opts.clone(),
                                 program,
                                 form_args,
-                                args.clone(),
                                 form.clone(),
                                 body.loc(),
                                 lst,
@@ -699,7 +714,7 @@ fn chialisp_to_expr(
                 if n1 == &vec![b'c', b'o', b'm'] {
                     // Handle com
                     // Rewrite (com X) as (com^ (lambda x X))
-                    let inner = chialisp_to_expr(program, form_args, lst[1].clone())?;
+                    let inner = chialisp_to_expr(opts, program, form_args, lst[1].clone())?;
                     let var = fresh_var(l.clone());
                     return Ok(Expr::EApp(
                         Rc::new(Expr::EVar(Var("com^".to_string(), l.clone()))),
@@ -711,7 +726,7 @@ fn chialisp_to_expr(
             // Just treat it as an expression...  If it's a function we defined,
             // then it's in the environment.
             Ok(Expr::EApp(
-                Rc::new(chialisp_to_expr(program, form_args, lst[0].clone())?),
+                Rc::new(chialisp_to_expr(opts, program, form_args, lst[0].clone())?),
                 Rc::new(arg_expr),
             ))
         }
@@ -760,6 +775,9 @@ impl Context {
     pub fn typecheck_chialisp_program(&self, comp: &CompileForm) -> Result<Polytype, CompileErr> {
         let mut context = self.clone();
         let mut structs = HashSet::new();
+        let file_sexp = comp.exp.to_sexp().loc();
+        let file_borrowed: &String = file_sexp.file.borrow();
+        let opts = Rc::new(DefaultCompilerOpts::new(file_borrowed));
 
         // Extract type definitions
         for h in comp.helpers.iter() {
@@ -820,7 +838,7 @@ impl Context {
                 typecheck_chialisp_body_with_context(
                     &context_with_args,
                     &Expr::EAnno(
-                        Rc::new(chialisp_to_expr(comp, args.clone(), body.clone())?),
+                        Rc::new(chialisp_to_expr(opts.clone(), comp, args.clone(), body.clone())?),
                         result_ty,
                     ),
                 )?;
@@ -831,7 +849,7 @@ impl Context {
         let ty = type_of_defun(comp.exp.loc(), &comp.ty);
         let (context_with_args, result_ty) =
             handle_function_type(&structs, &context, comp.exp.loc(), comp.args.clone(), &ty)?;
-        let clexpr = chialisp_to_expr(comp, comp.args.clone(), comp.exp.clone())?;
+        let clexpr = chialisp_to_expr(opts, comp, comp.args.clone(), comp.exp.clone())?;
         typecheck_chialisp_body_with_context(
             &context_with_args,
             &Expr::EAnno(Rc::new(clexpr), result_ty),

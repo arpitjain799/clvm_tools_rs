@@ -7,6 +7,8 @@ pub mod comptypes;
 pub mod debug;
 pub mod evaluate;
 pub mod frontend;
+#[cfg(test)]
+pub mod fuzzer;
 pub mod gensym;
 mod inline;
 mod optimize;
