@@ -41,6 +41,10 @@ regex = "1.6.0"
 url = "2.3.1"
 percent-encoding = "2.2.0"
 
+[dev-dependencies]
+rand = "0.8.5"
+rand_chacha = "0.3.1"
+
 [lib]
 name = "clvm_tools_rs"
 crate-type = ["cdylib", "rlib"]
