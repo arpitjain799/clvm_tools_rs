@@ -4,6 +4,7 @@ mod codegen;
 #[allow(clippy::module_inception)]
 pub mod compiler;
 pub mod comptypes;
+pub mod dbg;
 pub mod debug;
 pub mod evaluate;
 pub mod frontend;

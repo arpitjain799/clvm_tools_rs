@@ -105,6 +105,7 @@ dependencies = [
  "bls12_381",
  "bytestream",
  "clvmr",
+ "debug_types",
  "derivative",
  "do-notation",
  "encoding8",
@@ -187,6 +188,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edbafec5fa1f196ca66527c1b12c2ec4745ca14b50f1ad8f9f6f720b55d11fac"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "debug_types"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2613f33760bd27a70ee84f5a8c0bd97e874fa6f89e205356ef8325786dd22cef"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "serde_json",
 ]
 
 [[package]]

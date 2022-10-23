@@ -40,6 +40,7 @@ linked-hash-map = "0.5.6"
 regex = "1.6.0"
 url = "2.3.1"
 percent-encoding = "2.2.0"
+debug_types = "1.0.0"
 
 [dev-dependencies]
 rand = "0.8.5"
@@ -97,3 +98,7 @@ path = "src/classic/bins/repl.rs"
 [[bin]]
 name = "lsp"
 path = "src/classic/bins/lsp.rs"
+
+[[bin]]
+name = "dbg"
+path = "src/classic/bins/dbg.rs"
