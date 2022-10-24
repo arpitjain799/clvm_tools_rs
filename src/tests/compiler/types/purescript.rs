@@ -216,6 +216,10 @@ f :: forall f0 r0. (FromValue f0) => (Pair (Pair f0 r0) Nil) -> ChiaOutcome f0
 f (Pair (ChiaCons (ChiaCons a b) _)) = ChiaResult (fromValue a)
 f x = ChiaException (getValue x)
 
+r :: forall f0 r0. (FromValue f0) => (Pair (Pair f0 r0) Nil) -> ChiaOutcome r0
+r (Pair (ChiaCons (ChiaCons a b) _)) = ChiaResult (fromValue b)
+r x = ChiaException (getValue x)
+
 a :: forall a b c. (HasValue (Exec (ChiaFun a b))) => (FromValue b) => (Pair (Exec (ChiaFun a b)) (Pair b c)) -> ChiaOutcome b
 a x = pure $ fromValue (getValue x)
 
@@ -252,6 +256,10 @@ main = do
 
         op_dict
     };
+}
+
+fn un_dollar(s: &[u8]) -> Vec<u8> {
+    s.iter().map(|ch| if *ch == b'$' { b'_' } else { *ch }).collect()
 }
 
 fn do_indent(indent: usize) -> String {
@@ -300,29 +308,43 @@ fn produce_body(opts: Rc<dyn CompilerOpts>, result_vec: &mut Vec<String>, prog: 
         BodyForm::Let(_, _, bindings, letbody) => {
             result_vec.push(format!("{}do", do_indent(indent)));
             for b in bindings.iter() {
-                result_vec.push(format!("{}{} <-", do_indent(indent + 2), decode_string(&b.name)));
+                result_vec.push(format!("{}{} <-", do_indent(indent + 2), decode_string(&un_dollar(&b.name))));
                 produce_body(opts.clone(), result_vec, prog, indent + 4, b.body.borrow());
             }
             produce_body(opts.clone(), result_vec, prog, indent + 2, letbody.borrow());
         },
-        BodyForm::Call(_, elts) => {
+        BodyForm::Call(cl, elts) => {
             if elts.is_empty() {
                 result_vec.push(format!("{}pure unit", do_indent(indent)));
                 return;
             }
 
             if let BodyForm::Value(SExp::Atom(_,n)) = elts[0].borrow() {
-                if let Some(callable) = find_callable(prog, n) {
+                if n == b"com" {
+                    // Compile code in this context and emit it.
+                    // The type of a "com" expression where the expression
+                    // returns x is is Exec (Any -> x)
+                    let exp_serialized = elts[1].to_sexp();
+                    result_vec.push(format!("-- com {}", exp_serialized));
+                    let compiled =
+                        frontend(opts.clone(), vec![exp_serialized]).unwrap();
+                    produce_body(
+                        opts.clone(),
+                        result_vec,
+                        prog,
+                        indent + 2,
+                        compiled.exp.borrow()
+                    );
+                } else if let Some(callable) = find_callable(prog, n) {
                     if let HelperForm::Defun(_, defname, _, _, _, _) = callable {
                         result_vec.push(format!("{}do", do_indent(indent)));
                         for (i,a) in elts.iter().skip(1).enumerate() {
-                            result_vec.push(format!("{}farg_{} <- getValue <$> (", do_indent(indent + 2), i));
+                            result_vec.push(format!("{}farg_{} <- getValue <$> do", do_indent(indent + 2), i));
                             produce_body(opts.clone(), result_vec, prog, indent + 4, a);
-                            result_vec.push(format!("{}  )", indent + 2));
                         }
                         result_vec.push(format!("{}cvt <$> {} $ Pair $ ", do_indent(indent + 2), decode_string(&defname)));
                         for (i,_) in elts.iter().skip(1).enumerate() {
-                            result_vec.push(format!("{}ChiaCons farg_{} $", do_indent(indent + 4), i));
+                            result_vec.push(format!("{}ChiaCons (getValue farg_{}) $", do_indent(indent + 4), i));
                         }
                         result_vec.push(format!("{}ChiaAtom \"\"", do_indent(indent + 4)));
                     } else if let HelperForm::Defmacro(loc, name, macargs, macbody) = callable {
@@ -337,10 +359,10 @@ fn produce_body(opts: Rc<dyn CompilerOpts>, result_vec: &mut Vec<String>, prog: 
                         let reparsed = frontend(opts.clone(), vec![unquoted_expr]).unwrap();
                         produce_body(opts, result_vec, prog, indent, &reparsed.exp);
                     } else {
-                        todo!()
+                        todo!("{}", body.to_sexp())
                     }
                 } else {
-                    todo!()
+                    todo!("{}", body.to_sexp())
                 }
             } else {
                 todo!("{}", body.to_sexp())
@@ -362,7 +384,11 @@ fn produce_body(opts: Rc<dyn CompilerOpts>, result_vec: &mut Vec<String>, prog: 
             result_vec.push(format!("{}pure $ (cvt $ Pair $ ChiaAtom \"\")", do_indent(indent)));
         },
         BodyForm::Value(SExp::Atom(_,n)) => {
-            result_vec.push(format!("{}pure $ (cvt $ Atom $ ChiaAtom \"\")", do_indent(indent)));
+            if n == b"@" {
+                result_vec.push(format!("{}pure $ {}- @ -{} (cvt $ Nil $ ChiaAtom \"\")", do_indent(indent), "{", "}"));
+            } else {
+                result_vec.push(format!("{}pure $ (cvt {})", do_indent(indent), decode_string(&un_dollar(&n))));
+            }
         },
         BodyForm::Value(_) => {
             result_vec.push(format!("{}pure $ (cvt $ Atom $ ChiaAtom \"\")", do_indent(indent)));
@@ -392,8 +418,25 @@ fn collect_args(sexp: Rc<SExp>) -> Vec<(Number, Vec<u8>)> {
     return collection;
 }
 
-fn choose_path(target_path: Number, mask: Number, expression: String) -> String {
-    "@@@@".to_string()
+fn choose_path(target_path: Number, expression: String) -> String {
+    if target_path == bi_one() {
+        expression
+    } else {
+        let apply_function =
+            if target_path.clone() & bi_one() == bi_one() {
+                "r"
+            } else {
+                "f"
+            };
+        choose_path(
+            target_path >> 1,
+            format!(
+                "{} <$> {}",
+                apply_function,
+                expression
+            )
+        )
+    }
 }
 
 // Produce a checkable purescript program from our chialisp.
@@ -411,16 +454,16 @@ pub fn chialisp_to_purescript(opts: Rc<dyn CompilerOpts>, prog: &CompileForm) ->
 
     // Spill functions
     for h in prog.helpers.iter() {
+        result_vec.push(format!("-- produce helper {}", h.to_sexp()));
         if let HelperForm::Defun(_, _, _, defargs, defbody, ty) = h.borrow() {
-            let mut result_vec = Vec::new();
             let name = decode_string(&h.name());
-            result_vec.push(format!("{} args = do", name));
+            result_vec.push(format!("{} args =", name));
 
             let args = collect_args(defargs.clone());
             result_vec.push("-- produce args".to_string());
             if !args.is_empty() {
                 for (path, a) in args.iter() {
-                    result_vec.push(format!("  {} <- {}", decode_string(&a), choose_path(path.clone(), bi_one(), "args".to_string())));
+                    result_vec.push(format!("  {} <- {}", decode_string(&a), choose_path(path.clone(), "args".to_string())));
                 }
             }
 
@@ -430,7 +473,17 @@ pub fn chialisp_to_purescript(opts: Rc<dyn CompilerOpts>, prog: &CompileForm) ->
     }
 
     // Write out main
-    result_vec.push("chia_main args = do".to_string());
+    result_vec.push("chia_main args =".to_string());
+
+    let args = collect_args(prog.args.clone());
+    result_vec.push("-- produce args".to_string());
+    if !args.is_empty() {
+        for (path, a) in args.iter() {
+            for (path, a) in args.iter() {
+                result_vec.push(format!("  {} <- {}", decode_string(&a), choose_path(path.clone(), "args".to_string())));
+            }
+        }
+    }
     produce_body(opts, &mut result_vec, prog, 2, prog.exp.borrow());
 
     let prefix_str: &String = &PURESCRIPT_PREFIX;
