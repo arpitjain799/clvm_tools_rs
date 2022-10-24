@@ -53,6 +53,16 @@ instance chiaOutcomeFunctor :: Functor ChiaOutcome where
   map f (ChiaResult v) = ChiaResult $ (f v)
   map _ (ChiaException e) = ChiaException e
 
+instance chiaOutcomeApplicative :: Applicative ChiaOutcome where
+  pure :: forall a. a -> ChiaOutcome a
+  pure x = ChiaResult x
+
+instance chiaOutcomeApply :: Apply ChiaOutcome where
+  apply :: forall a b. ChiaOutcome (a -> b) -> ChiaOutcome a -> ChiaOutcome b
+  apply (ChiaResult f) (ChiaResult a) = ChiaResult $ f a
+  apply (ChiaException e) _ = ChiaException e
+  apply _ (ChiaException e) = ChiaException e
+
 class HasValue t where
   getValue :: t -> ChiaPrim
 
@@ -199,16 +209,32 @@ multiply _ = ChiaResult $ Atom (ChiaAtom \"\")
 subtract :: Pair Atom (Pair Atom Unit) -> ChiaOutcome Atom
 subtract _ = ChiaResult $ Atom (ChiaAtom \"\")
 
+truthy :: ChiaPrim -> Boolean
+truthy _ = false
+
 f :: forall f0 r0. (FromValue f0) => (Pair (Pair f0 r0) Nil) -> ChiaOutcome f0
 f (Pair (ChiaCons (ChiaCons a b) _)) = ChiaResult (fromValue a)
 f x = ChiaException (getValue x)
 
-truthy :: forall x. (Convert x Any) => x -> Boolean
-truthy _ = false
+a :: forall a b c. (HasValue (Exec (ChiaFun a b))) => (FromValue b) => (Pair (Exec (ChiaFun a b)) (Pair b c)) -> ChiaOutcome b
+a x = pure $ fromValue (getValue x)
+
+i :: forall c a b q x.  (FromValue a) => (FromValue b) => (Convert a x) => (Convert b x) => (Convert c Any) => (Pair c (Pair a (Pair b q))) -> ChiaOutcome x
+i (Pair (ChiaCons c (ChiaCons a (ChiaCons b _)))) =
+  let
+    a_converted :: a
+    a_converted = fromValue a
+
+    b_converted :: b
+    b_converted = fromValue b
+  in
+  pure $ if truthy c then cvt a_converted else cvt b_converted
+i x = ChiaException (getValue x)
 
 "}.to_string();
 
     pub static ref PURESCRIPT_SUFFIX: String = indoc!{"
+
 main :: Effect Unit
 main = do
   log \"compiled\"
@@ -221,6 +247,8 @@ main = do
         op_dict.insert(b"*".to_vec(), b"multiply".to_vec());
         op_dict.insert(b"sha256".to_vec(), b"sha256".to_vec());
         op_dict.insert(b"c".to_vec(), b"c".to_vec());
+        op_dict.insert(b"a".to_vec(), b"a".to_vec());
+        op_dict.insert(b"i".to_vec(), b"i".to_vec());
 
         op_dict
     };
@@ -288,13 +316,15 @@ fn produce_body(opts: Rc<dyn CompilerOpts>, result_vec: &mut Vec<String>, prog: 
                     if let HelperForm::Defun(_, defname, _, _, _, _) = callable {
                         result_vec.push(format!("{}do", do_indent(indent)));
                         for (i,a) in elts.iter().skip(1).enumerate() {
-                            result_vec.push(format!("{}farg_{} <-", do_indent(indent + 2), i));
+                            result_vec.push(format!("{}farg_{} <- getValue <$> (", do_indent(indent + 2), i));
                             produce_body(opts.clone(), result_vec, prog, indent + 4, a);
+                            result_vec.push(format!("{}  )", indent + 2));
                         }
-                        result_vec.push(format!("{}cvt $ {} $", do_indent(indent + 2), decode_string(&defname)));
+                        result_vec.push(format!("{}cvt <$> {} $ Pair $ ", do_indent(indent + 2), decode_string(&defname)));
                         for (i,_) in elts.iter().skip(1).enumerate() {
-                            result_vec.push(format!("{}farg_{}", do_indent(indent + 4), i));
+                            result_vec.push(format!("{}ChiaCons farg_{} $", do_indent(indent + 4), i));
                         }
+                        result_vec.push(format!("{}ChiaAtom \"\"", do_indent(indent + 4)));
                     } else if let HelperForm::Defmacro(loc, name, macargs, macbody) = callable {
                         // expand macro as in type synthesis.
                         let expanded_expression = type_level_macro_transform(
