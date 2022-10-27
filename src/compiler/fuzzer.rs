@@ -25,8 +25,7 @@ use crate::classic::clvm::__type_compatibility__::{
     sha256
 };
 use crate::classic::clvm::casts::{
-    TConvertOption,
-    bigint_to_bytes
+    bigint_to_bytes_clvm
 };
 use crate::util::{Number, number_from_u8};
 
@@ -692,7 +691,7 @@ fn byte_vec_of_sexp(val: &SExp) -> Result<Vec<u8>, RunFailure> {
         SExp::Nil(_) => Ok(Vec::new()),
         SExp::Atom(_,a) => Ok(a.clone()),
         SExp::QuotedString(_,_,s) => Ok(s.clone()),
-        SExp::Integer(_,i) => bigint_to_bytes(i, Some(TConvertOption { signed: true })).map_err(|e| RunFailure::RunErr(val.loc(), e)).map(|x| x.data().clone()),
+        SExp::Integer(_,i) => Ok(bigint_to_bytes_clvm(i).raw()),
         _ => Err(RunFailure::RunErr(val.loc(), format!("attempt to convert {} to bytes", val.to_string())))
     }
 }

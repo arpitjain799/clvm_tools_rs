@@ -697,7 +697,7 @@ fn chialisp_to_expr(
             if let BodyForm::Value(SExp::Atom(_, n1)) = &lst[0].borrow() {
                 // Find out if it's a macro
                 for h in program.helpers.iter() {
-                    if let HelperForm::Defmacro(_, name, args, form) = &h {
+                    if let HelperForm::Defmacro(_, name, _args, form) = &h {
                         if name == n1 {
                             return handle_macro(
                                 opts.clone(),

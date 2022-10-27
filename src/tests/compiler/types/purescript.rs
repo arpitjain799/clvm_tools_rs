@@ -216,7 +216,7 @@ f :: forall f0 r0. (FromValue f0) => (Pair (Pair f0 r0) Nil) -> ChiaOutcome f0
 f (Pair (ChiaCons (ChiaCons a b) _)) = ChiaResult (fromValue a)
 f x = ChiaException (getValue x)
 
-r :: forall f0 r0. (FromValue f0) => (Pair (Pair f0 r0) Nil) -> ChiaOutcome r0
+r :: forall f0 r0. (FromValue r0) => (Pair (Pair f0 r0) Nil) -> ChiaOutcome r0
 r (Pair (ChiaCons (ChiaCons a b) _)) = ChiaResult (fromValue b)
 r x = ChiaException (getValue x)
 
@@ -264,7 +264,7 @@ fn un_dollar(s: &[u8]) -> Vec<u8> {
 
 fn do_indent(indent: usize) -> String {
     let mut s = Vec::new();
-    for _ in 0..=indent {
+    for _ in 0..indent {
         s.push(b' ');
     }
     return decode_string(&s);
@@ -404,7 +404,7 @@ fn collect_args_inner(args: &mut Vec<(Number, Vec<u8>)>, path: Number, mask: Num
             args.push((path | mask, n.clone()));
         },
         SExp::Cons(_,a,b) => {
-            let right_path = path.clone() | next_mask.clone();
+            let right_path = path.clone() | mask.clone();
             collect_args_inner(args, path, next_mask.clone(), a.clone());
             collect_args_inner(args, right_path, next_mask.clone(), b.clone());
         },
@@ -463,7 +463,7 @@ pub fn chialisp_to_purescript(opts: Rc<dyn CompilerOpts>, prog: &CompileForm) ->
             result_vec.push("-- produce args".to_string());
             if !args.is_empty() {
                 for (path, a) in args.iter() {
-                    result_vec.push(format!("  {} <- {}", decode_string(&a), choose_path(path.clone(), "args".to_string())));
+                    result_vec.push(format!("  {} <- {}", decode_string(&a), choose_path(path.clone(), "pure args".to_string())));
                 }
             }
 
@@ -473,15 +473,13 @@ pub fn chialisp_to_purescript(opts: Rc<dyn CompilerOpts>, prog: &CompileForm) ->
     }
 
     // Write out main
-    result_vec.push("chia_main args =".to_string());
+    result_vec.push("chia_main args = do".to_string());
 
     let args = collect_args(prog.args.clone());
     result_vec.push("-- produce args".to_string());
     if !args.is_empty() {
         for (path, a) in args.iter() {
-            for (path, a) in args.iter() {
-                result_vec.push(format!("  {} <- {}", decode_string(&a), choose_path(path.clone(), "args".to_string())));
-            }
+            result_vec.push(format!("  {} <- {}", decode_string(&a), choose_path(path.clone(), "pure args".to_string())));
         }
     }
     produce_body(opts, &mut result_vec, prog, 2, prog.exp.borrow());
