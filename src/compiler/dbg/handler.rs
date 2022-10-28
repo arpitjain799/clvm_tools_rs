@@ -1,22 +1,30 @@
 use std::collections::HashMap;
+use std::io::BufRead;
 use std::rc::Rc;
 
-use debug_types::requests::{InitializeRequestArguments, RequestCommand};
+use debug_types::requests::{InitializeRequestArguments, LaunchRequestArguments, RequestCommand};
 use debug_types::responses::{InitializeResponse, Response, ResponseBody};
 use debug_types::types::{Capabilities, ChecksumAlgorithm};
 use debug_types::{MessageKind, ProtocolMessage};
 
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
-use crate::compiler::cldb::CldbRun;
+use crate::compiler::cldb::{CldbNoOverride, CldbRun, CldbRunEnv};
+use crate::compiler::clvm::start_step;
 use crate::compiler::dbg::types::MessageHandler;
 use crate::compiler::lsp::types::{IFileReader, ILogWriter};
-use crate::compiler::sexp::SExp;
+use crate::compiler::sexp::{SExp, parse_sexp};
 use crate::compiler::srcloc::Srcloc;
 
-#[derive(Debug, Clone)]
+pub struct RunningDebugger {
+    initialized: InitializeRequestArguments,
+    launch_info: LaunchRequestArguments,
+    run: CldbRun
+}
+
 pub enum State {
     PreInitialization,
     Initialized(InitializeRequestArguments),
+    Launched(RunningDebugger)
 }
 
 pub enum BreakpointLocation {
@@ -131,12 +139,60 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                         }),
                     }]));
                 }
+                (State::Initialized(i), RequestCommand::Launch(l)) => {
+                    if let Some(name) = &l.name {
+                        let read_in_file = self.fs.read(&name)?;
+                        let parsed_program =
+                            parse_sexp(
+                                Srcloc::start(&name),
+                                read_in_file.iter().copied()
+                            ).map_err(|e| format!("{}: {}", e.0.to_string(), e.1))?;
+                        if parsed_program.is_empty() {
+                            return Err(format!("Empty program file {}", name));
+                        }
+
+                        // XXX Empty arguments for now.
+                        let arguments = Rc::new(SExp::Nil(parsed_program[0].loc()));
+                        let program_lines: Vec<String> =
+                            read_in_file.lines().map(|x| x.unwrap().to_string()).collect();
+                        let env = CldbRunEnv::new(
+                            Some(name.to_owned()),
+                            program_lines,
+                            Box::new(CldbNoOverride::new())
+                        );
+                        let cldb_run = CldbRun::new(
+                            self.runner.clone(),
+                            self.prim_map.clone(),
+                            Box::new(env),
+                            start_step(parsed_program[0].clone(), arguments)
+                        );
+                        self.state = State::Launched(RunningDebugger {
+                            initialized: i.clone(),
+                            launch_info: l.clone(),
+                            run: cldb_run
+                        });
+                        self.msg_seq += 1;
+
+                        return Ok(Some(vec![ProtocolMessage {
+                            seq: self.msg_seq,
+                            message: MessageKind::Response(Response {
+                                request_seq: pm.seq,
+                                success: true,
+                                message: None,
+                                body: Some(ResponseBody::Launch)
+                            })
+                        }]));
+                    } else {
+                        self.log.write("No program provided");
+                    }
+                },
                 (_st, _rq) => {
-                    eprintln!("Don't know what to do with {:?} and {:?}", self.state, req);
+                    self.log.write(&format!("Don't know what to do with {:?}", req));
                 }
             }
         }
 
+        self.log.write(&format!("unhandled message {:?}", pm));
         return Err(format!("unhandled message {:?}", pm));
     }
 }
