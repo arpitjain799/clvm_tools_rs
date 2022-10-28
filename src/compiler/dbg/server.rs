@@ -79,10 +79,8 @@ impl<H> MessageBuffer<H> {
         self.data.push(buf.to_owned());
 
         while !self.eof {
-            let mut message_decode_scratch: String = "".to_string();
-            let msg = self.parse_message(&mut message_decode_scratch)?;
-            if let Some(m) = &msg {
-                let new_messages: Option<Vec<M>> = self.handler.handle_message(m)?;
+            if let Some(msgdata) = self.extract_message()? {
+                let new_messages: Option<Vec<M>> = self.process_message(&msgdata)?;
                 match &new_messages {
                     Some(msgs) => {
                         for m in msgs.iter().cloned() {
@@ -114,6 +112,16 @@ impl<H> MessageBuffer<H> {
         Ok(Some(result_bytes))
     }
 
+    pub fn process_message<M>(&mut self, msgdata: &[u8]) -> Result<Option<Vec<M>>, String> where
+        H: MessageHandler<M>,
+        for<'a> M: Serialize + Deserialize<'a> + Debug + Clone,
+    {
+        let msg_string = decode_string(&msgdata);
+        let msg: M = serde_json::from_str(&msg_string).
+            map_err(|_| format!("failed to decode {}", msg_string))?;
+        self.handler.handle_message(&msg)
+    }
+
     fn data_iter(&self) -> MessageByteIter {
         MessageByteIter {
             buffers: &self.data,
@@ -140,10 +148,7 @@ impl<H> MessageBuffer<H> {
         }
     }
 
-    fn parse_message<'a,M>(&mut self, msg_string: &'a mut String) -> Result<Option<M>, String> where
-        H: MessageHandler<M>,
-        M: Deserialize<'a>
-    {
+    fn extract_message(&mut self) -> Result<Option<Vec<u8>>, String> {
         if let Some(l) = self.length {
             let have_data = self.len();
             if have_data < l {
@@ -153,10 +158,7 @@ impl<H> MessageBuffer<H> {
             self.length = None;
             let message_data: Vec<u8> = self.data_iter().take(l).collect();
             self.chop_data(l);
-            *msg_string = decode_string(&message_data);
-            let m: M = serde_json::from_str(msg_string).
-                map_err(|_| format!("failed to decode {}", msg_string))?;
-            Ok(Some(m))
+            Ok(Some(message_data))
         } else {
             // Try to recognize a set of headers containing content-length,
             let mut s = ParseState::Reading;
@@ -229,7 +231,7 @@ impl<H> MessageBuffer<H> {
 
                 if let Some(_) = self.length {
                     self.chop_data(header_len);
-                    self.parse_message(msg_string)
+                    self.extract_message()
                 } else {
                     Err("scanned headers but didn't find content-length".to_string())
                 }

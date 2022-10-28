@@ -28,6 +28,8 @@ use crate::compiler::comptypes::CompileErr;
 use crate::compiler::lsp::handler::LSPServiceMessageHandler;
 use crate::compiler::lsp::types::{IFileReader, ILogWriter};
 use crate::compiler::lsp::LSPServiceProvider;
+use crate::compiler::dbg::handler::Debugger;
+use crate::compiler::dbg::server::MessageBuffer;
 use crate::compiler::prims;
 use crate::compiler::repl::Repl;
 use crate::compiler::runtypes::RunFailure;
@@ -110,6 +112,9 @@ thread_local! {
         return RefCell::new(HashMap::new());
     };
     static LSP_SERVERS: RefCell<HashMap<i32, RefCell<LSPServiceProvider>>> = {
+        return RefCell::new(HashMap::new());
+    };
+    static DBG_SERVERS: RefCell<HashMap<i32, RefCell<MessageBuffer<Debugger>>>> = {
         return RefCell::new(HashMap::new());
     };
 }
@@ -577,6 +582,76 @@ pub fn lsp_service_handle_msg(lsp_id: i32, msg: String) -> Vec<JsValue> {
             let mut s_borrowed = service_cell.borrow_mut();
             let s = s_borrowed.deref_mut();
             let outmsgs = s.handle_message_from_string(msg);
+            for m in outmsgs.iter() {
+                if let Ok(r) = serde_json::to_value(m) {
+                    res.push(JsValue::from_str(&r.to_string()));
+                } else {
+                    panic!("unable to convert message {:?} to json", m);
+                }
+            }
+        }
+    });
+    res
+}
+
+#[wasm_bindgen]
+pub fn create_dbg_service(file_reader: &JsValue, err_writer: &JsValue) -> i32 {
+    let new_id = get_next_id();
+    let log = Rc::new(JSErrWriter::new(err_writer));
+
+    // Get prims
+    let simple_prims = prims::prims();
+    let mut prim_map = HashMap::new();
+
+    for (name, sexp) in simple_prims.iter() {
+        prim_map.insert(name.clone(), Rc::new(sexp.clone()));
+    }
+
+    let prims = Rc::new(prim_map);
+    let runner = Rc::new(DefaultProgramRunner::new());
+    let debugger = Debugger::new(
+        Rc::new(JSFileReader::new(file_reader)),
+        log,
+        runner.clone(),
+        prims.clone()
+    );
+    let service = MessageBuffer::new(debugger);
+
+    DBG_SERVERS.with(|servers| {
+        servers.replace_with(|servers| {
+            let mut work_services = HashMap::new();
+            swap(&mut work_services, servers);
+            work_services.insert(
+                new_id,
+                RefCell::new(service),
+            );
+            work_services
+        })
+    });
+    new_id
+}
+
+#[wasm_bindgen]
+pub fn destroy_dbg_service(lsp: i32) {
+    DBG_SERVERS.with(|servers| {
+        servers.replace_with(|servers| {
+            let mut work_services = HashMap::new();
+            swap(&mut work_services, servers);
+            work_services.remove(&lsp);
+            work_services
+        })
+    });
+}
+
+#[wasm_bindgen]
+pub fn dbg_service_handle_msg(lsp_id: i32, msg: String) -> Vec<JsValue> {
+    let mut res = Vec::new();
+    DBG_SERVERS.with(|services| {
+        let service = services.borrow();
+        if let Some(service_cell) = service.get(&lsp_id) {
+            let mut s_borrowed = service_cell.borrow_mut();
+            let s = s_borrowed.deref_mut();
+            let outmsgs = s.process_message(&msg.as_bytes());
             for m in outmsgs.iter() {
                 if let Ok(r) = serde_json::to_value(m) {
                     res.push(JsValue::from_str(&r.to_string()));

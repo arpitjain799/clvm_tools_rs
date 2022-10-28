@@ -127,7 +127,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                                 success: true,
                                 message: None,
                                 body: Some(ResponseBody::Initialize(
-                                    get_initilize_response()
+                                    get_initialize_response()
                                 ))
                             })
                         }
