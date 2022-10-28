@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use debug_types::{MessageKind, ProtocolMessage};
-use debug_types::requests::{RequestCommand, InitializeRequestArguments};
+use debug_types::requests::{InitializeRequestArguments, RequestCommand};
 use debug_types::responses::{InitializeResponse, Response, ResponseBody};
 use debug_types::types::{Capabilities, ChecksumAlgorithm};
+use debug_types::{MessageKind, ProtocolMessage};
 
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
 use crate::compiler::cldb::CldbRun;
@@ -21,7 +21,7 @@ pub enum State {
 
 pub enum BreakpointLocation {
     Srcloc(Srcloc),
-    Treehash(String)
+    Treehash(String),
 }
 
 pub struct Debugger {
@@ -39,7 +39,7 @@ pub struct Debugger {
 
     pub runner: Rc<dyn TRunProgram>,
     pub prim_map: Rc<HashMap<Vec<u8>, Rc<SExp>>>,
-    pub msg_seq: i64
+    pub msg_seq: i64,
 }
 
 impl Debugger {
@@ -59,7 +59,7 @@ impl Debugger {
             breakpoints: Vec::new(),
             runner,
             prim_map,
-            msg_seq: 0
+            msg_seq: 0,
         }
     }
 }
@@ -106,33 +106,31 @@ fn get_initialize_response() -> InitializeResponse {
             supports_terminate_threads_request: None,
             supports_value_formatting_options: Some(true),
             supports_write_memory_request: None,
-        }
+        },
     }
 }
 
 impl MessageHandler<ProtocolMessage> for Debugger {
-    fn handle_message(&mut self, pm: &ProtocolMessage) -> Result<Option<Vec<ProtocolMessage>>, String> {
+    fn handle_message(
+        &mut self,
+        pm: &ProtocolMessage,
+    ) -> Result<Option<Vec<ProtocolMessage>>, String> {
         eprintln!("got message {}", serde_json::to_string(pm).unwrap());
         if let MessageKind::Request(req) = &pm.message {
-            match (&self.state, req)
-            {
+            match (&self.state, req) {
                 (State::PreInitialization, RequestCommand::Initialize(irq)) => {
                     self.state = State::Initialized(irq.clone());
                     self.msg_seq += 1;
-                    return Ok(Some(vec![
-                        ProtocolMessage {
-                            seq: self.msg_seq,
-                            message: MessageKind::Response(Response {
-                                request_seq: pm.seq,
-                                success: true,
-                                message: None,
-                                body: Some(ResponseBody::Initialize(
-                                    get_initialize_response()
-                                ))
-                            })
-                        }
-                    ]));
-                },
+                    return Ok(Some(vec![ProtocolMessage {
+                        seq: self.msg_seq,
+                        message: MessageKind::Response(Response {
+                            request_seq: pm.seq,
+                            success: true,
+                            message: None,
+                            body: Some(ResponseBody::Initialize(get_initialize_response())),
+                        }),
+                    }]));
+                }
                 (_st, _rq) => {
                     eprintln!("Don't know what to do with {:?} and {:?}", self.state, req);
                 }

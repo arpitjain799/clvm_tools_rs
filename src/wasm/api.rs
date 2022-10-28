@@ -25,11 +25,11 @@ use crate::compiler::compiler::{
     extract_program_and_env, path_to_function, rewrite_in_program, DefaultCompilerOpts,
 };
 use crate::compiler::comptypes::CompileErr;
+use crate::compiler::dbg::handler::Debugger;
+use crate::compiler::dbg::server::MessageBuffer;
 use crate::compiler::lsp::handler::LSPServiceMessageHandler;
 use crate::compiler::lsp::types::{IFileReader, ILogWriter};
 use crate::compiler::lsp::LSPServiceProvider;
-use crate::compiler::dbg::handler::Debugger;
-use crate::compiler::dbg::server::MessageBuffer;
 use crate::compiler::prims;
 use crate::compiler::repl::Repl;
 use crate::compiler::runtypes::RunFailure;
@@ -613,7 +613,7 @@ pub fn create_dbg_service(file_reader: &JsValue, err_writer: &JsValue) -> i32 {
         Rc::new(JSFileReader::new(file_reader)),
         log,
         runner.clone(),
-        prims.clone()
+        prims.clone(),
     );
     let service = MessageBuffer::new(debugger);
 
@@ -621,10 +621,7 @@ pub fn create_dbg_service(file_reader: &JsValue, err_writer: &JsValue) -> i32 {
         servers.replace_with(|servers| {
             let mut work_services = HashMap::new();
             swap(&mut work_services, servers);
-            work_services.insert(
-                new_id,
-                RefCell::new(service),
-            );
+            work_services.insert(new_id, RefCell::new(service));
             work_services
         })
     });

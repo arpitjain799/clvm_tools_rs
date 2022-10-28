@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         Rc::new(FSFileReader::new()),
         Rc::new(EPrintWriter::new()),
         Rc::new(DefaultProgramRunner::new()),
-        Rc::new(prim_map)
+        Rc::new(prim_map),
     );
     let mut connection = MessageBuffer::new(dbg_provider);
 

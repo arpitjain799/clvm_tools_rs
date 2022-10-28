@@ -1,30 +1,30 @@
 // Based on https://docs.rs/lsp-server/latest/src/lsp_server/lib.rs.html#27-30
 // and https://github.com/Chia-Network/vscode-chialisp-lsp/blob/main/runner/src/runner.js
-use serde::{Serialize, Deserialize};
+use crate::compiler::dbg::types::MessageHandler;
+use crate::compiler::sexp::decode_string;
+use serde::{Deserialize, Serialize};
 use serde_json;
 use std::clone::Clone;
 use std::fmt::Debug;
-use crate::compiler::dbg::types::MessageHandler;
-use crate::compiler::sexp::decode_string;
 
 pub struct MessageBuffer<H> {
     eof: bool,
     data: Vec<Vec<u8>>,
     length: Option<usize>,
-    pub handler: H
+    pub handler: H,
 }
 
 struct MessageByteIter<'a> {
     buffers: &'a [Vec<u8>],
     pub cur: usize,
-    pub byt: usize
+    pub byt: usize,
 }
 
 #[derive(Debug)]
 enum ParseState {
     Reading,
     Lf(usize),
-    Ended(usize)
+    Ended(usize),
 }
 
 impl<'a> Iterator for MessageByteIter<'a> {
@@ -54,15 +54,18 @@ impl<H> MessageBuffer<H> {
             eof: false,
             data: vec![],
             length: None,
-            handler
+            handler,
         }
     }
 
-    pub fn is_eof(&self) -> bool { self.eof }
+    pub fn is_eof(&self) -> bool {
+        self.eof
+    }
 
     // Pass whole messages through the message handler and return the reply or
     // error if message decoding failed.
-    pub fn receive_bytes<M>(&mut self, buf: &[u8]) -> Result<Option<Vec<u8>>, String> where
+    pub fn receive_bytes<M>(&mut self, buf: &[u8]) -> Result<Option<Vec<u8>>, String>
+    where
         H: MessageHandler<M>,
         for<'a> M: Serialize + Deserialize<'a> + Debug + Clone,
     {
@@ -84,11 +87,13 @@ impl<H> MessageBuffer<H> {
                 match &new_messages {
                     Some(msgs) => {
                         for m in msgs.iter().cloned() {
-                            let json_msg = serde_json::to_value(&m).map_err(|_| format!("could not convert outbound message {:?} to json", m))?;
+                            let json_msg = serde_json::to_value(&m).map_err(|_| {
+                                format!("could not convert outbound message {:?} to json", m)
+                            })?;
                             let encoded_msg = json_msg.to_string().as_bytes().to_vec();
                             out_messages.push(encoded_msg);
                         }
-                    },
+                    }
                     _ => {
                         self.eof = true;
                     }
@@ -105,20 +110,25 @@ impl<H> MessageBuffer<H> {
 
         for encoded_msg in out_messages.iter() {
             let msg_len = encoded_msg.len();
-            result_bytes.append(&mut format!("Content-Length: {}\r\n\r\n", msg_len).as_bytes().to_vec());
+            result_bytes.append(
+                &mut format!("Content-Length: {}\r\n\r\n", msg_len)
+                    .as_bytes()
+                    .to_vec(),
+            );
             result_bytes.append(&mut encoded_msg.to_vec());
         }
 
         Ok(Some(result_bytes))
     }
 
-    pub fn process_message<M>(&mut self, msgdata: &[u8]) -> Result<Option<Vec<M>>, String> where
+    pub fn process_message<M>(&mut self, msgdata: &[u8]) -> Result<Option<Vec<M>>, String>
+    where
         H: MessageHandler<M>,
         for<'a> M: Serialize + Deserialize<'a> + Debug + Clone,
     {
         let msg_string = decode_string(&msgdata);
-        let msg: M = serde_json::from_str(&msg_string).
-            map_err(|_| format!("failed to decode {}", msg_string))?;
+        let msg: M = serde_json::from_str(&msg_string)
+            .map_err(|_| format!("failed to decode {}", msg_string))?;
         self.handler.handle_message(&msg)
     }
 
@@ -126,7 +136,7 @@ impl<H> MessageBuffer<H> {
         MessageByteIter {
             buffers: &self.data,
             cur: 0,
-            byt: 0
+            byt: 0,
         }
     }
 
@@ -166,39 +176,39 @@ impl<H> MessageBuffer<H> {
             let mut header_lines = Vec::new();
 
             for (i, by) in self.data_iter().enumerate() {
-                match (&s,by) {
+                match (&s, by) {
                     (ParseState::Reading, b'\r') => {
                         if !read_line.is_empty() {
                             header_lines.push(read_line);
                             read_line = vec![];
                         }
                         s = ParseState::Lf(0);
-                    },
+                    }
                     (ParseState::Reading, b'\n') => {
                         if !read_line.is_empty() {
                             header_lines.push(read_line);
                             read_line = vec![];
                         }
                         s = ParseState::Lf(1);
-                    },
+                    }
                     (ParseState::Reading, b) => {
                         read_line.push(b);
-                    },
+                    }
                     (ParseState::Lf(n), b'\r') => {
                         s = ParseState::Lf(*n);
-                    },
+                    }
                     (ParseState::Lf(n), b'\n') => {
                         if *n == 1 {
-                            s = ParseState::Ended(i+1);
+                            s = ParseState::Ended(i + 1);
                             break;
                         } else {
-                            s = ParseState::Lf(n+1);
+                            s = ParseState::Lf(n + 1);
                         }
-                    },
+                    }
                     (ParseState::Lf(_), b) => {
                         s = ParseState::Reading;
                         read_line.push(b);
-                    },
+                    }
                     _ => {
                         return Err("No way to match past ending of headers".to_string());
                     }
@@ -210,17 +220,21 @@ impl<H> MessageBuffer<H> {
                 for line in header_lines.iter().take(header_len) {
                     let found_colon = line.iter().position(|b| *b == b':');
                     if let Some(c) = found_colon {
-                        let before_colon_bytes: Vec<u8> =
-                            line.iter().take(c).copied().collect();
-                        let string_before_colon =
-                            decode_string(&before_colon_bytes);
-                        let after_colon_bytes: Vec<u8> =
-                            line.iter().skip(c+1).copied().collect();
-                        let string_after_colon =
-                            decode_string(&after_colon_bytes);
+                        let before_colon_bytes: Vec<u8> = line.iter().take(c).copied().collect();
+                        let string_before_colon = decode_string(&before_colon_bytes);
+                        let after_colon_bytes: Vec<u8> = line.iter().skip(c + 1).copied().collect();
+                        let string_after_colon = decode_string(&after_colon_bytes);
                         if string_before_colon.trim().to_lowercase() == "content-length" {
-                            let found_length =
-                                string_after_colon.trim().to_string().parse::<usize>().map_err(|_| format!("could not interpret content length {}", string_after_colon))?;
+                            let found_length = string_after_colon
+                                .trim()
+                                .to_string()
+                                .parse::<usize>()
+                                .map_err(|_| {
+                                    format!(
+                                        "could not interpret content length {}",
+                                        string_after_colon
+                                    )
+                                })?;
                             self.length = Some(found_length);
                             break;
                         }
