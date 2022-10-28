@@ -109,6 +109,7 @@ impl<H> MessageBuffer<H> {
         }
 
         for encoded_msg in out_messages.iter() {
+            eprintln!("encoded_msg {}", decode_string(&encoded_msg));
             let msg_len = encoded_msg.len();
             result_bytes.append(
                 &mut format!("Content-Length: {}\r\n\r\n", msg_len)

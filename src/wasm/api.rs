@@ -597,6 +597,7 @@ pub fn lsp_service_handle_msg(lsp_id: i32, msg: String) -> Vec<JsValue> {
 #[wasm_bindgen]
 pub fn create_dbg_service(file_reader: &JsValue, err_writer: &JsValue) -> i32 {
     let new_id = get_next_id();
+    let fs = Rc::new(JSFileReader::new(file_reader));
     let log = Rc::new(JSErrWriter::new(err_writer));
 
     // Get prims
@@ -610,7 +611,7 @@ pub fn create_dbg_service(file_reader: &JsValue, err_writer: &JsValue) -> i32 {
     let prims = Rc::new(prim_map);
     let runner = Rc::new(DefaultProgramRunner::new());
     let debugger = Debugger::new(
-        Rc::new(JSFileReader::new(file_reader)),
+        fs,
         log,
         runner.clone(),
         prims.clone(),
