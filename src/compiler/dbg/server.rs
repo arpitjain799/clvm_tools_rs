@@ -128,9 +128,11 @@ impl<H> MessageBuffer<H> {
         for<'a> M: Serialize + Deserialize<'a> + Debug + Clone,
     {
         let msg_string = decode_string(&msgdata);
-        let msg: M = serde_json::from_str(&msg_string)
+        let as_json: serde_json::Value = serde_json::from_str(&msg_string)
             .map_err(|_| format!("failed to decode {}", msg_string))?;
-        self.handler.handle_message(&msg)
+        let msg: M = serde_json::from_value(as_json.clone())
+            .map_err(|_| format!("failed to decode {}", msg_string))?;
+        self.handler.handle_message(&as_json, &msg)
     }
 
     fn data_iter(&self) -> MessageByteIter {

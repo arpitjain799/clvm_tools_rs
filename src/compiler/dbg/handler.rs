@@ -1,10 +1,13 @@
+use serde::Deserialize;
+
 use std::collections::HashMap;
 use std::io::BufRead;
 use std::rc::Rc;
 
+use debug_types::events::{Event, EventBody, StoppedEvent, StoppedReason};
 use debug_types::requests::{InitializeRequestArguments, LaunchRequestArguments, RequestCommand};
-use debug_types::responses::{InitializeResponse, Response, ResponseBody};
-use debug_types::types::{Capabilities, ChecksumAlgorithm};
+use debug_types::responses::{InitializeResponse, Response, ResponseBody, ThreadsResponse};
+use debug_types::types::{Capabilities, ChecksumAlgorithm, Thread};
 use debug_types::{MessageKind, ProtocolMessage};
 
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
@@ -15,9 +18,21 @@ use crate::compiler::lsp::types::{IFileReader, ILogWriter};
 use crate::compiler::sexp::{SExp, parse_sexp};
 use crate::compiler::srcloc::Srcloc;
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct ExtraLaunchData {
+    #[serde(rename = "stopOnEntry")]
+    stop_on_entry: bool
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct RequestContainer<T> {
+    arguments: T
+}
+
 pub struct RunningDebugger {
     initialized: InitializeRequestArguments,
     launch_info: LaunchRequestArguments,
+    running: bool,
     run: CldbRun
 }
 
@@ -121,9 +136,10 @@ fn get_initialize_response() -> InitializeResponse {
 impl MessageHandler<ProtocolMessage> for Debugger {
     fn handle_message(
         &mut self,
+        raw_json: &serde_json::Value,
         pm: &ProtocolMessage,
     ) -> Result<Option<Vec<ProtocolMessage>>, String> {
-        eprintln!("got message {}", serde_json::to_string(pm).unwrap());
+        self.log.write(&format!("got message {}", serde_json::to_string(pm).unwrap()));
         if let MessageKind::Request(req) = &pm.message {
             match (&self.state, req) {
                 (State::PreInitialization, RequestCommand::Initialize(irq)) => {
@@ -140,6 +156,14 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     }]));
                 }
                 (State::Initialized(i), RequestCommand::Launch(l)) => {
+                    let launch_extra: Option<RequestContainer<ExtraLaunchData>> =
+                        serde_json::from_value(raw_json.clone()).
+                        map(Some).unwrap_or(None);
+                    let stop_on_entry =
+                        launch_extra.map(|l| l.arguments.stop_on_entry).unwrap_or(false);
+
+                    self.log.write(&format!("stop on entry: {}", stop_on_entry));
+
                     if let Some(name) = &l.name {
                         let read_in_file = self.fs.read(&name)?;
                         let parsed_program =
@@ -169,11 +193,12 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                         self.state = State::Launched(RunningDebugger {
                             initialized: i.clone(),
                             launch_info: l.clone(),
+                            running: !stop_on_entry,
                             run: cldb_run
                         });
                         self.msg_seq += 1;
 
-                        return Ok(Some(vec![ProtocolMessage {
+                        let mut out_messages = vec![ProtocolMessage {
                             seq: self.msg_seq,
                             message: MessageKind::Response(Response {
                                 request_seq: pm.seq,
@@ -181,10 +206,58 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                                 message: None,
                                 body: Some(ResponseBody::Launch)
                             })
-                        }]));
+                        }];
+
+                        // Signal that we're paused if stop on entry.
+                        if stop_on_entry {
+                            self.msg_seq += 1;
+                            out_messages.push(ProtocolMessage {
+                                seq: self.msg_seq,
+                                message: MessageKind::Event(Event {
+                                    body: Some(EventBody::Stopped(StoppedEvent {
+                                        reason: StoppedReason::Entry,
+                                        description: None,
+                                        thread_id: None,
+                                        preserve_focus_hint: None,
+                                        text: None,
+                                        all_threads_stopped: Some(true),
+                                        hit_breakpoint_ids: None
+                                    }))
+                                })
+                            });
+                        }
+
+                        return Ok(Some(out_messages));
                     } else {
                         self.log.write("No program provided");
                     }
+                },
+                (State::Launched(r), RequestCommand::Threads) => {
+                    return Ok(Some(vec![ProtocolMessage {
+                        seq: self.msg_seq,
+                        message: MessageKind::Response(Response {
+                            request_seq: pm.seq,
+                            success: true,
+                            message: None,
+                            body: Some(ResponseBody::Threads(ThreadsResponse {
+                                threads: vec![Thread {
+                                    id: 1,
+                                    name: "main".to_string()
+                                }]
+                            }))
+                        })
+                    }]));
+                },
+                (State::Launched(r), RequestCommand::StackTrace(sta)) => {
+                    
+                },
+                (State::Launched(r), RequestCommand::StepIn(si)) => {
+                },
+                (State::Launched(r), RequestCommand::Next(n)) => {
+                },
+                (State::Launched(r), RequestCommand::StepOut(so)) => {
+                },
+                (State::Launched(r), RequestCommand::Continue(c)) => {
                 },
                 (_st, _rq) => {
                     self.log.write(&format!("Don't know what to do with {:?}", req));
