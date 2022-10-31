@@ -62,7 +62,7 @@ impl LSPServiceProvider {
                             },
                             end: Position {
                                 line: (kv.1.line - 1) as u32,
-                                character: (kv.1.col + kv.1.len() - 1) as u32,
+                                character: (kv.1.col + kv.1.len().unwrap_or(1) - 1) as u32,
                             },
                         },
                     });
