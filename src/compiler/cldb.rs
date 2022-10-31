@@ -216,6 +216,10 @@ impl CldbRun {
             None
         }
     }
+
+    pub fn current_step(&self) -> RunStep {
+        self.step.clone()
+    }
 }
 
 pub struct CldbNoOverride {}

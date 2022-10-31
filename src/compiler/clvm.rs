@@ -39,6 +39,15 @@ impl RunStep {
             RunStep::Step(_, _, p) => Some(p.clone()),
         }
     }
+
+    pub fn loc(&self) -> Srcloc {
+        match self {
+            RunStep::Done(l, _) => l.clone(),
+            RunStep::OpResult(l, _, _) => l.clone(),
+            RunStep::Op(e, _, _, _, _) => e.loc(),
+            RunStep::Step(e, _, _) => e.loc()
+        }
+    }
 }
 
 fn choose_path(

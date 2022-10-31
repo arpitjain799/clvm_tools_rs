@@ -1,21 +1,27 @@
 use serde::Deserialize;
 
-use std::collections::HashMap;
+use std::borrow::Borrow;
+use std::collections::{BTreeMap, HashMap};
 use std::io::BufRead;
+use std::mem::swap;
 use std::rc::Rc;
 
 use debug_types::events::{Event, EventBody, StoppedEvent, StoppedReason};
 use debug_types::requests::{InitializeRequestArguments, LaunchRequestArguments, RequestCommand};
-use debug_types::responses::{InitializeResponse, Response, ResponseBody, ThreadsResponse};
-use debug_types::types::{Capabilities, ChecksumAlgorithm, Thread};
+use debug_types::responses::{InitializeResponse, Response, ResponseBody, StackTraceResponse, ThreadsResponse};
+use debug_types::types::{Capabilities, ChecksumAlgorithm, StackFrame, Thread};
 use debug_types::{MessageKind, ProtocolMessage};
+
+use clvmr::allocator::Allocator;
 
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
 use crate::compiler::cldb::{CldbNoOverride, CldbRun, CldbRunEnv};
-use crate::compiler::clvm::start_step;
+use crate::compiler::clvm::{RunStep, start_step};
+use crate::compiler::compiler::{DefaultCompilerOpts, compile_file};
+use crate::compiler::comptypes::CompilerOpts;
 use crate::compiler::dbg::types::MessageHandler;
 use crate::compiler::lsp::types::{IFileReader, ILogWriter};
-use crate::compiler::sexp::{SExp, parse_sexp};
+use crate::compiler::sexp::{SExp, parse_sexp, decode_string};
 use crate::compiler::srcloc::Srcloc;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -29,11 +35,35 @@ pub struct RequestContainer<T> {
     arguments: T
 }
 
+#[derive(Clone, Debug)]
+pub enum TargetDepth {
+    LessThan(usize),
+    LessOrEqual(usize)
+}
+
 pub struct RunningDebugger {
     initialized: InitializeRequestArguments,
     launch_info: LaunchRequestArguments,
     running: bool,
-    run: CldbRun
+    run: CldbRun,
+    target_depth: Option<TargetDepth>,
+    stopped_reason: Option<StoppedReason>,
+
+    pub symbol_table: HashMap<String, String>,
+    pub prev_steps: Vec<Rc<RunStep>>,
+    pub prev_outcomes: Vec<Option<BTreeMap<String, String>>>,
+    pub opts: Rc<dyn CompilerOpts>,
+    pub allocator: Allocator
+}
+
+impl RunningDebugger {
+    fn step(&mut self) -> Option<BTreeMap<String, String>> {
+        let prev_step = Rc::new(self.run.current_step());
+        let step_result = self.run.step(&mut self.allocator);
+        self.prev_steps.push(prev_step);
+        self.prev_outcomes.push(step_result.clone());
+        step_result
+    }
 }
 
 pub enum State {
@@ -55,10 +85,6 @@ pub struct Debugger {
     pub state: State,
     // We'll store a short program here for how to run the target program.
     pub expression: Option<Rc<SExp>>,
-    pub variable_values: HashMap<Vec<u8>, Rc<SExp>>,
-    // All historical steps (for backstep)
-    pub steps: Vec<HashMap<String, String>>,
-    pub breakpoints: Vec<BreakpointLocation>,
 
     pub runner: Rc<dyn TRunProgram>,
     pub prim_map: Rc<HashMap<Vec<u8>, Rc<SExp>>>,
@@ -77,9 +103,6 @@ impl Debugger {
             log,
             state: State::PreInitialization,
             expression: None,
-            variable_values: HashMap::new(),
-            steps: Vec::new(),
-            breakpoints: Vec::new(),
             runner,
             prim_map,
             msg_seq: 0,
@@ -133,15 +156,142 @@ fn get_initialize_response() -> InitializeResponse {
     }
 }
 
+fn is_mod(sexp: Rc<SExp>) -> bool {
+    if let SExp::Cons(_,a,_) = sexp.borrow() {
+        if let SExp::Atom(_,n) = a.borrow() {
+            n == b"mod"
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
+impl Debugger {
+    fn launch(
+        &self,
+        mut allocator: Allocator,
+        pm: &ProtocolMessage,
+        name: &str,
+        i: &InitializeRequestArguments,
+        l: &LaunchRequestArguments,
+        stop_on_entry: bool
+    ) -> Result<(i64, State, Vec<ProtocolMessage>), String> {
+        let mut seq_nr = self.msg_seq;
+        let read_in_file = self.fs.read(&name)?;
+        let opts = Rc::new(DefaultCompilerOpts::new(name));
+        let mut parsed_program =
+            parse_sexp(
+                Srcloc::start(&name),
+                read_in_file.iter().copied()
+            ).map_err(|e| format!("{}: {}", e.0.to_string(), e.1))?;
+        if parsed_program.is_empty() {
+            return Err(format!("Empty program file {}", name));
+        }
+
+        let mut use_symbol_table = HashMap::new();
+        if is_mod(parsed_program[0].clone()) {
+            // Compile program.
+            let unopt_res = compile_file(
+                &mut allocator,
+                self.runner.clone(),
+                opts.clone(),
+                &decode_string(&read_in_file),
+                &mut use_symbol_table,
+            ).map_err(|e| format!("{}: {}", e.0, e.1))?;
+            parsed_program = vec![Rc::new(unopt_res)];
+        }
+
+        // XXX Empty arguments for now.
+        let arguments = Rc::new(SExp::Nil(parsed_program[0].loc()));
+        let program_lines: Vec<String> =
+            read_in_file.lines().map(|x| x.unwrap().to_string()).collect();
+        let env = CldbRunEnv::new(
+            Some(name.to_owned()),
+            program_lines,
+            Box::new(CldbNoOverride::new())
+        );
+        let cldb_run = CldbRun::new(
+            self.runner.clone(),
+            self.prim_map.clone(),
+            Box::new(env),
+            start_step(parsed_program[0].clone(), arguments)
+        );
+        let state = State::Launched(RunningDebugger {
+            initialized: i.clone(),
+            launch_info: l.clone(),
+            running: !stop_on_entry,
+            run: cldb_run,
+            opts: opts.clone(),
+            prev_steps: Vec::new(),
+            prev_outcomes: Vec::new(),
+            symbol_table: use_symbol_table,
+            allocator: Allocator::new(),
+            stopped_reason: None,
+            target_depth: None
+        });
+
+        seq_nr += 1;
+        let mut out_messages = vec![ProtocolMessage {
+            seq: self.msg_seq,
+            message: MessageKind::Response(Response {
+                request_seq: pm.seq,
+                success: true,
+                message: None,
+                body: Some(ResponseBody::Launch)
+            })
+        }];
+
+        // Signal that we're paused if stop on entry.
+        if stop_on_entry {
+            seq_nr += 1;
+            out_messages.push(ProtocolMessage {
+                seq: self.msg_seq,
+                message: MessageKind::Event(Event {
+                    body: Some(EventBody::Stopped(StoppedEvent {
+                        reason: StoppedReason::Entry,
+                        description: None,
+                        thread_id: None,
+                        preserve_focus_hint: None,
+                        text: None,
+                        all_threads_stopped: Some(true),
+                        hit_breakpoint_ids: None
+                    }))
+                })
+            });
+        }
+
+        return Ok((seq_nr, state, out_messages));
+    }
+}
+
+fn get_stack_depth(mut step: Rc<RunStep>) -> usize {
+    let mut res = 0;
+    loop {
+        if let Some(s) = step.parent() {
+            res += 1;
+            step = s;
+        } else {
+            break;
+        }
+    }
+    res
+}
+
 impl MessageHandler<ProtocolMessage> for Debugger {
     fn handle_message(
         &mut self,
         raw_json: &serde_json::Value,
         pm: &ProtocolMessage,
     ) -> Result<Option<Vec<ProtocolMessage>>, String> {
+        let mut state = State::PreInitialization;
         self.log.write(&format!("got message {}", serde_json::to_string(pm).unwrap()));
+
+        swap(&mut state, &mut self.state);
+
         if let MessageKind::Request(req) = &pm.message {
-            match (&self.state, req) {
+            match (state, req) {
                 (State::PreInitialization, RequestCommand::Initialize(irq)) => {
                     self.state = State::Initialized(irq.clone());
                     self.msg_seq += 1;
@@ -156,6 +306,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     }]));
                 }
                 (State::Initialized(i), RequestCommand::Launch(l)) => {
+                    let allocator = Allocator::new();
                     let launch_extra: Option<RequestContainer<ExtraLaunchData>> =
                         serde_json::from_value(raw_json.clone()).
                         map(Some).unwrap_or(None);
@@ -165,74 +316,20 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     self.log.write(&format!("stop on entry: {}", stop_on_entry));
 
                     if let Some(name) = &l.name {
-                        let read_in_file = self.fs.read(&name)?;
-                        let parsed_program =
-                            parse_sexp(
-                                Srcloc::start(&name),
-                                read_in_file.iter().copied()
-                            ).map_err(|e| format!("{}: {}", e.0.to_string(), e.1))?;
-                        if parsed_program.is_empty() {
-                            return Err(format!("Empty program file {}", name));
-                        }
+                        let (new_seq, new_state, out_msgs) = self.launch(allocator, pm, name, &i, l, stop_on_entry)?;
+                        self.msg_seq = new_seq;
+                        self.state = new_state;
 
-                        // XXX Empty arguments for now.
-                        let arguments = Rc::new(SExp::Nil(parsed_program[0].loc()));
-                        let program_lines: Vec<String> =
-                            read_in_file.lines().map(|x| x.unwrap().to_string()).collect();
-                        let env = CldbRunEnv::new(
-                            Some(name.to_owned()),
-                            program_lines,
-                            Box::new(CldbNoOverride::new())
-                        );
-                        let cldb_run = CldbRun::new(
-                            self.runner.clone(),
-                            self.prim_map.clone(),
-                            Box::new(env),
-                            start_step(parsed_program[0].clone(), arguments)
-                        );
-                        self.state = State::Launched(RunningDebugger {
-                            initialized: i.clone(),
-                            launch_info: l.clone(),
-                            running: !stop_on_entry,
-                            run: cldb_run
-                        });
-                        self.msg_seq += 1;
-
-                        let mut out_messages = vec![ProtocolMessage {
-                            seq: self.msg_seq,
-                            message: MessageKind::Response(Response {
-                                request_seq: pm.seq,
-                                success: true,
-                                message: None,
-                                body: Some(ResponseBody::Launch)
-                            })
-                        }];
-
-                        // Signal that we're paused if stop on entry.
-                        if stop_on_entry {
-                            self.msg_seq += 1;
-                            out_messages.push(ProtocolMessage {
-                                seq: self.msg_seq,
-                                message: MessageKind::Event(Event {
-                                    body: Some(EventBody::Stopped(StoppedEvent {
-                                        reason: StoppedReason::Entry,
-                                        description: None,
-                                        thread_id: None,
-                                        preserve_focus_hint: None,
-                                        text: None,
-                                        all_threads_stopped: Some(true),
-                                        hit_breakpoint_ids: None
-                                    }))
-                                })
-                            });
-                        }
-
-                        return Ok(Some(out_messages));
+                        return Ok(Some(out_msgs));
                     } else {
+                        self.state = State::Initialized(i.clone());
                         self.log.write("No program provided");
                     }
                 },
                 (State::Launched(r), RequestCommand::Threads) => {
+                    self.msg_seq += 1;
+                    self.state = State::Launched(r);
+
                     return Ok(Some(vec![ProtocolMessage {
                         seq: self.msg_seq,
                         message: MessageKind::Response(Response {
@@ -249,15 +346,200 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     }]));
                 },
                 (State::Launched(r), RequestCommand::StackTrace(sta)) => {
-                    
+                    let mut stack_frames = Vec::new();
+                    let mut step = Rc::new(r.run.current_step());
+                    let mut sfid = 1;
+
+                    loop {
+                        let current_loc = step.loc();
+                        let file_borrowed: &String = current_loc.file.borrow();
+                        stack_frames.push(StackFrame {
+                            id: sfid,
+                            name: format!("stack frame {}", sfid),
+                            source: None,
+                            line: current_loc.line as u32,
+                            column: current_loc.col as u32,
+                            end_line: current_loc.until.as_ref().map(|u| {
+                                u.line as u32
+                            }),
+                            end_column: current_loc.until.as_ref().map(|u| {
+                                u.col as u32
+                            }),
+                            can_restart: None,
+                            instruction_pointer_reference: None,
+                            module_id: None,
+                            presentation_hint: None
+                        });
+
+                        sfid += 1;
+                        if let Some(p) = step.parent() {
+                            step = p;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    self.msg_seq += 1;
+                    self.state = State::Launched(r);
+
+                    return Ok(Some(vec![ProtocolMessage {
+                        seq: self.msg_seq,
+                        message: MessageKind::Response(Response {
+                            request_seq: pm.seq,
+                            success: true,
+                            message: None,
+                            body: Some(ResponseBody::StackTrace(StackTraceResponse {
+                                stack_frames,
+                                total_frames: None
+                            }))
+                        })
+                    }]));
                 },
-                (State::Launched(r), RequestCommand::StepIn(si)) => {
+                (State::Launched(mut r), RequestCommand::Pause(pi)) => {
+                    let mut out_messages = Vec::new();
+
+                    self.msg_seq += 1;
+                    out_messages.push(ProtocolMessage {
+                        seq: self.msg_seq,
+                        message: MessageKind::Response(Response {
+                            request_seq: pm.seq,
+                            success: true,
+                            message: None,
+                            body: Some(ResponseBody::Pause)
+                        })
+                    });
+
+                    r.running = false;
+                    r.stopped_reason = None;
+                    self.msg_seq += 1;
+                    out_messages.push(ProtocolMessage {
+                        seq: self.msg_seq,
+                        message: MessageKind::Event(Event {
+                            body: Some(EventBody::Stopped(StoppedEvent {
+                                reason: StoppedReason::Pause,
+                                description: None,
+                                thread_id: None,
+                                preserve_focus_hint: None,
+                                text: None,
+                                all_threads_stopped: Some(true),
+                                hit_breakpoint_ids: None
+                            }))
+                        })
+                    });
+
+                    self.state = State::Launched(r);
+                    return Ok(Some(out_messages));
                 },
-                (State::Launched(r), RequestCommand::Next(n)) => {
+                (State::Launched(mut r), RequestCommand::StepIn(si)) => {
+                    r.step();
+
+                    self.msg_seq += 1;
+
+                    let mut out_messages = Vec::new();
+                    if si.thread_id != -1 {
+                        out_messages.push(ProtocolMessage {
+                            seq: self.msg_seq,
+                            message: MessageKind::Response(Response {
+                                request_seq: pm.seq,
+                                success: true,
+                                message: None,
+                                body: Some(ResponseBody::StepIn)
+                            })
+                        });
+                    }
+
+                    let stack_depth = get_stack_depth(Rc::new(r.run.current_step()));
+                    // We should signal stopped if:
+                    // - This is an organic step request from vscode or
+                    // - We're running and
+                    //   - The program ended or
+                    //     - The stack depth target was reached.
+                    let should_stop =
+                        si.thread_id != -1 ||
+                        (r.running && (r.run.is_ended() || match r.target_depth {
+                            None => false,
+                            Some(TargetDepth::LessThan(n)) => stack_depth < n,
+                            Some(TargetDepth::LessOrEqual(n)) => stack_depth <= n
+                        }));
+
+                    // If we should stop, then we emit a stopped message.
+                    if should_stop {
+                        r.running = false;
+                        r.stopped_reason = None;
+                        self.msg_seq += 1;
+                        out_messages.push(ProtocolMessage {
+                            seq: self.msg_seq,
+                            message: MessageKind::Event(Event {
+                                body: Some(EventBody::Stopped(StoppedEvent {
+                                    reason: r.stopped_reason.as_ref().cloned().unwrap_or(StoppedReason::Step),
+                                    description: None,
+                                    thread_id: None,
+                                    preserve_focus_hint: None,
+                                    text: None,
+                                    all_threads_stopped: Some(true),
+                                    hit_breakpoint_ids: None
+                                }))
+                            })
+                        });
+                    }
+
+                    self.state = State::Launched(r);
+                    return Ok(Some(out_messages));
                 },
-                (State::Launched(r), RequestCommand::StepOut(so)) => {
+                (State::Launched(mut r), RequestCommand::Next(n)) => {
+                    let depth = get_stack_depth(Rc::new(r.run.current_step()));
+
+                    self.msg_seq += 1;
+                    r.running = true;
+                    r.stopped_reason = Some(StoppedReason::Pause);
+                    r.target_depth = Some(TargetDepth::LessOrEqual(depth));
+                    self.state = State::Launched(r);
+
+                    return Ok(Some(vec![ProtocolMessage {
+                        seq: self.msg_seq,
+                        message: MessageKind::Response(Response {
+                            request_seq: pm.seq,
+                            success: true,
+                            message: Some("run next".to_string()),
+                            body: Some(ResponseBody::Next)
+                        })
+                    }]));
                 },
-                (State::Launched(r), RequestCommand::Continue(c)) => {
+                (State::Launched(mut r), RequestCommand::StepOut(so)) => {
+                    let depth = get_stack_depth(Rc::new(r.run.current_step()));
+
+                    self.msg_seq += 1;
+                    r.running = true;
+                    r.stopped_reason = Some(StoppedReason::Pause);
+                    r.target_depth = Some(TargetDepth::LessThan(depth));
+                    self.state = State::Launched(r);
+
+                    return Ok(Some(vec![ProtocolMessage {
+                        seq: self.msg_seq,
+                        message: MessageKind::Response(Response {
+                            request_seq: pm.seq,
+                            success: true,
+                            message: Some("run step out".to_string()),
+                            body: Some(ResponseBody::StepOut)
+                        })
+                    }]));
+                },
+                (State::Launched(mut r), RequestCommand::Continue(c)) => {
+                    self.msg_seq += 1;
+                    r.running = true;
+                    r.stopped_reason = Some(StoppedReason::Pause);
+                    r.target_depth = None;
+                    self.state = State::Launched(r);
+
+                    return Ok(Some(vec![ProtocolMessage {
+                        seq: self.msg_seq,
+                        message: MessageKind::Response(Response {
+                            request_seq: pm.seq,
+                            success: true,
+                            message: Some("run continue".to_string()),
+                            body: Some(ResponseBody::StepOut)
+                        })
+                    }]));
                 },
                 (_st, _rq) => {
                     self.log.write(&format!("Don't know what to do with {:?}", req));
