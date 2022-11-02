@@ -640,6 +640,9 @@ fn chialisp_to_expr(
         BodyForm::Quoted(SExp::QuotedString(l, _, v)) => {
             Ok(Expr::ELit(l.clone(), v.len().to_bigint().unwrap()))
         }
+        BodyForm::Quoted(SExp::Atom(l, v)) => {
+            Ok(Expr::ELit(l.clone(), v.len().to_bigint().unwrap()))
+        }
         BodyForm::Quoted(SExp::Cons(l, a, b)) => {
             let a_borrowed: &SExp = a.borrow();
             let b_borrowed: &SExp = b.borrow();
@@ -772,12 +775,9 @@ fn handle_function_type(
 
 // Given a compileform, typecheck
 impl Context {
-    pub fn typecheck_chialisp_program(&self, comp: &CompileForm) -> Result<Polytype, CompileErr> {
+    pub fn compute_program_type(&self, opts: Rc<dyn CompilerOpts>, comp: &CompileForm) -> Result<(Context, Polytype), CompileErr> {
         let mut context = self.clone();
         let mut structs = HashSet::new();
-        let file_sexp = comp.exp.to_sexp().loc();
-        let file_borrowed: &String = file_sexp.file.borrow();
-        let opts = Rc::new(DefaultCompilerOpts::new(file_borrowed));
 
         // Extract type definitions
         for h in comp.helpers.iter() {
@@ -845,10 +845,19 @@ impl Context {
             }
         }
 
-        // Typecheck main expression
         let ty = type_of_defun(comp.exp.loc(), &comp.ty);
-        let (context_with_args, result_ty) =
-            handle_function_type(&structs, &context, comp.exp.loc(), comp.args.clone(), &ty)?;
+        handle_function_type(&structs, &context, comp.exp.loc(), comp.args.clone(), &ty)
+    }
+
+    pub fn typecheck_chialisp_program(&self, comp: &CompileForm) -> Result<Polytype, CompileErr> {
+        let file_sexp = comp.exp.to_sexp().loc();
+        let file_borrowed: &String = file_sexp.file.borrow();
+        let opts = Rc::new(DefaultCompilerOpts::new(file_borrowed));
+
+        // Typesynth
+        let (context_with_args, result_ty) = self.compute_program_type(opts.clone(), comp)?;
+
+        // Typecheck main expression
         let clexpr = chialisp_to_expr(opts, comp, comp.args.clone(), comp.exp.clone())?;
         typecheck_chialisp_body_with_context(
             &context_with_args,

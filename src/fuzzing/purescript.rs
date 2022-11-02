@@ -9,7 +9,8 @@ use crate::compiler::comptypes::{BodyForm, CompileForm, CompilerOpts, HelperForm
 use crate::compiler::evaluate::dequote;
 use crate::compiler::frontend::frontend;
 use crate::compiler::sexp::{SExp, decode_string};
-use crate::compiler::typechia::type_level_macro_transform;
+use crate::compiler::typecheck::TheoryToSExp;
+use crate::compiler::typechia::{standard_type_context, type_level_macro_transform};
 use crate::util::Number;
 
 lazy_static! {
@@ -53,6 +54,11 @@ instance chiaOutcomeApply :: Apply ChiaOutcome where
   apply (ChiaResult f) (ChiaResult a) = ChiaResult $ f a
   apply (ChiaException e) _ = ChiaException e
   apply _ (ChiaException e) = ChiaException e
+
+instance chiaOutcomeBind :: Bind ChiaOutcome where
+  bind :: forall m b a. m a -> (a -> m b) -> m b
+  bind (ChiaResult v) f = f v
+  bind (ChiaException e) _ = ChiaException e
 
 class HasValue t where
   getValue :: t -> ChiaPrim
@@ -333,11 +339,12 @@ fn produce_body(opts: Rc<dyn CompilerOpts>, result_vec: &mut Vec<String>, prog: 
                             result_vec.push(format!("{}farg_{} <- getValue <$> do", do_indent(indent + 2), i));
                             produce_body(opts.clone(), result_vec, prog, indent + 4, a);
                         }
-                        result_vec.push(format!("{}cvt <$> {} $ Pair $ ", do_indent(indent + 2), decode_string(&defname)));
+                        result_vec.push(format!("{}cvt <$> {} (Pair $ ", do_indent(indent + 2), decode_string(&defname)));
                         for (i,_) in elts.iter().skip(1).enumerate() {
                             result_vec.push(format!("{}ChiaCons (getValue farg_{}) $", do_indent(indent + 4), i));
                         }
                         result_vec.push(format!("{}ChiaAtom \"\"", do_indent(indent + 4)));
+                        result_vec.push(format!("{})", do_indent(indent + 2)));
                     } else if let HelperForm::Defmacro(loc, name, macargs, macbody) = callable {
                         // expand macro as in type synthesis.
                         let expanded_expression = type_level_macro_transform(
@@ -422,7 +429,7 @@ fn choose_path(target_path: Number, expression: String) -> String {
         choose_path(
             target_path >> 1,
             format!(
-                "{} <$> {}",
+                "{} =<< {}",
                 apply_function,
                 expression
             )
@@ -433,7 +440,10 @@ fn choose_path(target_path: Number, expression: String) -> String {
 // Produce a checkable purescript program from our chialisp.
 // Between prefix and suffix, we can add function definitions for our
 // chialisp functions, ending in __chia__main.
-pub fn chialisp_to_purescript(opts: Rc<dyn CompilerOpts>, prog: &CompileForm) -> String {
+pub fn chialisp_to_purescript(opts: Rc<dyn CompilerOpts>, prog: &CompileForm) -> Result<String, String> {
+    let context = standard_type_context();
+    let (_, type_of_program) = context.compute_program_type(opts.clone(), prog).map_err(|e| format!("{}: {}", e.0, e.1))?;
+
     let mut result_vec = Vec::new();
     // Spill constants
     for h in prog.helpers.iter() {
@@ -448,13 +458,13 @@ pub fn chialisp_to_purescript(opts: Rc<dyn CompilerOpts>, prog: &CompileForm) ->
         result_vec.push(format!("-- produce helper {}", h.to_sexp()));
         if let HelperForm::Defun(_, _, _, defargs, defbody, ty) = h.borrow() {
             let name = decode_string(&h.name());
-            result_vec.push(format!("{} args =", name));
+            result_vec.push(format!("{} args = do", name));
 
             let args = collect_args(defargs.clone());
             result_vec.push("-- produce args".to_string());
             if !args.is_empty() {
                 for (path, a) in args.iter() {
-                    result_vec.push(format!("  {} <- {}", decode_string(&a), choose_path(path.clone(), "pure args".to_string())));
+                    result_vec.push(format!("  {} <- {}", decode_string(&un_dollar(&a)), choose_path(path.clone(), "pure (cvt args)".to_string())));
                 }
             }
 
@@ -470,7 +480,7 @@ pub fn chialisp_to_purescript(opts: Rc<dyn CompilerOpts>, prog: &CompileForm) ->
     result_vec.push("-- produce args".to_string());
     if !args.is_empty() {
         for (path, a) in args.iter() {
-            result_vec.push(format!("  {} <- {}", decode_string(&a), choose_path(path.clone(), "pure args".to_string())));
+            result_vec.push(format!("  {} <- {}", decode_string(&a), choose_path(path.clone(), "pure (cvt args)".to_string())));
         }
     }
     produce_body(opts, &mut result_vec, prog, 2, prog.exp.borrow());
@@ -486,5 +496,5 @@ pub fn chialisp_to_purescript(opts: Rc<dyn CompilerOpts>, prog: &CompileForm) ->
     let suffix_str: &String = &PURESCRIPT_SUFFIX;
     result_bytes.append(&mut suffix_str.as_bytes().to_vec());
 
-    decode_string(&result_bytes)
+    Ok(decode_string(&result_bytes))
 }
