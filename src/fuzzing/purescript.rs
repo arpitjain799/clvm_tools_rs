@@ -1,10 +1,3 @@
-#[cfg(test)]
-use rand::prelude::*;
-#[cfg(test)]
-use rand;
-#[cfg(test)]
-use rand_chacha::ChaCha8Rng;
-
 use num_bigint::ToBigInt;
 
 use std::borrow::Borrow;
@@ -12,11 +5,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::classic::clvm::__type_compatibility__::{bi_one, bi_zero};
-use crate::compiler::compiler::DefaultCompilerOpts;
 use crate::compiler::comptypes::{BodyForm, CompileForm, CompilerOpts, HelperForm};
 use crate::compiler::evaluate::dequote;
 use crate::compiler::frontend::frontend;
-use crate::compiler::fuzzer::FuzzProgram;
 use crate::compiler::sexp::{SExp, decode_string};
 use crate::compiler::typechia::type_level_macro_transform;
 use crate::util::Number;
@@ -484,25 +475,16 @@ pub fn chialisp_to_purescript(opts: Rc<dyn CompilerOpts>, prog: &CompileForm) ->
     }
     produce_body(opts, &mut result_vec, prog, 2, prog.exp.borrow());
 
+    let mut result_bytes = Vec::new();
     let prefix_str: &String = &PURESCRIPT_PREFIX;
-    eprintln!("{}", prefix_str);
+    result_bytes.append(&mut prefix_str.as_bytes().to_vec());
     for line in result_vec.iter() {
-        eprintln!("{}", line);
+        result_bytes.push(b'\n');
+        result_bytes.append(&mut line.as_bytes().to_vec());
     }
+    result_bytes.push(b'\n');
     let suffix_str: &String = &PURESCRIPT_SUFFIX;
-    eprintln!("{}", suffix_str);
+    result_bytes.append(&mut suffix_str.as_bytes().to_vec());
 
-    todo!();
-}
-
-#[test]
-fn test_basic_purescript_typing_from_chialisp() {
-    let mut rng = ChaCha8Rng::from_entropy();
-    let prog: FuzzProgram = rng.gen();
-    let serialized = prog.to_sexp();
-    eprintln!("-- program {}", serialized);
-    let opts = Rc::new(DefaultCompilerOpts::new("*random*"));
-    let parsed = frontend(opts.clone(), vec![Rc::new(serialized)]).unwrap();
-    let program = chialisp_to_purescript(opts, &parsed);
-    eprintln!("program {}", program);
+    decode_string(&result_bytes)
 }

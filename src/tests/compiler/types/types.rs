@@ -2,6 +2,7 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::compiler::fuzzing::purescript::chialisp_to_purescript;
 use crate::compiler::sexp::parse_sexp;
 use crate::compiler::srcloc::{HasLoc, Srcloc};
 use crate::compiler::typecheck::{parse_expr_sexp, parse_type_sexp, TheoryToSExp};
@@ -231,4 +232,18 @@ fn test_list_content_with_anno() {
 #[test]
 fn test_sized_atom() {
     check_expression_against_type("(sha256 (cons 3 ()))", "Atom32", false);
+}
+
+
+#[test]
+fn test_basic_purescript_typing_from_chialisp() {
+    let mut rng = ChaCha8Rng::from_entropy();
+    let prog: FuzzProgram = rng.gen();
+    let serialized = prog.to_sexp();
+    eprintln!("-- program {}", serialized);
+    let opts = Rc::new(DefaultCompilerOpts::new("*random*"));
+    let parsed = frontend(opts.clone(), vec![Rc::new(serialized)]).unwrap();
+    let program = chialisp_to_purescript(opts, &parsed);
+    eprintln!("program {}", program);
+    todo!();
 }

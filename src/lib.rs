@@ -18,6 +18,12 @@ extern crate tempfile;
 
 extern crate clvmr as clvm_rs;
 
+#[cfg(any(test, feature = "fuzzer"))]
+extern crate rand;
+
+#[cfg(any(test, feature = "fuzzer"))]
+extern crate random_lfsr_256_galois;
+
 mod util;
 
 pub mod classic;
@@ -26,6 +32,9 @@ pub mod compiler;
 // Python impl
 #[cfg(all(not(test), not(target_family = "wasm"), feature = "extension-module"))]
 mod py;
+
+#[cfg(any(test, feature = "fuzzer"))]
+pub mod fuzzing;
 
 #[cfg(test)]
 mod tests;

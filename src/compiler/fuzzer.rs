@@ -1,11 +1,9 @@
 use num_bigint::{BigInt, ToBigInt};
-use num_traits::ToPrimitive;
 
 use rand::distributions::Standard;
 use rand::prelude::*;
 use rand::Rng;
 use rand::random;
-use rand_chacha::ChaCha8Rng;
 use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::cmp::max;
@@ -27,7 +25,7 @@ use crate::classic::clvm::__type_compatibility__::{
 use crate::classic::clvm::casts::{
     bigint_to_bytes_clvm
 };
-use crate::util::{Number, number_from_u8};
+use crate::util::Number;
 
 const MIN_ARGLIST: usize = 3;
 const MAX_STEPS: usize = 1000;
@@ -853,12 +851,4 @@ impl Distribution<FuzzOldProgram> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> FuzzOldProgram {
         random_old_program(rng, MAX_LIST_BOUND)
     }
-}
-
-pub fn make_random_u64_seed() -> u64 {
-    let mut rng = ChaCha8Rng::from_entropy();
-    let random_seed = random_atom_name(&mut rng, 10);
-    let random_seed_as_bigint =
-        number_from_u8(&random_seed) & 0xffffffffffff_u64.to_bigint().unwrap();
-    random_seed_as_bigint.to_u64().unwrap()
 }

@@ -211,6 +211,8 @@ impl Dialect for CompilerOperators {
             _ => self.base_dialect.op(allocator, op, sexp, max_cost),
         }
     }
+
+    fn val_stack_limit(&self) -> usize { 10000000 }
 }
 
 impl CompilerOperators {

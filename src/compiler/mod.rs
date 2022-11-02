@@ -7,7 +7,7 @@ pub mod comptypes;
 pub mod debug;
 pub mod evaluate;
 pub mod frontend;
-#[cfg(test)]
+#[cfg(any(test, feature = "fuzzer"))]
 pub mod fuzzer;
 pub mod gensym;
 mod inline;
