@@ -625,7 +625,7 @@ fn handle_macro(
     }
 }
 
-fn chialisp_to_expr(
+pub fn chialisp_to_expr(
     opts: Rc<dyn CompilerOpts>,
     program: &CompileForm,
     form_args: Rc<SExp>,

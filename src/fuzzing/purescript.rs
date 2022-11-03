@@ -1,7 +1,7 @@
 use num_bigint::ToBigInt;
 
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use std::collections::{HashSet, HashMap};
 use std::rc::Rc;
 
 use crate::classic::clvm::__type_compatibility__::{bi_one, bi_zero};
@@ -9,8 +9,9 @@ use crate::compiler::comptypes::{BodyForm, CompileForm, CompilerOpts, HelperForm
 use crate::compiler::evaluate::dequote;
 use crate::compiler::frontend::frontend;
 use crate::compiler::sexp::{SExp, decode_string};
-use crate::compiler::typecheck::TheoryToSExp;
-use crate::compiler::typechia::{standard_type_context, type_level_macro_transform};
+use crate::compiler::typechia::{chialisp_to_expr, standard_type_context, type_level_macro_transform};
+use crate::compiler::types::ast::{Context, Polytype, Type, TypeVar};
+use crate::compiler::types::theory::TypeTheory;
 use crate::util::Number;
 
 lazy_static! {
@@ -56,7 +57,7 @@ instance chiaOutcomeApply :: Apply ChiaOutcome where
   apply _ (ChiaException e) = ChiaException e
 
 instance chiaOutcomeBind :: Bind ChiaOutcome where
-  bind :: forall m b a. m a -> (a -> m b) -> m b
+  bind :: forall b a. ChiaOutcome a -> (a -> ChiaOutcome b) -> ChiaOutcome b
   bind (ChiaResult v) f = f v
   bind (ChiaException e) _ = ChiaException e
 
@@ -216,6 +217,10 @@ f x = ChiaException (getValue x)
 r :: forall f0 r0. (FromValue r0) => (Pair (Pair f0 r0) Nil) -> ChiaOutcome r0
 r (Pair (ChiaCons (ChiaCons a b) _)) = ChiaResult (fromValue b)
 r x = ChiaException (getValue x)
+
+c :: forall a b. (FromValue a) => (FromValue b) => Pair a (Pair b Nil) -> ChiaOutcome (Pair a b)
+c (Pair (ChiaCons a (ChiaCons b _))) = ChiaResult $ ChiaCons (fromValue a) (fromValue b)
+c x = ChiaException (getValue x)
 
 a :: forall a b c. (HasValue (Exec (ChiaFun a b))) => (FromValue b) => (Pair (Exec (ChiaFun a b)) (Pair b c)) -> ChiaOutcome b
 a x = pure $ fromValue (getValue x)
@@ -437,12 +442,105 @@ fn choose_path(target_path: Number, expression: String) -> String {
     }
 }
 
+// Collect typevars via TExists or TForall (they'll be used the same way here)
+// so we can state a specific type for some code.
+fn collect_free_vars(
+    via: &HashSet<TypeVar>,
+    typevars: &mut Vec<TypeVar>,
+    ty: &Polytype
+) {
+    match ty {
+        Type::TVar(tv) => {
+            if via.contains(tv) {
+                return;
+            }
+            typevars.push(tv.clone());
+        },
+        Type::TExists(e) => {
+            if via.contains(e) {
+                return;
+            }
+            typevars.push(e.clone());
+        },
+        Type::TForall(v, t) => {
+            let mut new_via = via.clone();
+            new_via.insert(v.clone());
+            collect_free_vars(&new_via, typevars, t);
+        },
+        Type::TFun(a, b) => {
+            collect_free_vars(via, typevars, a.borrow());
+            collect_free_vars(via, typevars, b.borrow());
+        },
+        Type::TNullable(a) => {
+            collect_free_vars(via, typevars, a.borrow());
+        },
+        Type::TPair(a, b) => {
+            collect_free_vars(via, typevars, a.borrow());
+            collect_free_vars(via, typevars, b.borrow());
+        },
+        Type::TExec(a) => {
+            collect_free_vars(via, typevars, a.borrow());
+        },
+        Type::TApp(a, b) => {
+            collect_free_vars(via, typevars, a.borrow());
+            collect_free_vars(via, typevars, b.borrow());
+        },
+        Type::TAbs(a, b) => {
+            todo!();
+        },
+        _ => { }
+    }
+}
+
+fn type_to_purescript_recursive(ctx: &Context, ty: &Polytype) -> String {
+    match ty {
+        Type::TUnit(_) => "Unit".to_string(),
+        Type::TAny(_) => "Any".to_string(),
+        Type::TAtom(_, Some(n)) => "Atom32".to_string(),
+        Type::TAtom(_, _) => "Atom".to_string(),
+        Type::TVar(tv) => tv.0.clone(),
+        Type::TExists(e) => type_to_purescript_recursive(ctx, &Type::TVar(e.clone())),
+        Type::TForall(v, t) => format!("(forall {}. {})", v.0, type_to_purescript_recursive(ctx, t)),
+        Type::TFun(a, b) => format!("(ChiaFun {} {})", type_to_purescript_recursive(ctx, a.borrow()), type_to_purescript(ctx, b.borrow())),
+        Type::TNullable(a) => format!("(Nullable {}", type_to_purescript_recursive(ctx, a.borrow())),
+        Type::TPair(a, b) => format!("(Pair {} {})", type_to_purescript_recursive(ctx, a.borrow()), type_to_purescript(ctx, b.borrow())),
+        Type::TExec(a) => format!("(Exec {})", type_to_purescript_recursive(ctx, a.borrow())),
+        Type::TApp(a,b) => format!("({} {})", type_to_purescript_recursive(ctx, a.borrow()), type_to_purescript(ctx, b.borrow())),
+        Type::TAbs(a,b) => todo!()
+    }
+}
+
+// Generates a purescript type from a chialisp type.
+// This is used to nail down function signatures and such.
+fn type_to_purescript(ctx: &Context, ty: &Polytype) -> String {
+    let mut typevars = Vec::new();
+    let typestring = type_to_purescript_recursive(ctx, ty);
+    collect_free_vars(&HashSet::new(), &mut typevars, ty);
+    if typevars.is_empty() {
+        typestring
+    } else {
+        let mut result_string = "forall ".to_string();
+        for v in typevars.iter() {
+            result_string = format!("{} {}", result_string, v.0);
+        }
+        format!("{}. {}", result_string, typestring)
+    }
+
+}
+
 // Produce a checkable purescript program from our chialisp.
 // Between prefix and suffix, we can add function definitions for our
 // chialisp functions, ending in __chia__main.
 pub fn chialisp_to_purescript(opts: Rc<dyn CompilerOpts>, prog: &CompileForm) -> Result<String, String> {
     let context = standard_type_context();
-    let (_, type_of_program) = context.compute_program_type(opts.clone(), prog).map_err(|e| format!("{}: {}", e.0, e.1))?;
+    let pstype = context.compute_program_type(opts.clone(), &prog).
+        and_then(|(ctx, ty)| {
+            chialisp_to_expr(opts.clone(), &prog, prog.args.clone(), prog.exp.clone()).
+                map(|expr| (ctx, expr))
+        }).and_then(|(ctx, expr)| {
+            let (synth_type, synth_ctx) = ctx.typesynth(&expr)?;
+            Ok(type_to_purescript(&synth_ctx, &synth_type))
+        }).unwrap_or_else(|_| "Any".to_string());
 
     let mut result_vec = Vec::new();
     // Spill constants
@@ -474,6 +572,7 @@ pub fn chialisp_to_purescript(opts: Rc<dyn CompilerOpts>, prog: &CompileForm) ->
     }
 
     // Write out main
+    result_vec.push(format!("chia_main :: Any -> ChiaOutcome {}", pstype));
     result_vec.push("chia_main args = do".to_string());
 
     let args = collect_args(prog.args.clone());

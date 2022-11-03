@@ -11,7 +11,7 @@ use clvm_tools_rs::compiler::compiler::DefaultCompilerOpts;
 use clvm_tools_rs::compiler::frontend::frontend;
 use clvm_tools_rs::compiler::fuzzer::FuzzProgram;
 use clvm_tools_rs::compiler::sexp::decode_string;
-use clvm_tools_rs::compiler::typechia::standard_type_context;
+use clvm_tools_rs::compiler::typechia::{standard_type_context};
 use clvm_tools_rs::fuzzing::fuzzrng::FuzzPseudoRng;
 use clvm_tools_rs::fuzzing::purescript::chialisp_to_purescript;
 
@@ -22,7 +22,8 @@ fuzz_target!(|data: &[u8]| {
     eprintln!("-- program {}", serialized);
     let opts = Rc::new(DefaultCompilerOpts::new("*random*"));
     let parsed = frontend(opts.clone(), vec![Rc::new(serialized)]).unwrap();
-    let program = chialisp_to_purescript(opts, &parsed).expect("should generate");
+
+    let program = chialisp_to_purescript(opts.clone(), &parsed).expect("should generate");
     eprintln!("program {}", program);
 
     // Write program

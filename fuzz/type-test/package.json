@@ -1,0 +1,7 @@
+{
+  "name": "clvm_tools_rs_pstest",
+  "devDependencies": {
+    "pulp": "^16.0.2",
+    "purescript": "^0.15.4"
+  }
+}
