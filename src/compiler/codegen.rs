@@ -656,14 +656,16 @@ fn codegen_(
                     )),
                 );
 
-                let mut unused_symbol_table = HashMap::new();
-                updated_opts
+                let mut unused_symbols = HashMap::new();
+                let generated_code_result = updated_opts
                     .compile_program(
                         allocator,
                         runner.clone(),
                         Rc::new(tocompile),
-                        &mut unused_symbol_table,
-                    )
+                        &mut unused_symbols,
+                    );
+
+                generated_code_result
                     .and_then(|code| {
                         if opts.optimize() {
                             run_optimizer(allocator, runner, Rc::new(code))
@@ -680,6 +682,7 @@ fn codegen_(
                     .map(|code| {
                         compiler.add_defun(
                             &defun.name,
+                            defun.args.clone(),
                             DefunCall {
                                 required_env: defun.args.clone(),
                                 code,
@@ -1214,12 +1217,16 @@ pub fn codegen(
 
     final_codegen(allocator, runner.clone(), opts.clone(), &compiler).and_then(|c| {
         let final_env = finalize_env(allocator, runner.clone(), opts.clone(), &c)?;
+
         match c.final_code {
             None => Err(CompileErr(
                 Srcloc::start(&opts.filename()),
                 "Failed to generate code".to_string(),
             )),
             Some(code) => {
+                // Capture symbols now that we have the final form of the produced code.
+                symbol_table.insert("__chia__main_arguments".to_string(), cmod.args.to_string());
+
                 if opts.in_defun() {
                     let final_code = primapply(
                         code.0.clone(),

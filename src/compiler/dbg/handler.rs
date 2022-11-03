@@ -1,3 +1,6 @@
+use num_bigint::ToBigInt;
+use num_traits::ToPrimitive;
+
 use serde::Deserialize;
 
 use std::borrow::Borrow;
@@ -8,15 +11,17 @@ use std::rc::Rc;
 
 use debug_types::events::{Event, EventBody, StoppedEvent, StoppedReason};
 use debug_types::requests::{InitializeRequestArguments, LaunchRequestArguments, RequestCommand};
-use debug_types::responses::{InitializeResponse, Response, ResponseBody, StackTraceResponse, ThreadsResponse};
-use debug_types::types::{Capabilities, ChecksumAlgorithm, StackFrame, Thread};
+use debug_types::responses::{InitializeResponse, Response, ResponseBody, ScopesResponse, StackTraceResponse, ThreadsResponse, VariablesResponse};
+use debug_types::types::{Capabilities, ChecksumAlgorithm, Scope, Source, StackFrame, Thread, Variable};
 use debug_types::{MessageKind, ProtocolMessage};
 
 use clvmr::allocator::Allocator;
 
+use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType};
+use crate::classic::clvm::casts::bigint_from_bytes;
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
 use crate::compiler::cldb::{CldbNoOverride, CldbRun, CldbRunEnv};
-use crate::compiler::clvm::{RunStep, start_step};
+use crate::compiler::clvm::{RunStep, start_step, sha256tree};
 use crate::compiler::compiler::{DefaultCompilerOpts, compile_file};
 use crate::compiler::comptypes::CompilerOpts;
 use crate::compiler::dbg::types::MessageHandler;
@@ -56,6 +61,13 @@ pub struct RunningDebugger {
     pub allocator: Allocator
 }
 
+pub struct RunningFunction {
+    pub hash: Vec<u8>,
+    pub name: String,
+    pub args: Option<Rc<SExp>>,
+    pub tail: Rc<SExp>
+}
+
 impl RunningDebugger {
     fn step(&mut self) -> Option<BTreeMap<String, String>> {
         let prev_step = Rc::new(self.run.current_step());
@@ -63,6 +75,44 @@ impl RunningDebugger {
         self.prev_steps.push(prev_step);
         self.prev_outcomes.push(step_result.clone());
         step_result
+    }
+
+    fn get_fun_hash(&self, step: Rc<RunStep>) -> Option<(Vec<u8>, Rc<SExp>)> {
+        if let (SExp::Integer(_, i), Some(args)) = (step.sexp().borrow(), step.args()) {
+            if *i == 2_u32.to_bigint().unwrap() {
+                if let SExp::Cons(_, prog, tail) = args.borrow() {
+                    return Some((sha256tree(prog.clone()), tail.clone()));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn find_function(&self, step: Rc<RunStep>) -> Option<RunningFunction> {
+        if let Some((fun_hash, tail_sexp)) = self.get_fun_hash(step) {
+            let fun_hash_str =
+                Bytes::new(Some(BytesFromType::Raw(fun_hash.clone()))).hex();
+
+            if let Some(funname) =
+                self.symbol_table.get(&fun_hash_str)
+            {
+                return Some(RunningFunction {
+                    hash: fun_hash,
+                    name: funname.clone(),
+                    args: self.symbol_table.
+                        get(&format!("{}_arguments", fun_hash_str)).
+                        and_then(|args_str| {
+                            parse_sexp(Srcloc::start("*args*"), args_str.bytes()).ok()
+                        }).and_then(|parsed| {
+                            if parsed.is_empty() { None } else { Some(parsed[0].clone()) }
+                        }),
+                    tail: tail_sexp
+                });
+            }
+        }
+
+        None
     }
 }
 
@@ -279,6 +329,35 @@ fn get_stack_depth(mut step: Rc<RunStep>) -> usize {
     res
 }
 
+fn collect_variables(vars: &mut Vec<Variable>, args: Rc<SExp>, argvals: Rc<SExp>) {
+    match (args.borrow(), argvals.borrow()) {
+        (SExp::Atom(_, name), v) => {
+            vars.push(Variable {
+                name: decode_string(&name),
+                value: v.to_string(),
+                var_type: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: vars.len() as i32,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None
+            });
+        },
+        (SExp::Cons(_, a, b), SExp::Cons(_, x, y)) => {
+            collect_variables(vars, a.clone(), x.clone());
+            collect_variables(vars, b.clone(), y.clone());
+        },
+        _ => { }
+    }
+}
+
+fn simple_stack_identifier(step: &RunStep) -> i32 {
+    let hash = sha256tree(step.sexp());
+    let as_integer = bigint_from_bytes(&Bytes::new(Some(BytesFromType::Raw(hash))), None);
+    (as_integer & 0x7fffffff_u32.to_bigint().unwrap()).to_i32().unwrap()
+}
+
 impl MessageHandler<ProtocolMessage> for Debugger {
     fn handle_message(
         &mut self,
@@ -348,15 +427,33 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                 (State::Launched(r), RequestCommand::StackTrace(sta)) => {
                     let mut stack_frames = Vec::new();
                     let mut step = Rc::new(r.run.current_step());
-                    let mut sfid = 1;
 
                     loop {
                         let current_loc = step.loc();
                         let file_borrowed: &String = current_loc.file.borrow();
+                        let function =
+                            r.find_function(step.clone());
+                        let function_name = function.
+                            map(|f| f.name.clone()).
+                            unwrap_or_else(|| "step".to_string());
+                        let source_spec = Some(file_borrowed.clone()).filter(|n| {
+                            !n.starts_with("*")
+                        }).map(|source_file| {
+                            Source {
+                                adapter_data: None,
+                                checksums: None,
+                                name: Some(source_file.clone()),
+                                origin: None,
+                                path: Some(source_file),
+                                presentation_hint: None,
+                                source_reference: None,
+                                sources: None
+                            }
+                        });
                         stack_frames.push(StackFrame {
-                            id: sfid,
-                            name: format!("stack frame {}", sfid),
-                            source: None,
+                            id: simple_stack_identifier(step.borrow()),
+                            name: function_name,
+                            source: source_spec,
                             line: current_loc.line as u32,
                             column: current_loc.col as u32,
                             end_line: current_loc.until.as_ref().map(|u| {
@@ -371,7 +468,6 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             presentation_hint: None
                         });
 
-                        sfid += 1;
                         if let Some(p) = step.parent() {
                             step = p;
                         } else {
@@ -391,6 +487,100 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             body: Some(ResponseBody::StackTrace(StackTraceResponse {
                                 stack_frames,
                                 total_frames: None
+                            }))
+                        })
+                    }]));
+                },
+                (State::Launched(r), RequestCommand::Variables(vreq)) => {
+                    let mut step = Rc::new(r.run.current_step());
+
+                    while simple_stack_identifier(step.borrow()) < vreq.variables_reference {
+                        let current_loc = step.loc();
+                        if let Some(p) = step.parent() {
+                            step = p;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    let mut variables = Vec::new();
+                    if let Some(fun) = r.find_function(step.clone()) {
+                        collect_variables(
+                            &mut variables,
+                            fun.args.
+                                unwrap_or_else(
+                                    || Rc::new(SExp::Nil(Srcloc::start("*nil*")))
+                                ),
+                            fun.tail.clone()
+                        );
+                    }
+
+                    self.msg_seq += 1;
+                    self.state = State::Launched(r);
+
+                    return Ok(Some(vec![ProtocolMessage {
+                        seq: self.msg_seq,
+                        message: MessageKind::Response(Response {
+                            request_seq: pm.seq,
+                            success: true,
+                            message: None,
+                            body: Some(ResponseBody::Variables(VariablesResponse {
+                                variables
+                            }))
+                        })
+                    }]));
+                },
+                (State::Launched(r), RequestCommand::Scopes(sreq)) => {
+                    let mut step = Rc::new(r.run.current_step());
+
+                    while simple_stack_identifier(step.borrow()) != sreq.frame_id {
+                        let current_loc = step.loc();
+                        if let Some(p) = step.parent() {
+                            step = p;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    let mut scopes = Vec::new();
+                    let mut variables = Vec::new();
+
+                    if let Some(fun) = r.find_function(step.clone()) {
+                        collect_variables(
+                            &mut variables,
+                            fun.args.
+                                unwrap_or_else(
+                                    || Rc::new(SExp::Nil(Srcloc::start("*nil*")))
+                                ),
+                            fun.tail.clone()
+                        );
+                    }
+
+                    scopes.push(Scope {
+                        name: "Arguments".to_string(),
+                        column: None,
+                        end_column: None,
+                        line: None,
+                        end_line: None,
+                        expensive: false,
+                        indexed_variables: None,
+                        named_variables: Some(variables.len()),
+                        source: None,
+                        variables_reference: simple_stack_identifier(step.borrow()),
+                        presentation_hint: None,
+                    });
+
+                    self.msg_seq += 1;
+                    self.state = State::Launched(r);
+
+                    return Ok(Some(vec![ProtocolMessage {
+                        seq: self.msg_seq,
+                        message: MessageKind::Response(Response {
+                            request_seq: pm.seq,
+                            success: true,
+                            message: None,
+                            body: Some(ResponseBody::Scopes(ScopesResponse {
+                                scopes
                             }))
                         })
                     }]));
@@ -541,8 +731,9 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                         })
                     }]));
                 },
-                (_st, _rq) => {
+                (st, _rq) => {
                     self.log.write(&format!("Don't know what to do with {:?}", req));
+                    self.state = st;
                 }
             }
         }

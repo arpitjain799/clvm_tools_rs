@@ -61,5 +61,5 @@ fn dap_can_launch() {
     assert_eq!(outmsgs.unwrap().len(), 1);
 let launch_msg = "{\"command\":\"launch\",\"arguments\":{\"name\":\"testempty.cl\",\"type\":\"chialisp-dbg\",\"request\":\"launch\",\"stopOnEntry\":true,\"yieldSteps\":4096,\"program\":\"resources/tests/testdbg.cl\",\"__sessionId\":\"2c6729c4-1067-4cce-8ca3-e5f4275fe1d7\"},\"type\":\"request\",\"seq\":2}".to_string();
     let outmsgs2 = service.process_message(&launch_msg.as_bytes()).unwrap();
-    assert_eq!(outmsgs2.unwrap().len(), 1);
+    assert_eq!(outmsgs2.unwrap().len(), 2);
 }

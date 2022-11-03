@@ -424,13 +424,14 @@ impl PrimaryCodegen {
         codegen_copy
     }
 
-    pub fn add_defun(&self, name: &[u8], value: DefunCall) -> Self {
+    pub fn add_defun(&self, name: &[u8], args: Rc<SExp>, value: DefunCall) -> Self {
         let mut codegen_copy = self.clone();
         codegen_copy.defuns.insert(name.to_owned(), value.clone());
         let hash = sha256tree(value.code);
         let hash_str = Bytes::new(Some(BytesFromType::Raw(hash))).hex();
         let name = Bytes::new(Some(BytesFromType::Raw(name.to_owned()))).decode();
-        codegen_copy.function_symbols.insert(hash_str, name);
+        codegen_copy.function_symbols.insert(hash_str.clone(), name);
+        codegen_copy.function_symbols.insert(format!("{}_arguments", hash_str), args.to_string());
         codegen_copy
     }
 

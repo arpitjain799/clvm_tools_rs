@@ -40,6 +40,23 @@ impl RunStep {
         }
     }
 
+    pub fn sexp(&self) -> Rc<SExp> {
+        match self {
+            RunStep::Done(_, s) => s.clone(),
+            RunStep::OpResult(_, s, _) => s.clone(),
+            RunStep::Op(e, _, _, _, _) => e.clone(),
+            RunStep::Step(e, _, _) => e.clone()
+        }
+    }
+
+    pub fn args(&self) -> Option<Rc<SExp>> {
+        match self {
+            RunStep::Step(_, a, _) => Some(a.clone()),
+            RunStep::Op(_, a, _, _, _) => Some(a.clone()),
+            _ => None
+        }
+    }
+
     pub fn loc(&self) -> Srcloc {
         match self {
             RunStep::Done(l, _) => l.clone(),
