@@ -253,8 +253,10 @@ main = do
         op_dict.insert(b"*".to_vec(), b"multiply".to_vec());
         op_dict.insert(b"sha256".to_vec(), b"sha256".to_vec());
         op_dict.insert(b"c".to_vec(), b"c".to_vec());
-        op_dict.insert(b"a".to_vec(), b"a".to_vec());
         op_dict.insert(b"i".to_vec(), b"i".to_vec());
+        op_dict.insert(b"a".to_vec(), b"a".to_vec());
+        op_dict.insert(b"f".to_vec(), b"f".to_vec());
+        op_dict.insert(b"r".to_vec(), b"r".to_vec());
 
         op_dict
     };
@@ -365,7 +367,7 @@ fn produce_body(opts: Rc<dyn CompilerOpts>, result_vec: &mut Vec<String>, prog: 
                         todo!("{}", body.to_sexp())
                     }
                 } else {
-                    todo!("{}", body.to_sexp())
+                    todo!("{:?}", elts[0])
                 }
             } else {
                 todo!("{}", body.to_sexp())
