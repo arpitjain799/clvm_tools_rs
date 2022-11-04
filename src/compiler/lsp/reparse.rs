@@ -234,10 +234,13 @@ pub fn reparse_subset(
     // frontend on it.
     let start_parsing_forms = if took_args {
         0
-    } else if have_mod {
-        1
     } else {
-        0
+        // 1 additional if this is a mod (not an include) and the arguments were
+        // not captured by the prefix pre-parse, which places a closing paren
+        // before the first parenthesized form and parses just that (to save time).
+        // That'll be true if the arguments were a destructured cons form of some
+        // kind as opposed to an un-destructured atom.
+        have_mod as usize
     };
     let parse_as_body = if have_mod && !took_exp {
         simple_ranges.len() - 1
