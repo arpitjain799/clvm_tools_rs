@@ -426,7 +426,7 @@ pub fn do_semantic_tokens(
         result_tokens.data.push(SemanticToken {
             delta_line: (t.loc.line - last_row) as u32,
             delta_start: (t.loc.col - last_col) as u32,
-            length: t.loc.len() as u32,
+            length: t.loc.len().unwrap_or(1) as u32,
             token_type: t.token_type,
             token_modifiers_bitset: t.token_mod,
         });

@@ -91,28 +91,40 @@ impl Srcloc {
         match (self.until.as_ref(), other.until.as_ref()) {
             (None, None) => self.line == other.line && self.col == other.col,
             (None, Some(_)) => other.overlap(self),
-            (Some(u), None) => {
-                if self.line < other.line && u.line > other.line {
+            (Some(self_until), None) => {
+                if self.line < other.line && self_until.line > other.line {
                     return true;
                 }
-                if self.line == other.line
-                    && self.col <= other.col
-                    && self.col + self.len() >= other.col
-                {
-                    return true;
-                }
-                if u.line == other.line && self.col + self.len() >= other.col {
-                    return true;
+                // The case where we have len means we have only one line in the self srcloc.
+                // In that case, we want to encompass other with our range (since it's singular).
+                if let Some(len) = self.len() {
+                    if self.line == other.line
+                        && self.col <= other.col
+                        && self.col + len >= other.col
+                    {
+                        return true;
+                    }
+                } else {
+                    // In this case, we have match if other is on the same line as self and after
+                    // self.col or on the same line as self_until and before col.
+                    if self.line == other.line && self.col <= other.col
+                        || self_until.line == other.line && self_until.col >= other.col
+                    {
+                        return true;
+                    }
                 }
 
                 false
             }
-            (Some(u1), Some(u2)) => {
-                let l1 = Srcloc::new(self.file.clone(), self.line, self.col);
-                let l2 = Srcloc::new(self.file.clone(), u1.line, u1.col);
-                let l3 = Srcloc::new(self.file.clone(), other.line, other.col);
-                let l4 = Srcloc::new(self.file.clone(), u2.line, u2.col);
-                other.overlap(&l1) || other.overlap(&l2) || self.overlap(&l3) || self.overlap(&l4)
+            (Some(my_until), Some(their_until)) => {
+                let self_start = Srcloc::new(self.file.clone(), self.line, self.col);
+                let self_until = Srcloc::new(self.file.clone(), my_until.line, my_until.col);
+                let other_start = Srcloc::new(self.file.clone(), other.line, other.col);
+                let other_until = Srcloc::new(self.file.clone(), their_until.line, their_until.col);
+                other.overlap(&self_start)
+                    || other.overlap(&self_until)
+                    || self.overlap(&other_start)
+                    || self.overlap(&other_until)
             }
         }
     }
@@ -121,17 +133,18 @@ impl Srcloc {
         false
     }
 
-    pub fn len(&self) -> usize {
-        if let Some(u) = &self.until {
-            if u.line != self.line {
-                1 // TODO: Can't tell length ...
-                  // We can fix this by recording the character
-                  // number in the file.
+    // Length of the string representation for the srcloc's range if it's on
+    // the same line.  Some thought is needed to know what we want for a range
+    // over lines.
+    pub fn len(&self) -> Option<usize> {
+        if let Some(self_until) = &self.until {
+            if self_until.line != self.line {
+                None
             } else {
-                u.col - self.col
+                Some(self_until.col - self.col)
             }
         } else {
-            1
+            Some(1)
         }
     }
 

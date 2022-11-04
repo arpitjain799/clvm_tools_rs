@@ -1,2 +1,8 @@
 target
+<<<<<<< HEAD
 node_modules
+=======
+wasm/target
+.idea
+wasm/tests/node_modules
+>>>>>>> chia/base
