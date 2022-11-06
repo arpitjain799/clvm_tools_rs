@@ -9,7 +9,7 @@ use std::io::BufRead;
 use std::mem::swap;
 use std::rc::Rc;
 
-use debug_types::events::{Event, EventBody, StoppedEvent, StoppedReason};
+use debug_types::events::{ContinuedEvent, Event, EventBody, StoppedEvent, StoppedReason};
 use debug_types::requests::{InitializeRequestArguments, LaunchRequestArguments, RequestCommand};
 use debug_types::responses::{InitializeResponse, Response, ResponseBody, ScopesResponse, StackTraceResponse, ThreadsResponse, VariablesResponse};
 use debug_types::types::{Capabilities, ChecksumAlgorithm, Scope, Source, StackFrame, Thread, Variable};
@@ -46,6 +46,14 @@ pub enum TargetDepth {
     LessOrEqual(usize)
 }
 
+#[derive(Clone, Debug)]
+pub struct StoredStep {
+    hash: Option<String>,
+    prev_step: Rc<RunStep>,
+    prev_result: Option<BTreeMap<String, String>>,
+    stop_point: bool
+}
+
 pub struct RunningDebugger {
     initialized: InitializeRequestArguments,
     launch_info: LaunchRequestArguments,
@@ -55,8 +63,7 @@ pub struct RunningDebugger {
     stopped_reason: Option<StoppedReason>,
 
     pub symbol_table: HashMap<String, String>,
-    pub prev_steps: Vec<Rc<RunStep>>,
-    pub prev_outcomes: Vec<Option<BTreeMap<String, String>>>,
+    pub prev_steps: Vec<StoredStep>,
     pub opts: Rc<dyn CompilerOpts>,
     pub allocator: Allocator
 }
@@ -68,13 +75,64 @@ pub struct RunningFunction {
     pub tail: Rc<SExp>
 }
 
+// Simple way of thinking about steps
+fn step_string(hash: &str, rs: &RunStep) -> String {
+    let sexp = rs.sexp();
+    let selector =
+        match rs {
+            RunStep::Done(_, _) => "Done",
+            RunStep::OpResult(_, _, _) => "OpResult",
+            RunStep::Op(_, _, _, _, _) => "Op",
+            RunStep::Step(_, _, _) => "Step"
+        };
+    format!("{} - {}({})", hash, selector, sexp)
+}
+
 impl RunningDebugger {
-    fn step(&mut self) -> Option<BTreeMap<String, String>> {
+    fn prim_step(&mut self) -> StoredStep {
         let prev_step = Rc::new(self.run.current_step());
-        let step_result = self.run.step(&mut self.allocator);
-        self.prev_steps.push(prev_step);
-        self.prev_outcomes.push(step_result.clone());
-        step_result
+        let prev_result = self.run.step(&mut self.allocator);
+        let stop_point = matches!(prev_step.borrow(), RunStep::Step(_, _, _));
+        let hash =
+            if let RunStep::Step(op, args, parent) = prev_step.borrow() {
+                let whole_expr = Rc::new(SExp::Cons(
+                    op.loc(),
+                    op.clone(),
+                    args.clone()
+                ));
+                Some(Bytes::new(Some(BytesFromType::Raw(
+                    sha256tree(whole_expr)
+                ))).hex())
+            } else {
+                None
+            };
+        let stored_step = StoredStep {
+            hash,
+            prev_step,
+            prev_result,
+            stop_point
+        };
+        stored_step
+    }
+
+    fn step(
+        &mut self,
+        log: Rc<dyn ILogWriter>
+    ) -> Option<BTreeMap<String, String>> {
+        loop {
+            let stored = self.prim_step();
+            let mut recent_step = None;
+            if let Some(r) = &stored.prev_result {
+                recent_step = Some(r.clone());
+            }
+            if stored.stop_point {
+                if let Some(h) = &stored.hash {
+                    log.write(&step_string(h, stored.prev_step.borrow()));
+                }
+                self.prev_steps.push(stored.clone());
+                return recent_step;
+            }
+        }
     }
 
     fn get_fun_hash(&self, step: Rc<RunStep>) -> Option<(Vec<u8>, Rc<SExp>)> {
@@ -275,7 +333,6 @@ impl Debugger {
             run: cldb_run,
             opts: opts.clone(),
             prev_steps: Vec::new(),
-            prev_outcomes: Vec::new(),
             symbol_table: use_symbol_table,
             allocator: Allocator::new(),
             stopped_reason: None,
@@ -302,8 +359,8 @@ impl Debugger {
                     body: Some(EventBody::Stopped(StoppedEvent {
                         reason: StoppedReason::Entry,
                         description: None,
-                        thread_id: None,
-                        preserve_focus_hint: None,
+                        thread_id: Some(1),
+                        preserve_focus_hint: Some(true),
                         text: None,
                         all_threads_stopped: Some(true),
                         hit_breakpoint_ids: None
@@ -608,8 +665,8 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             body: Some(EventBody::Stopped(StoppedEvent {
                                 reason: StoppedReason::Pause,
                                 description: None,
-                                thread_id: None,
-                                preserve_focus_hint: None,
+                                thread_id: Some(1),
+                                preserve_focus_hint: Some(true),
                                 text: None,
                                 all_threads_stopped: Some(true),
                                 hit_breakpoint_ids: None
@@ -621,7 +678,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     return Ok(Some(out_messages));
                 },
                 (State::Launched(mut r), RequestCommand::StepIn(si)) => {
-                    r.step();
+                    r.step(self.log.clone());
 
                     self.msg_seq += 1;
 
@@ -652,10 +709,26 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             Some(TargetDepth::LessOrEqual(n)) => stack_depth <= n
                         }));
 
+                    // If this message was not synthetic, we should send a
+                    // continued event.
+                    if si.thread_id != -1 {
+                        self.msg_seq += 1;
+                        out_messages.push(ProtocolMessage {
+                            seq: self.msg_seq,
+                            message: MessageKind::Event(Event {
+                                body: Some(EventBody::Continued(ContinuedEvent {
+                                    thread_id: 1,
+                                    all_threads_continued: Some(true)
+                                }))
+                            })
+                        });
+                    }
+
                     // If we should stop, then we emit a stopped message.
                     if should_stop {
                         r.running = false;
                         r.stopped_reason = None;
+
                         self.msg_seq += 1;
                         out_messages.push(ProtocolMessage {
                             seq: self.msg_seq,
@@ -663,8 +736,8 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                                 body: Some(EventBody::Stopped(StoppedEvent {
                                     reason: r.stopped_reason.as_ref().cloned().unwrap_or(StoppedReason::Step),
                                     description: None,
-                                    thread_id: None,
-                                    preserve_focus_hint: None,
+                                    thread_id: Some(1),
+                                    preserve_focus_hint: Some(true),
                                     text: None,
                                     all_threads_stopped: Some(true),
                                     hit_breakpoint_ids: None
@@ -679,13 +752,10 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                 (State::Launched(mut r), RequestCommand::Next(n)) => {
                     let depth = get_stack_depth(Rc::new(r.run.current_step()));
 
-                    self.msg_seq += 1;
-                    r.running = true;
-                    r.stopped_reason = Some(StoppedReason::Pause);
-                    r.target_depth = Some(TargetDepth::LessOrEqual(depth));
-                    self.state = State::Launched(r);
+                    let mut out_messages = Vec::new();
 
-                    return Ok(Some(vec![ProtocolMessage {
+                    self.msg_seq += 1;
+                    out_messages.push(ProtocolMessage {
                         seq: self.msg_seq,
                         message: MessageKind::Response(Response {
                             request_seq: pm.seq,
@@ -693,18 +763,32 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             message: Some("run next".to_string()),
                             body: Some(ResponseBody::Next)
                         })
-                    }]));
+                    });
+
+                    self.msg_seq += 1;
+                    out_messages.push(ProtocolMessage {
+                        seq: self.msg_seq,
+                        message: MessageKind::Event(Event {
+                            body: Some(EventBody::Continued(ContinuedEvent {
+                                thread_id: 1,
+                                all_threads_continued: Some(true)
+                            }))
+                        })
+                    });
+
+                    r.running = true;
+                    r.stopped_reason = Some(StoppedReason::Pause);
+                    r.target_depth = Some(TargetDepth::LessOrEqual(depth));
+                    self.state = State::Launched(r);
+
+                    return Ok(Some(out_messages));
                 },
                 (State::Launched(mut r), RequestCommand::StepOut(so)) => {
                     let depth = get_stack_depth(Rc::new(r.run.current_step()));
+                    let mut out_messages = Vec::new();
 
                     self.msg_seq += 1;
-                    r.running = true;
-                    r.stopped_reason = Some(StoppedReason::Pause);
-                    r.target_depth = Some(TargetDepth::LessThan(depth));
-                    self.state = State::Launched(r);
-
-                    return Ok(Some(vec![ProtocolMessage {
+                    out_messages.push(ProtocolMessage {
                         seq: self.msg_seq,
                         message: MessageKind::Response(Response {
                             request_seq: pm.seq,
@@ -712,16 +796,31 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             message: Some("run step out".to_string()),
                             body: Some(ResponseBody::StepOut)
                         })
-                    }]));
-                },
-                (State::Launched(mut r), RequestCommand::Continue(c)) => {
+                    });
+
                     self.msg_seq += 1;
+                    out_messages.push(ProtocolMessage {
+                        seq: self.msg_seq,
+                        message: MessageKind::Event(Event {
+                            body: Some(EventBody::Continued(ContinuedEvent {
+                                thread_id: 1,
+                                all_threads_continued: Some(true)
+                            }))
+                        })
+                    });
+
                     r.running = true;
                     r.stopped_reason = Some(StoppedReason::Pause);
-                    r.target_depth = None;
+                    r.target_depth = Some(TargetDepth::LessThan(depth));
                     self.state = State::Launched(r);
 
-                    return Ok(Some(vec![ProtocolMessage {
+                    return Ok(Some(out_messages));
+                },
+                (State::Launched(mut r), RequestCommand::Continue(c)) => {
+                    let mut out_messages = Vec::new();
+
+                    self.msg_seq += 1;
+                    out_messages.push(ProtocolMessage {
                         seq: self.msg_seq,
                         message: MessageKind::Response(Response {
                             request_seq: pm.seq,
@@ -729,7 +828,25 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             message: Some("run continue".to_string()),
                             body: Some(ResponseBody::StepOut)
                         })
-                    }]));
+                    });
+
+                    self.msg_seq += 1;
+                    out_messages.push(ProtocolMessage {
+                        seq: self.msg_seq,
+                        message: MessageKind::Event(Event {
+                            body: Some(EventBody::Continued(ContinuedEvent {
+                                thread_id: 1,
+                                all_threads_continued: Some(true)
+                            }))
+                        })
+                    });
+
+                    r.running = true;
+                    r.stopped_reason = Some(StoppedReason::Pause);
+                    r.target_depth = None;
+                    self.state = State::Launched(r);
+
+                    return Ok(Some(out_messages));
                 },
                 (st, _rq) => {
                     self.log.write(&format!("Don't know what to do with {:?}", req));

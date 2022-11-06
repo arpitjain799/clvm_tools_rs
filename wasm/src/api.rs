@@ -35,7 +35,7 @@ use clvm_tools_rs::compiler::repl::Repl;
 use clvm_tools_rs::compiler::runtypes::RunFailure;
 use clvm_tools_rs::compiler::sexp::SExp;
 use clvm_tools_rs::compiler::srcloc::Srcloc;
-use clvm_tools_rs::jsval::{
+use crate::jsval::{
     btreemap_to_object, get_property, js_object_from_sexp, js_pair, object_to_value,
     read_string_to_string_map, sexp_from_js_object,
 };
