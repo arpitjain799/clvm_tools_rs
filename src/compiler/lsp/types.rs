@@ -262,6 +262,7 @@ impl DocRange {
 
 #[derive(Debug, Clone)]
 pub struct DocData {
+    pub fullname: String,
     pub text: Vec<Rc<Vec<u8>>>,
     pub version: i32,
     pub comments: HashMap<usize, usize>,
@@ -359,6 +360,7 @@ pub struct LSPServiceProvider {
     pub fs: Rc<dyn IFileReader>,
     pub log: Rc<dyn ILogWriter>,
     pub init: Option<InitState>,
+    pub workspace_root_override: Option<PathBuf>,
     pub config: ConfigJson,
 
     // Let document collection be sharable due to the need to capture it for
@@ -447,6 +449,7 @@ impl LSPServiceProvider {
     pub fn ensure_parsed_document(&mut self, uristring: &str) {
         let opts = Rc::new(LSPCompilerOpts::new(
             self.fs.clone(),
+            self.get_workspace_root(),
             uristring,
             &self.config.include_paths,
             self.document_collection.clone(),
@@ -477,8 +480,11 @@ impl LSPServiceProvider {
                 {
                     continue;
                 }
+
+                eprintln!("incfile.filename {}", decode_string(&incfile.filename));
                 if let Ok((filename, file_body)) = get_file_content(
                     self.fs.clone(),
+                    self.get_workspace_root(),
                     &self.config.include_paths,
                     &decode_string(&incfile.filename),
                 ) {
@@ -543,6 +549,7 @@ impl LSPServiceProvider {
             } else {
                 None
             },
+            workspace_root_override: None,
             config: Default::default(),
 
             document_collection: Rc::new(RefCell::new(HashMap::new())),
@@ -552,15 +559,28 @@ impl LSPServiceProvider {
         }
     }
 
+    pub fn set_workspace_root(&mut self, root: PathBuf) {
+        self.workspace_root_override = Some(root);
+    }
+
+    pub fn set_config(&mut self, cfg: ConfigJson) {
+        self.config = cfg;
+    }
+
     pub fn get_workspace_root(&self) -> Option<PathBuf> {
-        if let Some(InitState::Initialized(init)) = &self.init {
-            init.root_uri
-                .as_ref()
-                .and_then(|uri| Url::parse(uri.as_str()).ok())
-                .and_then(|uri| uri.our_to_file_path().ok())
-        } else {
-            None
-        }
+        self.workspace_root_override
+            .as_ref()
+            .map(|x| Some(x.clone()))
+            .unwrap_or_else(|| {
+                if let Some(InitState::Initialized(init)) = &self.init {
+                    init.root_uri
+                        .as_ref()
+                        .and_then(|uri| Url::parse(uri.as_str()).ok())
+                        .and_then(|uri| uri.our_to_file_path().ok())
+                } else {
+                    None
+                }
+            })
     }
 
     pub fn get_relative_path(&self, target: &str) -> Option<String> {

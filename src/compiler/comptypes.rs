@@ -124,9 +124,28 @@ pub enum HelperForm {
     Defun(bool, DefunData),
 }
 
+// A description of an include form.
+#[derive(Clone, Debug)]
+pub struct IncludeDesc {
+    pub kw: Srcloc,
+    pub nl: Srcloc,
+    pub name: Vec<u8>,
+}
+
+impl IncludeDesc {
+    pub fn to_sexp(&self) -> Rc<SExp> {
+        Rc::new(SExp::Cons(
+            self.kw.clone(),
+            Rc::new(SExp::Atom(self.kw.clone(), b"include".to_vec())),
+            Rc::new(SExp::QuotedString(self.nl.clone(), b'"', self.name.clone())),
+        ))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CompileForm {
     pub loc: Srcloc,
+    pub include_forms: Vec<IncludeDesc>,
     pub args: Rc<SExp>,
     pub helpers: Vec<HelperForm>,
     pub exp: Rc<BodyForm>,
@@ -191,6 +210,7 @@ pub trait CompilerOpts {
 #[derive(Debug)]
 pub struct ModAccum {
     pub loc: Srcloc,
+    pub includes: Vec<IncludeDesc>,
     pub helpers: Vec<HelperForm>,
     pub exp_form: Option<CompileForm>,
 }
@@ -199,8 +219,20 @@ impl ModAccum {
     pub fn set_final(&self, c: &CompileForm) -> Self {
         ModAccum {
             loc: self.loc.clone(),
+            includes: self.includes.clone(),
             helpers: self.helpers.clone(),
             exp_form: Some(c.clone()),
+        }
+    }
+
+    pub fn add_include(&self, i: IncludeDesc) -> Self {
+        let mut new_includes = self.includes.clone();
+        new_includes.push(i);
+        ModAccum {
+            loc: self.loc.clone(),
+            includes: new_includes,
+            helpers: self.helpers.clone(),
+            exp_form: self.exp_form.clone(),
         }
     }
 
@@ -210,6 +242,7 @@ impl ModAccum {
 
         ModAccum {
             loc: self.loc.clone(),
+            includes: self.includes.clone(),
             helpers: hs,
             exp_form: self.exp_form.clone(),
         }
@@ -218,6 +251,7 @@ impl ModAccum {
     pub fn new(loc: Srcloc) -> ModAccum {
         ModAccum {
             loc,
+            includes: Vec::new(),
             helpers: Vec::new(),
             exp_form: None,
         }
@@ -244,6 +278,7 @@ impl CompileForm {
         CompileForm {
             loc: self.loc.clone(),
             args: self.args.clone(),
+            include_forms: self.include_forms.clone(),
             helpers: self
                 .helpers
                 .iter()
@@ -269,6 +304,7 @@ impl CompileForm {
 
         CompileForm {
             loc: self.loc.clone(),
+            include_forms: self.include_forms.clone(),
             args: self.args.clone(),
             helpers: new_helpers,
             exp: self.exp.clone(),
@@ -282,6 +318,14 @@ impl HelperForm {
             HelperForm::Defconstant(defc) => &defc.name,
             HelperForm::Defmacro(mac) => &mac.name,
             HelperForm::Defun(_, defun) => &defun.name,
+        }
+    }
+
+    pub fn name_loc(&self) -> &Srcloc {
+        match self {
+            HelperForm::Defconstant(defc) => &defc.nl,
+            HelperForm::Defmacro(mac) => &mac.nl,
+            HelperForm::Defun(_, defun) => &defun.nl,
         }
     }
 

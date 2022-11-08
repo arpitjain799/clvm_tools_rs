@@ -169,9 +169,11 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                     {
                         let doc_data = split_text(&params.text_document.text);
                         let comments = compute_comment_lines(&doc_data);
+                        let fullname = params.text_document.uri.to_string();
                         self.save_doc(
-                            params.text_document.uri.to_string(),
+                            fullname.clone(),
                             DocData {
+                                fullname,
                                 text: doc_data,
                                 version: params.text_document.version,
                                 comments,

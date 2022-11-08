@@ -1,11 +1,13 @@
 use regex::Regex;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::compiler::lsp::parse::IncludeData;
 use crate::compiler::lsp::{
-    LSPServiceMessageHandler, LSPServiceProvider, TK_DEFINITION_BIT, TK_FUNCTION_IDX,
-    TK_KEYWORD_IDX, TK_STRING_IDX, TK_VARIABLE_IDX,
+    LSPServiceMessageHandler, LSPServiceProvider, TK_COMMENT_IDX, TK_DEFINITION_BIT,
+    TK_FUNCTION_IDX, TK_KEYWORD_IDX, TK_NUMBER_IDX, TK_PARAMETER_IDX, TK_STRING_IDX,
+    TK_VARIABLE_IDX,
 };
 
 use lsp_server::{Message, Notification, Request, RequestId};
@@ -21,7 +23,9 @@ use crate::compiler::comptypes::CompilerOpts;
 use crate::compiler::lsp::parse::{is_first_in_list, make_simple_ranges, ParsedDoc};
 use crate::compiler::lsp::patch::{split_text, stringify_doc, PatchableDocument};
 use crate::compiler::lsp::reparse::{combine_new_with_old_parse, reparse_subset};
-use crate::compiler::lsp::types::{DocData, DocPosition, DocRange, EPrintWriter, FSFileReader};
+use crate::compiler::lsp::types::{
+    ConfigJson, DocData, DocPosition, DocRange, EPrintWriter, FSFileReader,
+};
 use crate::compiler::srcloc::Srcloc;
 
 fn make_did_open_message(uri: &String, v: i32, body: String) -> Message {
@@ -364,6 +368,7 @@ fn test_completion_from_argument_function() {
 fn test_first_in_list() {
     let file_data = "( test1 test2)".to_string();
     let doc = DocData {
+        fullname: "file:test.cl".to_string(),
         text: split_text(&file_data),
         version: -1,
         comments: HashMap::new(),
@@ -379,6 +384,7 @@ fn test_first_in_list() {
 fn test_not_first_in_list() {
     let file_data = "( test1 test2)".to_string();
     let doc = DocData {
+        fullname: "file:test.cl".to_string(),
         text: split_text(&file_data),
         version: -1,
         comments: HashMap::new(),
@@ -408,6 +414,7 @@ fn test_patch_document_1() {
         text: "".to_string(),
     }];
     let doc = (DocData {
+        fullname: "file:test.cl".to_string(),
         text: split_text(&content),
         version: -1,
         comments: HashMap::new(),
@@ -435,6 +442,7 @@ fn test_patch_document_2() {
         text: "z".to_string(),
     }];
     let doc = (DocData {
+        fullname: "file:test.cl".to_string(),
         text: split_text(&content),
         version: -1,
         comments: HashMap::new(),
@@ -462,6 +470,7 @@ fn test_patch_document_3() {
         text: "  *\n".to_string(),
     }];
     let doc = (DocData {
+        fullname: "file:test.cl".to_string(),
         text: split_text(&content),
         version: -1,
         comments: HashMap::new(),
@@ -570,6 +579,7 @@ fn test_tricky_patch_1() {
         },
     ];
     let doc = (DocData {
+        fullname: "file:test.cl".to_string(),
         text: split_text(&content),
         version: -1,
         comments: HashMap::new(),
@@ -916,6 +926,308 @@ fn embed_file_is_annotated() {
                 token_type: TK_STRING_IDX,
                 token_modifiers_bitset: 0,
             },
+        ]
+    );
+}
+
+#[test]
+fn test_inner_mod_expr() {
+    let mut lsp = LSPServiceProvider::new(
+        Rc::new(FSFileReader::new()),
+        Rc::new(EPrintWriter::new()),
+        true,
+    );
+    let file = "file:test.cl".to_string();
+    let open_msg = make_did_open_message(&file, 1, "(mod () (mod (X) (+ X 1)))".to_string());
+    let sem_tok = make_get_semantic_tokens_msg(&file, 2);
+    lsp.handle_message(&open_msg)
+        .expect("should be ok to take open msg");
+    let r2 = lsp
+        .handle_message(&sem_tok)
+        .expect("should be ok to send sem tok");
+    let decoded_tokens: SemanticTokens = serde_json::from_str(&get_msg_params(&r2[0])).unwrap();
+    assert_eq!(
+        decoded_tokens.data,
+        vec![
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 1,
+                length: 3,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 8,
+                length: 3,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 5,
+                length: 1,
+                token_type: TK_PARAMETER_IDX,
+                token_modifiers_bitset: 1 << TK_DEFINITION_BIT,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 4,
+                length: 1,
+                token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 2,
+                length: 1,
+                token_type: TK_PARAMETER_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 2,
+                length: 1,
+                token_type: TK_NUMBER_IDX,
+                token_modifiers_bitset: 0,
+            },
+        ]
+    );
+}
+
+#[test]
+fn test_inner_mod_expr_with_inner_at() {
+    let mut lsp = LSPServiceProvider::new(
+        Rc::new(FSFileReader::new()),
+        Rc::new(EPrintWriter::new()),
+        true,
+    );
+    let file = "file:test.cl".to_string();
+    let open_msg = make_did_open_message(&file, 1, "(mod () (a (mod () (a 1 @)) @))".to_string());
+    let sem_tok = make_get_semantic_tokens_msg(&file, 2);
+    lsp.handle_message(&open_msg)
+        .expect("should be ok to take open msg");
+    let r2 = lsp
+        .handle_message(&sem_tok)
+        .expect("should be ok to send sem tok");
+    eprintln!("msg_params {}", get_msg_params(&r2[0]));
+    let decoded_tokens: SemanticTokens = serde_json::from_str(&get_msg_params(&r2[0])).unwrap();
+    assert_eq!(
+        decoded_tokens.data,
+        vec![
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 1,
+                length: 3,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 8,
+                length: 1,
+                token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 3,
+                length: 3,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 8,
+                length: 1,
+                token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 2,
+                length: 1,
+                token_type: TK_NUMBER_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 2,
+                length: 1,
+                token_type: TK_VARIABLE_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 4,
+                length: 1,
+                token_type: TK_VARIABLE_IDX,
+                token_modifiers_bitset: 0,
+            }
+        ]
+    );
+}
+
+#[test]
+fn test_inner_mod_expr_with_inner_includes_and_comments() {
+    let mut lsp = LSPServiceProvider::new(
+        Rc::new(FSFileReader::new()),
+        Rc::new(EPrintWriter::new()),
+        true,
+    );
+    lsp.set_workspace_root(PathBuf::from(r"."));
+    lsp.set_config(ConfigJson {
+        include_paths: vec!["./resources/tests".to_string()],
+    });
+    let file = "file://./test.cl".to_string();
+    let open_msg = make_did_open_message(
+        &file,
+        1,
+        indoc! {"
+(mod ()
+  (mod ()
+    (include \"condition_codes.clvm\") ;; test comment
+    ()
+    )
+  )"}
+        .to_string(),
+    );
+    let sem_tok = make_get_semantic_tokens_msg(&file, 2);
+    lsp.handle_message(&open_msg)
+        .expect("should be ok to take open msg");
+    let r2 = lsp
+        .handle_message(&sem_tok)
+        .expect("should be ok to send sem tok");
+    eprintln!("msg {}", get_msg_params(&r2[0]));
+    let decoded_tokens: SemanticTokens = serde_json::from_str(&get_msg_params(&r2[0])).unwrap();
+    assert_eq!(
+        decoded_tokens.data,
+        vec![
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 1,
+                length: 3,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 1,
+                delta_start: 3,
+                length: 3,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 1,
+                delta_start: 5,
+                length: 7,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 8,
+                length: 22,
+                token_type: TK_STRING_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 24,
+                length: 16,
+                token_type: TK_COMMENT_IDX,
+                token_modifiers_bitset: 0,
+            },
+        ]
+    );
+}
+
+#[test]
+fn test_inner_mod_in_defun_expr() {
+    let mut lsp = LSPServiceProvider::new(
+        Rc::new(FSFileReader::new()),
+        Rc::new(EPrintWriter::new()),
+        true,
+    );
+    let file = "file:test.cl".to_string();
+    let open_msg = make_did_open_message(
+        &file,
+        1,
+        "(mod () (defun F () (mod (X) (+ X 1))) (F))".to_string(),
+    );
+    let sem_tok = make_get_semantic_tokens_msg(&file, 2);
+    lsp.handle_message(&open_msg)
+        .expect("should be ok to take open msg");
+    let r2 = lsp
+        .handle_message(&sem_tok)
+        .expect("should be ok to send sem tok");
+    let decoded_tokens: SemanticTokens = serde_json::from_str(&get_msg_params(&r2[0])).unwrap();
+    assert_eq!(
+        decoded_tokens.data,
+        vec![
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 1,
+                length: 3,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 8,
+                length: 5,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 6,
+                length: 1,
+                token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 1 << TK_DEFINITION_BIT,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 6,
+                length: 3,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 5,
+                length: 1,
+                token_type: TK_PARAMETER_IDX,
+                token_modifiers_bitset: 1 << TK_DEFINITION_BIT,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 4,
+                length: 1,
+                token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 2,
+                length: 1,
+                token_type: TK_PARAMETER_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 2,
+                length: 1,
+                token_type: TK_NUMBER_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 6,
+                length: 1,
+                token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 0
+            }
         ]
     );
 }

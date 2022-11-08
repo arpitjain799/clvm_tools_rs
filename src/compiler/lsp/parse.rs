@@ -75,6 +75,7 @@ impl ParsedDoc {
             exp: None,
             compiled: CompileForm {
                 loc: startloc,
+                include_forms: Vec::new(),
                 args: Rc::new(nil.clone()),
                 helpers: vec![],
                 exp: Rc::new(BodyForm::Quoted(nil)),
@@ -273,7 +274,7 @@ pub fn grab_scope_doc_range(
     res
 }
 
-fn make_arg_set(set: &mut HashSet<SExp>, args: Rc<SExp>) {
+pub fn make_arg_set(set: &mut HashSet<SExp>, args: Rc<SExp>) {
     match args.borrow() {
         SExp::Atom(l, a) => {
             set.insert(SExp::Atom(l.clone(), a.clone()));

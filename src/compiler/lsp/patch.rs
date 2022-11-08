@@ -163,6 +163,7 @@ impl PatchableDocument for DocData {
         }
 
         DocData {
+            fullname: self.fullname.clone(),
             text: doc_copy,
             comments: comments_copy,
             version,
@@ -186,6 +187,7 @@ impl LSPServiceProviderApplyDocumentPatch for LSPServiceProvider {
                 self.save_doc(
                     uristring.to_owned(),
                     DocData {
+                        fullname: uristring.to_string(),
                         text: have_text,
                         version,
                         comments,

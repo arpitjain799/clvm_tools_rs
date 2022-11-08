@@ -39,20 +39,30 @@ pub struct ReparsedModule {
     pub errors: Vec<CompileErr>,
 }
 
-pub fn parse_include(
-    _opts: Rc<dyn CompilerOpts>, // Needed to resolve new files when we do that.
-    sexp: Rc<SExp>,
-) -> Option<IncludeData> {
+pub fn parse_include(sexp: Rc<SExp>) -> Option<IncludeData> {
+    // Match include with quoted or unquoted argument.
+    let matches_include = |l: &[SExp]| {
+        if let (SExp::Atom(kl, incl), SExp::Atom(nl, fname)) = (l[0].borrow(), l[1].borrow()) {
+            Some((kl.clone(), incl.clone(), nl.clone(), fname.clone()))
+        } else if let (SExp::Atom(kl, incl), SExp::QuotedString(nl, _, fname)) =
+            (l[0].borrow(), l[1].borrow())
+        {
+            Some((kl.clone(), incl.clone(), nl.clone(), fname.clone()))
+        } else {
+            None
+        }
+    };
+
     sexp.proper_list().and_then(|l| {
         if l.len() == 2 {
-            if let (SExp::Atom(kl, incl), SExp::Atom(nl, fname)) = (l[0].borrow(), l[1].borrow()) {
+            if let Some((kl, incl, nl, fname)) = matches_include(&l) {
                 if incl == b"include" {
                     return Some(IncludeData {
                         loc: sexp.loc(),
-                        kw: kl.clone(),
-                        nl: nl.clone(),
+                        kw: kl,
+                        nl,
                         kind: IncludeKind::Include,
-                        filename: fname.clone(),
+                        filename: fname,
                     });
                 }
             }
@@ -224,7 +234,10 @@ pub fn reparse_subset(
             took_exp = true;
             result.exp = Some(ReparsedExp {
                 hash: suffix_hash,
-                parsed: compile_bodyform(suffix_parse[suffix_parse.len() - 1].clone()),
+                parsed: compile_bodyform(
+                    opts.clone(),
+                    suffix_parse[suffix_parse.len() - 1].clone(),
+                ),
             });
         }
     }
@@ -268,10 +281,10 @@ pub fn reparse_subset(
                     } else if i == parse_as_body {
                         result.exp = Some(ReparsedExp {
                             hash,
-                            parsed: compile_bodyform(parsed[0].clone()),
+                            parsed: compile_bodyform(opts.clone(), parsed[0].clone()),
                         });
                         continue;
-                    } else if let Some(include) = parse_include(opts.clone(), parsed[0].clone()) {
+                    } else if let Some(include) = parse_include(parsed[0].clone()) {
                         result.includes.insert(hash.clone(), include.clone());
                         continue;
                     }

@@ -6,9 +6,16 @@ use std::rc::Rc;
 use lsp_server::{Message, RequestId, Response};
 use lsp_types::{SemanticToken, SemanticTokens, SemanticTokensParams};
 
-use crate::compiler::comptypes::{BodyForm, CompileForm, HelperForm, LetFormKind};
-use crate::compiler::lsp::parse::{IncludeKind, ParsedDoc};
-use crate::compiler::lsp::types::{DocPosition, DocRange, LSPServiceProvider};
+use crate::compiler::clvm::sha256tree;
+use crate::compiler::comptypes::{
+    BodyForm, CompileForm, HelperForm, LetFormKind,
+};
+use crate::compiler::lsp::completion::PRIM_NAMES;
+use crate::compiler::lsp::parse::{
+    recover_scopes, IncludeData, IncludeKind, ParsedDoc
+};
+use crate::compiler::lsp::reparse::{ReparsedExp, ReparsedHelper};
+use crate::compiler::lsp::types::{DocPosition, DocRange, ILogWriter, LSPServiceProvider};
 use crate::compiler::lsp::{
     TK_COMMENT_IDX, TK_DEFINITION_BIT, TK_FUNCTION_IDX, TK_KEYWORD_IDX, TK_MACRO_IDX,
     TK_NUMBER_IDX, TK_PARAMETER_IDX, TK_READONLY_BIT, TK_STRING_IDX, TK_VARIABLE_IDX,
@@ -83,7 +90,64 @@ fn collect_arg_tokens(
     }
 }
 
+fn find_call_token(
+    prims: &[Vec<u8>],
+    frontend: &CompileForm,
+    l: &Srcloc,
+    name: &Vec<u8>,
+) -> Option<(SemanticTokenSortable, Srcloc)> {
+    for f in frontend.helpers.iter() {
+        match f {
+            HelperForm::Defun(_inline, defun) => {
+                if &defun.name == name {
+                    let st = SemanticTokenSortable {
+                        loc: l.clone(),
+                        token_type: TK_FUNCTION_IDX,
+                        token_mod: 0,
+                    };
+                    return Some((st, defun.nl.clone()));
+                }
+            }
+            HelperForm::Defmacro(mac) => {
+                if &mac.name == name {
+                    let st = SemanticTokenSortable {
+                        loc: l.clone(),
+                        token_type: TK_MACRO_IDX,
+                        token_mod: 0,
+                    };
+                    return Some((st, mac.nl.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for p in prims.iter() {
+        if p == name {
+            return Some((
+                SemanticTokenSortable {
+                    loc: l.clone(),
+                    token_type: TK_FUNCTION_IDX,
+                    token_mod: 0,
+                },
+                l.clone(),
+            ));
+        }
+    }
+
+    None
+}
+
+pub struct DocumentProcessingDescription<'a> {
+    pub prims: &'a [Vec<u8>],
+    pub log: Rc<dyn ILogWriter>,
+    pub id: RequestId,
+    pub uristring: &'a str,
+    pub lines: &'a [Rc<Vec<u8>>],
+}
+
 fn process_body_code(
+    env: &DocumentProcessingDescription,
     collected_tokens: &mut Vec<SemanticTokenSortable>,
     gotodef: &mut BTreeMap<SemanticTokenSortable, Srcloc>,
     argcollection: &HashMap<Vec<u8>, Srcloc>,
@@ -110,6 +174,7 @@ fn process_body_code(
                 if k == &LetFormKind::Sequential {
                     // Bindings above affect code below
                     process_body_code(
+                        env,
                         collected_tokens,
                         gotodef,
                         argcollection,
@@ -119,6 +184,7 @@ fn process_body_code(
                     );
                 } else {
                     process_body_code(
+                        env,
                         collected_tokens,
                         gotodef,
                         argcollection,
@@ -130,6 +196,7 @@ fn process_body_code(
                 bindings_vars.insert(b.name.clone(), b.nl.clone());
             }
             process_body_code(
+                env,
                 collected_tokens,
                 gotodef,
                 argcollection,
@@ -187,45 +254,23 @@ fn process_body_code(
             });
         }
         BodyForm::Call(_, args) => {
+            env.log.write(&format!("call {}", body.to_sexp()));
+
             if args.is_empty() {
                 return;
             }
 
             let head: &BodyForm = args[0].borrow();
             if let BodyForm::Value(SExp::Atom(l, a)) = head {
-                for f in frontend.helpers.iter() {
-                    match f {
-                        HelperForm::Defun(_inline, defun) => {
-                            let st = SemanticTokenSortable {
-                                loc: l.clone(),
-                                token_type: TK_FUNCTION_IDX,
-                                token_mod: 0,
-                            };
-                            collected_tokens.push(st.clone());
-                            if &defun.name == a {
-                                gotodef.insert(st, defun.nl.clone());
-                                break;
-                            }
-                        }
-                        HelperForm::Defmacro(mac) => {
-                            if &mac.name == a {
-                                let st = SemanticTokenSortable {
-                                    loc: l.clone(),
-                                    token_type: TK_MACRO_IDX,
-                                    token_mod: 0,
-                                };
-                                gotodef.insert(st.clone(), mac.nl.clone());
-                                collected_tokens.push(st);
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
+                if let Some((call_token, location)) = find_call_token(env.prims, frontend, l, a) {
+                    collected_tokens.push(call_token.clone());
+                    gotodef.insert(call_token, location);
                 }
             }
 
             for a in args.iter().skip(1) {
                 process_body_code(
+                    env,
                     collected_tokens,
                     gotodef,
                     argcollection,
@@ -235,20 +280,87 @@ fn process_body_code(
                 );
             }
         }
+        BodyForm::Mod(l, m) => {
+            // For each helper in the submod, process it.
+            let mut helpers = HashMap::new();
+            for h in m.helpers.iter() {
+                helpers.insert(
+                    h.name().clone(),
+                    ReparsedHelper {
+                        hash: sha256tree(h.to_sexp()),
+                        parsed: Ok(h.clone()),
+                    },
+                );
+            }
+
+            let borrowed_exp: &BodyForm = m.exp.borrow();
+            let reparsed_exp = ReparsedExp {
+                hash: sha256tree(m.exp.to_sexp()),
+                parsed: Ok(borrowed_exp.clone()),
+            };
+
+            // Process each include in the inner mod.
+            let mut includes = HashMap::new();
+            for i in m.include_forms.iter() {
+                if !i.name.is_empty() && i.name[0] == b'*' {
+                    continue;
+                }
+
+                let hashed = sha256tree(i.to_sexp());
+                includes.insert(
+                    hashed,
+                    IncludeData {
+                        loc: i.kw.clone(),
+                        nl: i.nl.clone(),
+                        kw: i.kw.clone(),
+                        kind: IncludeKind::Include,
+                        filename: i.name.clone(),
+                    },
+                );
+            }
+
+            let scopes = recover_scopes(env.uristring, env.lines, m);
+            let synthesized_doc = ParsedDoc {
+                mod_kw: Some(l.clone()),
+                compiled: m.clone(),
+                scopes,
+                helpers,
+                exp: Some(reparsed_exp),
+                includes,
+                hash_to_name: HashMap::new(),
+                // If we got here, there were no new errors.
+                // Errors would have surfaced to the form containing the mod.
+                errors: Vec::new(),
+            };
+
+            let mut new_tokens = build_semantic_tokens(
+                env,
+                &HashMap::new(), // Comments are global so the outer context
+                // is handling them.
+                gotodef,
+                &synthesized_doc,
+            );
+
+            collected_tokens.append(&mut new_tokens);
+        }
         _ => {}
     }
 }
 
-pub fn do_semantic_tokens(
-    id: RequestId,
-    uristring: &str,
-    lines: &[Rc<Vec<u8>>],
+pub fn build_semantic_tokens(
+    env: &DocumentProcessingDescription,
     comments: &HashMap<usize, usize>,
     goto_def: &mut BTreeMap<SemanticTokenSortable, Srcloc>,
     parsed: &ParsedDoc,
-) -> Response {
+) -> Vec<SemanticTokenSortable> {
+    env.log.write(&format!(
+        "build_semantic_tokens {}",
+        parsed.compiled.exp.to_sexp()
+    ));
+
     let mut collected_tokens = Vec::new();
-    let mut varcollection = HashMap::new();
+    let mut varcollection = HashMap::from([(b"@".to_vec(), parsed.compiled.exp.loc())]);
+    let mut argcollection = HashMap::new();
     if let Some(modloc) = &parsed.mod_kw {
         collected_tokens.push(SemanticTokenSortable {
             loc: modloc.clone(),
@@ -256,6 +368,9 @@ pub fn do_semantic_tokens(
             token_mod: 0,
         });
     }
+
+    env.log.write(&format!("pt 1 {}", parsed.compiled.exp.to_sexp()));
+
     for (_, incl) in parsed.includes.iter() {
         collected_tokens.push(SemanticTokenSortable {
             loc: incl.kw.clone(),
@@ -290,6 +405,9 @@ pub fn do_semantic_tokens(
             }
         }
     }
+
+    env.log.write(&format!("pt 2 {}", parsed.compiled.exp.to_sexp()));
+
     for form in parsed.compiled.helpers.iter() {
         match form {
             HelperForm::Defconstant(defc) => {
@@ -307,6 +425,7 @@ pub fn do_semantic_tokens(
                 });
                 varcollection.insert(defc.name.clone(), defc.nl.clone());
                 process_body_code(
+                    env,
                     &mut collected_tokens,
                     goto_def,
                     &HashMap::new(),
@@ -335,6 +454,7 @@ pub fn do_semantic_tokens(
                     defun.args.clone(),
                 );
                 process_body_code(
+                    env,
                     &mut collected_tokens,
                     goto_def,
                     &argcollection,
@@ -359,6 +479,7 @@ pub fn do_semantic_tokens(
                 }
                 collect_arg_tokens(&mut collected_tokens, &mut argcollection, mac.args.clone());
                 process_body_code(
+                    env,
                     &mut collected_tokens,
                     goto_def,
                     &argcollection,
@@ -370,13 +491,18 @@ pub fn do_semantic_tokens(
         }
     }
 
-    let mut argcollection = HashMap::new();
+    env.log.write(&format!("pt 3 {}", parsed.compiled.exp.to_sexp()));
+
     collect_arg_tokens(
         &mut collected_tokens,
         &mut argcollection,
         parsed.compiled.args.clone(),
     );
+
+    env.log.write(&format!("parse body {}", parsed.compiled.exp.to_sexp()));
+
     process_body_code(
+        env,
         &mut collected_tokens,
         goto_def,
         &argcollection,
@@ -384,6 +510,8 @@ pub fn do_semantic_tokens(
         &parsed.compiled,
         parsed.compiled.exp.clone(),
     );
+
+    env.log.write(&format!("pt 4 {}", parsed.compiled.exp.to_sexp()));
 
     for (l, c) in comments.iter() {
         collected_tokens.push(SemanticTokenSortable {
@@ -394,20 +522,42 @@ pub fn do_semantic_tokens(
                 },
                 end: DocPosition {
                     line: *l as u32,
-                    character: lines[*l].len() as u32,
+                    character: env.lines[*l].len() as u32,
                 },
             }
-            .to_srcloc(uristring),
+            .to_srcloc(env.uristring),
             token_type: TK_COMMENT_IDX,
             token_mod: 0,
         });
     }
 
+    env.log.write(&format!("pt 5 {}", parsed.compiled.exp.to_sexp()));
+
     collected_tokens.retain(|t| {
         let borrowed: &String = t.loc.file.borrow();
-        borrowed == uristring
+        borrowed == env.uristring
     });
+
+    env.log.write(&format!("end {}", parsed.compiled.exp.to_sexp()));
+
+    collected_tokens
+}
+
+fn do_semantic_tokens(
+    env: &DocumentProcessingDescription,
+    comments: &HashMap<usize, usize>,
+    goto_def: &mut BTreeMap<SemanticTokenSortable, Srcloc>,
+    parsed: &ParsedDoc,
+) -> Response {
+    let mut collected_tokens = build_semantic_tokens(
+        env,
+        comments,
+        goto_def,
+        parsed,
+    );
+
     collected_tokens.sort();
+
     let mut result_tokens = SemanticTokens {
         result_id: None,
         data: Vec::new(),
@@ -435,7 +585,7 @@ pub fn do_semantic_tokens(
     }
 
     Response {
-        id,
+        id: env.id.clone(),
         error: None,
         result: Some(serde_json::to_value(result_tokens).unwrap()),
     }
@@ -454,9 +604,13 @@ impl LSPSemtokRequestHandler for LSPServiceProvider {
         {
             let mut our_goto_defs = BTreeMap::new();
             let resp = do_semantic_tokens(
-                id,
-                &uristring,
-                &doc.text,
+                &DocumentProcessingDescription {
+                    prims: &PRIM_NAMES,
+                    log: self.log.clone(),
+                    id,
+                    uristring: &uristring,
+                    lines: &doc.text,
+                },
                 &doc.comments,
                 &mut our_goto_defs,
                 &frontend,
