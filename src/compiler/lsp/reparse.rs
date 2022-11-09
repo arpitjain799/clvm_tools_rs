@@ -224,7 +224,7 @@ pub fn reparse_subset(
             took_exp = true;
             result.exp = Some(ReparsedExp {
                 hash: suffix_hash,
-                parsed: compile_bodyform(suffix_parse[suffix_parse.len() - 1].clone()),
+                parsed: compile_bodyform(opts.clone(), suffix_parse[suffix_parse.len() - 1].clone()),
             });
         }
     }
@@ -265,7 +265,7 @@ pub fn reparse_subset(
                     } else if i == parse_as_body {
                         result.exp = Some(ReparsedExp {
                             hash,
-                            parsed: compile_bodyform(parsed[0].clone()),
+                            parsed: compile_bodyform(opts.clone(), parsed[0].clone()),
                         });
                         continue;
                     } else if let Some(include) = parse_include(opts.clone(), parsed[0].clone()) {

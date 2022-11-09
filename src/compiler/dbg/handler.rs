@@ -94,7 +94,7 @@ impl RunningDebugger {
         let prev_result = self.run.step(&mut self.allocator);
         let stop_point = matches!(prev_step.borrow(), RunStep::Step(_, _, _));
         let hash =
-            if let RunStep::Step(op, args, parent) = prev_step.borrow() {
+            if let RunStep::Step(op, args, _) = prev_step.borrow() {
                 let whole_expr = Rc::new(SExp::Cons(
                     op.loc(),
                     op.clone(),
@@ -481,7 +481,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                         })
                     }]));
                 },
-                (State::Launched(r), RequestCommand::StackTrace(sta)) => {
+                (State::Launched(r), RequestCommand::StackTrace(_)) => {
                     let mut stack_frames = Vec::new();
                     let mut step = Rc::new(r.run.current_step());
 
