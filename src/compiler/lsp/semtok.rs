@@ -7,13 +7,9 @@ use lsp_server::{Message, RequestId, Response};
 use lsp_types::{SemanticToken, SemanticTokens, SemanticTokensParams};
 
 use crate::compiler::clvm::sha256tree;
-use crate::compiler::comptypes::{
-    BodyForm, CompileForm, HelperForm, LetFormKind,
-};
+use crate::compiler::comptypes::{BodyForm, CompileForm, HelperForm, LetFormKind};
 use crate::compiler::lsp::completion::PRIM_NAMES;
-use crate::compiler::lsp::parse::{
-    recover_scopes, IncludeData, IncludeKind, ParsedDoc
-};
+use crate::compiler::lsp::parse::{recover_scopes, IncludeData, IncludeKind, ParsedDoc};
 use crate::compiler::lsp::reparse::{ReparsedExp, ReparsedHelper};
 use crate::compiler::lsp::types::{DocPosition, DocRange, ILogWriter, LSPServiceProvider};
 use crate::compiler::lsp::{
@@ -254,8 +250,6 @@ fn process_body_code(
             });
         }
         BodyForm::Call(_, args) => {
-            env.log.write(&format!("call {}", body.to_sexp()));
-
             if args.is_empty() {
                 return;
             }
@@ -353,11 +347,6 @@ pub fn build_semantic_tokens(
     goto_def: &mut BTreeMap<SemanticTokenSortable, Srcloc>,
     parsed: &ParsedDoc,
 ) -> Vec<SemanticTokenSortable> {
-    env.log.write(&format!(
-        "build_semantic_tokens {}",
-        parsed.compiled.exp.to_sexp()
-    ));
-
     let mut collected_tokens = Vec::new();
     let mut varcollection = HashMap::from([(b"@".to_vec(), parsed.compiled.exp.loc())]);
     let mut argcollection = HashMap::new();
@@ -368,8 +357,6 @@ pub fn build_semantic_tokens(
             token_mod: 0,
         });
     }
-
-    env.log.write(&format!("pt 1 {}", parsed.compiled.exp.to_sexp()));
 
     for (_, incl) in parsed.includes.iter() {
         collected_tokens.push(SemanticTokenSortable {
@@ -405,8 +392,6 @@ pub fn build_semantic_tokens(
             }
         }
     }
-
-    env.log.write(&format!("pt 2 {}", parsed.compiled.exp.to_sexp()));
 
     for form in parsed.compiled.helpers.iter() {
         match form {
@@ -491,15 +476,11 @@ pub fn build_semantic_tokens(
         }
     }
 
-    env.log.write(&format!("pt 3 {}", parsed.compiled.exp.to_sexp()));
-
     collect_arg_tokens(
         &mut collected_tokens,
         &mut argcollection,
         parsed.compiled.args.clone(),
     );
-
-    env.log.write(&format!("parse body {}", parsed.compiled.exp.to_sexp()));
 
     process_body_code(
         env,
@@ -510,8 +491,6 @@ pub fn build_semantic_tokens(
         &parsed.compiled,
         parsed.compiled.exp.clone(),
     );
-
-    env.log.write(&format!("pt 4 {}", parsed.compiled.exp.to_sexp()));
 
     for (l, c) in comments.iter() {
         collected_tokens.push(SemanticTokenSortable {
@@ -531,14 +510,10 @@ pub fn build_semantic_tokens(
         });
     }
 
-    env.log.write(&format!("pt 5 {}", parsed.compiled.exp.to_sexp()));
-
     collected_tokens.retain(|t| {
         let borrowed: &String = t.loc.file.borrow();
         borrowed == env.uristring
     });
-
-    env.log.write(&format!("end {}", parsed.compiled.exp.to_sexp()));
 
     collected_tokens
 }
@@ -549,12 +524,7 @@ fn do_semantic_tokens(
     goto_def: &mut BTreeMap<SemanticTokenSortable, Srcloc>,
     parsed: &ParsedDoc,
 ) -> Response {
-    let mut collected_tokens = build_semantic_tokens(
-        env,
-        comments,
-        goto_def,
-        parsed,
-    );
+    let mut collected_tokens = build_semantic_tokens(env, comments, goto_def, parsed);
 
     collected_tokens.sort();
 

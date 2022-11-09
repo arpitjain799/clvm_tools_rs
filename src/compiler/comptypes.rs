@@ -225,6 +225,15 @@ impl ModAccum {
         }
     }
 
+    pub fn step(&self) -> Self {
+        ModAccum {
+            loc: self.loc.clone(),
+            includes: self.includes.clone(),
+            helpers: self.helpers.clone(),
+            exp_form: self.exp_form.clone(),
+        }
+    }
+
     pub fn add_include(&self, i: IncludeDesc) -> Self {
         let mut new_includes = self.includes.clone();
         new_includes.push(i);

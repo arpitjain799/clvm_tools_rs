@@ -1,5 +1,6 @@
 use regex::Regex;
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -1230,4 +1231,27 @@ fn test_inner_mod_in_defun_expr() {
             }
         ]
     );
+}
+
+#[test]
+fn test_lsp_heap_exhaustion_1() {
+    let mut lsp = LSPServiceProvider::new(
+        Rc::new(FSFileReader::new()),
+        Rc::new(EPrintWriter::new()),
+        true,
+    );
+    let file_data = fs::read_to_string("resources/tests/breaking_message_list_1.txt")
+        .expect("should be able to read this file");
+    let in_messages: Vec<Message> = file_data
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with("#"))
+        .map(|l| {
+            let parsed: Message = serde_json::from_str(l).expect("should parse");
+            parsed
+        })
+        .collect();
+    run_lsp(&mut lsp, &in_messages).expect("should be able to run this traffic");
+
+    // If we got here, we didn't have the bug.
+    assert!(true);
 }

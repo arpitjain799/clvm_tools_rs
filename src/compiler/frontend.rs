@@ -600,7 +600,12 @@ fn compile_mod_(
                         "only the last form can be an exprssion in mod".to_string(),
                     )),
                     Some(form) => match mc.exp_form {
-                        None => compile_mod_(&mc.add_helper(form), opts, args, tail.clone()),
+                        None => compile_mod_(
+                            &mc.step().add_helper(form).step(),
+                            opts,
+                            args,
+                            tail.clone(),
+                        ),
                         Some(_) => Err(CompileErr(l.clone(), "too many expressions".to_string())),
                     },
                 }
@@ -649,7 +654,7 @@ fn frontend_start(
         pre_forms[0]
             .proper_list()
             .map(|x| {
-                if x.len() < 3 {
+                if x.is_empty() {
                     return frontend_step_finish(opts.clone(), includes, pre_forms);
                 }
 
