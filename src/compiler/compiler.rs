@@ -170,7 +170,7 @@ pub fn compile_pre_forms(
     pre_forms: &[Rc<SExp>],
     symbol_table: &mut HashMap<String, String>,
 ) -> Result<SExp, CompileErr> {
-    let g = frontend(opts.clone(), &pre_forms)?;
+    let g = frontend(opts.clone(), pre_forms)?;
     let compileform = if opts.frontend_opt() {
         fe_opt(allocator, runner.clone(), opts.clone(), g)?
     } else {

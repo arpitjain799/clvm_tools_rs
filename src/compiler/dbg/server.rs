@@ -86,7 +86,7 @@ impl<H> MessageBuffer<H> {
                 let new_messages: Option<Vec<M>> = self.process_message(&msgdata)?;
                 match &new_messages {
                     Some(msgs) => {
-                        for m in msgs.iter().cloned() {
+                        for m in msgs {
                             let json_msg = serde_json::to_value(&m).map_err(|_| {
                                 format!("could not convert outbound message {:?} to json", m)
                             })?;
@@ -109,7 +109,7 @@ impl<H> MessageBuffer<H> {
         }
 
         for encoded_msg in out_messages.iter() {
-            eprintln!("encoded_msg {}", decode_string(&encoded_msg));
+            eprintln!("encoded_msg {}", decode_string(encoded_msg));
             let msg_len = encoded_msg.len();
             result_bytes.append(
                 &mut format!("Content-Length: {}\r\n\r\n", msg_len)
@@ -127,7 +127,7 @@ impl<H> MessageBuffer<H> {
         H: MessageHandler<M>,
         for<'a> M: Serialize + Deserialize<'a> + Debug + Clone,
     {
-        let msg_string = decode_string(&msgdata);
+        let msg_string = decode_string(msgdata);
         let as_json: serde_json::Value = serde_json::from_str(&msg_string)
             .map_err(|_| format!("failed to decode {}", msg_string))?;
         let msg: M = serde_json::from_value(as_json.clone())
@@ -242,11 +242,11 @@ impl<H> MessageBuffer<H> {
                             break;
                         }
                     } else {
-                        return Err(format!("header needs colon: {}", decode_string(&line)));
+                        return Err(format!("header needs colon: {}", decode_string(line)));
                     }
                 }
 
-                if let Some(_) = self.length {
+                if self.length.is_some() {
                     self.chop_data(header_len);
                     self.extract_message()
                 } else {

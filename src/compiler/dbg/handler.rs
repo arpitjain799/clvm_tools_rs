@@ -11,8 +11,13 @@ use std::rc::Rc;
 
 use debug_types::events::{ContinuedEvent, Event, EventBody, StoppedEvent, StoppedReason};
 use debug_types::requests::{InitializeRequestArguments, LaunchRequestArguments, RequestCommand};
-use debug_types::responses::{InitializeResponse, Response, ResponseBody, ScopesResponse, StackTraceResponse, ThreadsResponse, VariablesResponse};
-use debug_types::types::{Capabilities, ChecksumAlgorithm, Scope, Source, StackFrame, Thread, Variable};
+use debug_types::responses::{
+    InitializeResponse, Response, ResponseBody, ScopesResponse, StackTraceResponse,
+    ThreadsResponse, VariablesResponse,
+};
+use debug_types::types::{
+    Capabilities, ChecksumAlgorithm, Scope, Source, StackFrame, Thread, Variable,
+};
 use debug_types::{MessageKind, ProtocolMessage};
 
 use clvmr::allocator::Allocator;
@@ -21,37 +26,66 @@ use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType};
 use crate::classic::clvm::casts::bigint_from_bytes;
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
 use crate::compiler::cldb::{CldbNoOverride, CldbRun, CldbRunEnv};
-use crate::compiler::clvm::{RunStep, start_step, sha256tree};
-use crate::compiler::compiler::{DefaultCompilerOpts, compile_file};
+use crate::compiler::clvm::{sha256tree, start_step, RunStep};
+use crate::compiler::compiler::{compile_file, DefaultCompilerOpts};
 use crate::compiler::comptypes::CompilerOpts;
 use crate::compiler::dbg::types::MessageHandler;
 use crate::compiler::lsp::types::{IFileReader, ILogWriter};
-use crate::compiler::sexp::{SExp, parse_sexp, decode_string};
+use crate::compiler::sexp::{decode_string, parse_sexp, SExp};
 use crate::compiler::srcloc::Srcloc;
+
+// Lifecycle:
+// (a (code... ) (c arg ...))
+// We encounter this and we're creating the arguments for a future call to
+// (code ...)
+// We enter (code ...) proper via the OpResult of (a ... args) and can fish the
+// arguments.  After that, we're running the subfunction.
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ExtraLaunchData {
     #[serde(rename = "stopOnEntry")]
-    stop_on_entry: bool
+    stop_on_entry: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct RequestContainer<T> {
-    arguments: T
+    arguments: T,
 }
 
 #[derive(Clone, Debug)]
 pub enum TargetDepth {
     LessThan(usize),
-    LessOrEqual(usize)
+    LessOrEqual(usize),
+}
+
+#[derive(Clone, Debug)]
+pub struct StoredValue {
+    name: Vec<u8>,
+    value: Rc<SExp>
+}
+
+#[derive(Clone, Debug)]
+pub struct StoredScope {
+    scope_id: u32,
+    hash: Vec<u8>,
+    name: String,
+    source: Srcloc,
+    named_variables: Vec<StoredValue>,
+}
+
+#[derive(Clone, Debug)]
+struct RunStepRelevantInfo {
+    hash: Vec<u8>,
+    enter: bool,
+    op: Rc<SExp>,
+    args: Rc<SExp>,
 }
 
 #[derive(Clone, Debug)]
 pub struct StoredStep {
-    hash: Option<String>,
+    info: Option<RunStepRelevantInfo>,
     prev_step: Rc<RunStep>,
     prev_result: Option<BTreeMap<String, String>>,
-    stop_point: bool
 }
 
 pub struct RunningDebugger {
@@ -63,56 +97,160 @@ pub struct RunningDebugger {
     stopped_reason: Option<StoppedReason>,
 
     pub symbol_table: HashMap<String, String>,
+    pub scopes: Vec<StoredScope>,
     pub prev_steps: Vec<StoredStep>,
     pub opts: Rc<dyn CompilerOpts>,
-    pub allocator: Allocator
+    pub allocator: Allocator,
 }
 
 pub struct RunningFunction {
     pub hash: Vec<u8>,
     pub name: String,
     pub args: Option<Rc<SExp>>,
-    pub tail: Rc<SExp>
+    pub tail: Rc<SExp>,
 }
 
 // Simple way of thinking about steps
 fn step_string(hash: &str, rs: &RunStep) -> String {
     let sexp = rs.sexp();
-    let selector =
-        match rs {
-            RunStep::Done(_, _) => "Done",
-            RunStep::OpResult(_, _, _) => "OpResult",
-            RunStep::Op(_, _, _, _, _) => "Op",
-            RunStep::Step(_, _, _) => "Step"
-        };
+    let selector = match rs {
+        RunStep::Done(_, _) => "Done",
+        RunStep::OpResult(_, _, _) => "OpResult",
+        RunStep::Op(_, _, _, _, _) => "Op",
+        RunStep::Step(_, _, _) => "Step",
+    };
     format!("{} - {}({})", hash, selector, sexp)
 }
 
+fn hex_of_hash(hash: &[u8]) -> String {
+    Bytes::new(Some(BytesFromType::Raw(hash.to_vec()))).hex()
+}
+
+fn collect_variables(vars: &mut Vec<StoredValue>, args: Rc<SExp>, argvals: Rc<SExp>) {
+    match (args.borrow(), argvals.borrow()) {
+        (SExp::Atom(_, name), v) => {
+            vars.push(StoredValue {
+                name: name.clone(),
+                value: Rc::new(v.clone())
+            });
+        }
+        (SExp::Cons(_, a, b), SExp::Cons(_, x, y)) => {
+            collect_variables(vars, a.clone(), x.clone());
+            collect_variables(vars, b.clone(), y.clone());
+        }
+        _ => {}
+    }
+}
+
+fn simple_stack_identifier(step: &RunStep) -> i32 {
+    let hash = sha256tree(step.sexp());
+    let as_integer = bigint_from_bytes(&Bytes::new(Some(BytesFromType::Raw(hash))), None);
+    (as_integer & 0x7fffffff_u32.to_bigint().unwrap())
+        .to_i32()
+        .unwrap()
+}
+
+fn stop_step(step: &RunStep) -> bool {
+    matches!(step, RunStep::Step(_, _, _)) || matches!(step, RunStep::OpResult(_, _, _))
+}
+
 impl RunningDebugger {
-    fn prim_step(&mut self) -> StoredStep {
+    fn get_stack_depth(&self) -> usize {
+        self.scopes.len()
+    }
+
+    fn prim_step(&mut self, log: Rc<dyn ILogWriter>) -> StoredStep {
         let prev_step = Rc::new(self.run.current_step());
         let prev_result = self.run.step(&mut self.allocator);
-        let stop_point = matches!(prev_step.borrow(), RunStep::Step(_, _, _));
-        let hash =
-            if let RunStep::Step(op, args, _) = prev_step.borrow() {
-                let whole_expr = Rc::new(SExp::Cons(
-                    op.loc(),
-                    op.clone(),
-                    args.clone()
-                ));
-                Some(Bytes::new(Some(BytesFromType::Raw(
-                    sha256tree(whole_expr)
-                ))).hex())
+        let info = self.relevant_run_step_info(log, prev_step.borrow());
+        StoredStep {
+            info,
+            prev_step,
+            prev_result,
+        }
+    }
+
+    fn get_fun_hash(&self, log: Rc<dyn ILogWriter>, sexp: Rc<SExp>) -> Option<(Vec<u8>, Rc<SExp>)> {
+        log.write(&format!("get_fun_hash checking {}", sexp.clone()));
+        if let SExp::Cons(_, op, args) = sexp.borrow() {
+            if let SExp::Integer(_, i) = op.borrow() {
+                if *i == 2_u32.to_bigint().unwrap() {
+                    if let SExp::Cons(_, prog, tail) = args.borrow() {
+                        log.write(&format!("get_fun_hash looking at invocation prog {} tail {}", prog, tail));
+                        return Some((sha256tree(prog.clone()), tail.clone()));
+                    }
+                }
+            } else if let SExp::Atom(_, n) = op.borrow() {
+                if *n == vec![2] {
+                    if let SExp::Cons(_, prog, tail) = args.borrow() {
+                        log.write(&format!("get_fun_hash looking at invocation prog {} tail {}", prog, tail));
+                        return Some((sha256tree(prog.clone()), tail.clone()));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn relevant_run_step_info(&self, log: Rc<dyn ILogWriter>, step: &RunStep) -> Option<RunStepRelevantInfo> {
+        let enter =
+            if let RunStep::Step(op, args, _) = step {
+                Some((true, Rc::new(SExp::Cons(op.loc(), op.clone(), args.clone()))))
+            } else if let RunStep::OpResult(l, whole_expr, _) = step.borrow() {
+                Some((false, whole_expr.clone()))
             } else {
                 None
             };
-        let stored_step = StoredStep {
-            hash,
-            prev_step,
-            prev_result,
-            stop_point
-        };
-        stored_step
+
+        enter.and_then(|(enter, whole_expr)| {
+            log.write(&format!("enter whole_expr {}", whole_expr));
+            self.get_fun_hash(log, whole_expr.clone()).map(|fun| {
+                (enter, whole_expr, fun)
+            })
+        }).and_then(|(enter, whole_expr, fun)| {
+            if let SExp::Cons(_, op, args) = whole_expr.borrow() {
+                Some((enter, whole_expr.clone(), op.clone(), args.clone(), fun))
+            } else {
+                None
+            }
+        }).map(|(enter, whole_expr, op, args, fun)| {
+            RunStepRelevantInfo {
+                hash: sha256tree(whole_expr.clone()),
+                enter: true,
+                op: op.clone(),
+                args: args.clone()
+            }
+        })
+    }
+
+    fn find_function(&self, log: Rc<dyn ILogWriter>, sexp: Rc<SExp>) -> Option<RunningFunction> {
+        if let Some((fun_hash, tail_sexp)) = self.get_fun_hash(log, sexp) {
+            let fun_hash_str = Bytes::new(Some(BytesFromType::Raw(fun_hash.clone()))).hex();
+
+            if let Some(funname) = self.symbol_table.get(&fun_hash_str) {
+                return Some(RunningFunction {
+                    hash: fun_hash,
+                    name: funname.clone(),
+                    args: self
+                        .symbol_table
+                        .get(&format!("{}_arguments", fun_hash_str))
+                        .and_then(|args_str| {
+                            parse_sexp(Srcloc::start("*args*"), args_str.bytes()).ok()
+                        })
+                        .and_then(|parsed| {
+                            if parsed.is_empty() {
+                                None
+                            } else {
+                                Some(parsed[0].clone())
+                            }
+                        }),
+                    tail: tail_sexp,
+                });
+            }
+        }
+
+        None
     }
 
     fn step(
@@ -120,64 +258,62 @@ impl RunningDebugger {
         log: Rc<dyn ILogWriter>
     ) -> Option<BTreeMap<String, String>> {
         loop {
-            let stored = self.prim_step();
+            let stored = self.prim_step(log.clone());
             let mut recent_step = None;
             if let Some(r) = &stored.prev_result {
                 recent_step = Some(r.clone());
             }
-            if stored.stop_point {
-                if let Some(h) = &stored.hash {
-                    log.write(&step_string(h, stored.prev_step.borrow()));
+            if let Some(info) = &stored.info {
+                if let Some(fun) =
+                    self.find_function(log.clone(), Rc::new(SExp::Cons(info.op.loc(), info.op.clone(), info.args.clone())))
+                {
+                    if info.enter {
+                        // Enter a depth.
+
+                        log.write(&format!("enter {}", &step_string(&hex_of_hash(&info.hash), stored.prev_step.borrow())));
+
+                        let mut variables = Vec::new();
+                        let current_loc = stored.prev_step.loc();
+                        let file_borrowed: &String = current_loc.file.borrow();
+                        log.write(&format!("enter fun {}", fun.name));
+                        collect_variables(
+                            &mut variables,
+                            fun.args
+                                .unwrap_or_else(|| Rc::new(SExp::Nil(Srcloc::start("*nil*")))),
+                            fun.tail,
+                        );
+                        self.scopes.push(StoredScope {
+                            scope_id: simple_stack_identifier(stored.prev_step.borrow()) as u32,
+                            hash: info.hash.clone(),
+                            name: fun.name,
+                            source: stored.prev_step.loc(),
+                            named_variables: variables,
+                        });
+                    } else {
+                        // Leave instruction's scope with matching hash.
+                        log.write(&format!("leave {}", &step_string(&hex_of_hash(&info.hash), stored.prev_step.borrow())));
+
+                        if false && !self.scopes.is_empty() {
+                            if self.scopes[self.scopes.len() - 1].hash == fun.hash {
+                                self.scopes.pop();
+                            }
+                        }
+                    }
                 }
-                self.prev_steps.push(stored.clone());
+            }
+
+            if stop_step(stored.prev_step.borrow()) {
+                self.prev_steps.push(stored);
                 return recent_step;
             }
         }
-    }
-
-    fn get_fun_hash(&self, step: Rc<RunStep>) -> Option<(Vec<u8>, Rc<SExp>)> {
-        if let (SExp::Integer(_, i), Some(args)) = (step.sexp().borrow(), step.args()) {
-            if *i == 2_u32.to_bigint().unwrap() {
-                if let SExp::Cons(_, prog, tail) = args.borrow() {
-                    return Some((sha256tree(prog.clone()), tail.clone()));
-                }
-            }
-        }
-
-        None
-    }
-
-    fn find_function(&self, step: Rc<RunStep>) -> Option<RunningFunction> {
-        if let Some((fun_hash, tail_sexp)) = self.get_fun_hash(step) {
-            let fun_hash_str =
-                Bytes::new(Some(BytesFromType::Raw(fun_hash.clone()))).hex();
-
-            if let Some(funname) =
-                self.symbol_table.get(&fun_hash_str)
-            {
-                return Some(RunningFunction {
-                    hash: fun_hash,
-                    name: funname.clone(),
-                    args: self.symbol_table.
-                        get(&format!("{}_arguments", fun_hash_str)).
-                        and_then(|args_str| {
-                            parse_sexp(Srcloc::start("*args*"), args_str.bytes()).ok()
-                        }).and_then(|parsed| {
-                            if parsed.is_empty() { None } else { Some(parsed[0].clone()) }
-                        }),
-                    tail: tail_sexp
-                });
-            }
-        }
-
-        None
     }
 }
 
 pub enum State {
     PreInitialization,
     Initialized(InitializeRequestArguments),
-    Launched(RunningDebugger)
+    Launched(RunningDebugger),
 }
 
 pub enum BreakpointLocation {
@@ -265,8 +401,8 @@ fn get_initialize_response() -> InitializeResponse {
 }
 
 fn is_mod(sexp: Rc<SExp>) -> bool {
-    if let SExp::Cons(_,a,_) = sexp.borrow() {
-        if let SExp::Atom(_,n) = a.borrow() {
+    if let SExp::Cons(_, a, _) = sexp.borrow() {
+        if let SExp::Atom(_, n) = a.borrow() {
             n == b"mod"
         } else {
             false
@@ -284,16 +420,13 @@ impl Debugger {
         name: &str,
         i: &InitializeRequestArguments,
         l: &LaunchRequestArguments,
-        stop_on_entry: bool
+        stop_on_entry: bool,
     ) -> Result<(i64, State, Vec<ProtocolMessage>), String> {
         let mut seq_nr = self.msg_seq;
-        let read_in_file = self.fs.read(&name)?;
+        let read_in_file = self.fs.read(name)?;
         let opts = Rc::new(DefaultCompilerOpts::new(name));
-        let mut parsed_program =
-            parse_sexp(
-                Srcloc::start(&name),
-                read_in_file.iter().copied()
-            ).map_err(|e| format!("{}: {}", e.0.to_string(), e.1))?;
+        let mut parsed_program = parse_sexp(Srcloc::start(name), read_in_file.iter().copied())
+            .map_err(|e| format!("{}: {}", e.0, e.1))?;
         if parsed_program.is_empty() {
             return Err(format!("Empty program file {}", name));
         }
@@ -307,36 +440,40 @@ impl Debugger {
                 opts.clone(),
                 &decode_string(&read_in_file),
                 &mut use_symbol_table,
-            ).map_err(|e| format!("{}: {}", e.0, e.1))?;
+            )
+            .map_err(|e| format!("{}: {}", e.0, e.1))?;
             parsed_program = vec![Rc::new(unopt_res)];
         }
 
         // XXX Empty arguments for now.
         let arguments = Rc::new(SExp::Nil(parsed_program[0].loc()));
-        let program_lines: Vec<String> =
-            read_in_file.lines().map(|x| x.unwrap().to_string()).collect();
+        let program_lines: Vec<String> = read_in_file
+            .lines()
+            .map(|x| x.unwrap())
+            .collect();
         let env = CldbRunEnv::new(
             Some(name.to_owned()),
             program_lines,
-            Box::new(CldbNoOverride::new())
+            Box::new(CldbNoOverride::new()),
         );
         let cldb_run = CldbRun::new(
             self.runner.clone(),
             self.prim_map.clone(),
             Box::new(env),
-            start_step(parsed_program[0].clone(), arguments)
+            start_step(parsed_program[0].clone(), arguments),
         );
         let state = State::Launched(RunningDebugger {
             initialized: i.clone(),
             launch_info: l.clone(),
             running: !stop_on_entry,
             run: cldb_run,
-            opts: opts.clone(),
+            opts,
+            scopes: Vec::new(),
             prev_steps: Vec::new(),
             symbol_table: use_symbol_table,
             allocator: Allocator::new(),
             stopped_reason: None,
-            target_depth: None
+            target_depth: None,
         });
 
         seq_nr += 1;
@@ -346,8 +483,8 @@ impl Debugger {
                 request_seq: pm.seq,
                 success: true,
                 message: None,
-                body: Some(ResponseBody::Launch)
-            })
+                body: Some(ResponseBody::Launch),
+            }),
         }];
 
         // Signal that we're paused if stop on entry.
@@ -363,56 +500,14 @@ impl Debugger {
                         preserve_focus_hint: Some(true),
                         text: None,
                         all_threads_stopped: Some(true),
-                        hit_breakpoint_ids: None
-                    }))
-                })
+                        hit_breakpoint_ids: None,
+                    })),
+                }),
             });
         }
 
-        return Ok((seq_nr, state, out_messages));
+        Ok((seq_nr, state, out_messages))
     }
-}
-
-fn get_stack_depth(mut step: Rc<RunStep>) -> usize {
-    let mut res = 0;
-    loop {
-        if let Some(s) = step.parent() {
-            res += 1;
-            step = s;
-        } else {
-            break;
-        }
-    }
-    res
-}
-
-fn collect_variables(vars: &mut Vec<Variable>, args: Rc<SExp>, argvals: Rc<SExp>) {
-    match (args.borrow(), argvals.borrow()) {
-        (SExp::Atom(_, name), v) => {
-            vars.push(Variable {
-                name: decode_string(&name),
-                value: v.to_string(),
-                var_type: None,
-                presentation_hint: None,
-                evaluate_name: None,
-                variables_reference: vars.len() as i32,
-                named_variables: None,
-                indexed_variables: None,
-                memory_reference: None
-            });
-        },
-        (SExp::Cons(_, a, b), SExp::Cons(_, x, y)) => {
-            collect_variables(vars, a.clone(), x.clone());
-            collect_variables(vars, b.clone(), y.clone());
-        },
-        _ => { }
-    }
-}
-
-fn simple_stack_identifier(step: &RunStep) -> i32 {
-    let hash = sha256tree(step.sexp());
-    let as_integer = bigint_from_bytes(&Bytes::new(Some(BytesFromType::Raw(hash))), None);
-    (as_integer & 0x7fffffff_u32.to_bigint().unwrap()).to_i32().unwrap()
 }
 
 impl MessageHandler<ProtocolMessage> for Debugger {
@@ -422,7 +517,10 @@ impl MessageHandler<ProtocolMessage> for Debugger {
         pm: &ProtocolMessage,
     ) -> Result<Option<Vec<ProtocolMessage>>, String> {
         let mut state = State::PreInitialization;
-        self.log.write(&format!("got message {}", serde_json::to_string(pm).unwrap()));
+        self.log.write(&format!(
+            "got message {}",
+            serde_json::to_string(pm).unwrap()
+        ));
 
         swap(&mut state, &mut self.state);
 
@@ -444,24 +542,27 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                 (State::Initialized(i), RequestCommand::Launch(l)) => {
                     let allocator = Allocator::new();
                     let launch_extra: Option<RequestContainer<ExtraLaunchData>> =
-                        serde_json::from_value(raw_json.clone()).
-                        map(Some).unwrap_or(None);
-                    let stop_on_entry =
-                        launch_extra.map(|l| l.arguments.stop_on_entry).unwrap_or(false);
+                        serde_json::from_value(raw_json.clone())
+                            .map(Some)
+                            .unwrap_or(None);
+                    let stop_on_entry = launch_extra
+                        .map(|l| l.arguments.stop_on_entry)
+                        .unwrap_or(false);
 
                     self.log.write(&format!("stop on entry: {}", stop_on_entry));
 
                     if let Some(name) = &l.name {
-                        let (new_seq, new_state, out_msgs) = self.launch(allocator, pm, name, &i, l, stop_on_entry)?;
+                        let (new_seq, new_state, out_msgs) =
+                            self.launch(allocator, pm, name, &i, l, stop_on_entry)?;
                         self.msg_seq = new_seq;
                         self.state = new_state;
 
                         return Ok(Some(out_msgs));
                     } else {
-                        self.state = State::Initialized(i.clone());
+                        self.state = State::Initialized(i);
                         self.log.write("No program provided");
                     }
-                },
+                }
                 (State::Launched(r), RequestCommand::Threads) => {
                     self.msg_seq += 1;
                     self.state = State::Launched(r);
@@ -475,62 +576,39 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             body: Some(ResponseBody::Threads(ThreadsResponse {
                                 threads: vec![Thread {
                                     id: 1,
-                                    name: "main".to_string()
-                                }]
-                            }))
-                        })
+                                    name: "main".to_string(),
+                                }],
+                            })),
+                        }),
                     }]));
-                },
+                }
                 (State::Launched(r), RequestCommand::StackTrace(_)) => {
-                    let mut stack_frames = Vec::new();
-                    let mut step = Rc::new(r.run.current_step());
-
-                    loop {
-                        let current_loc = step.loc();
-                        let file_borrowed: &String = current_loc.file.borrow();
-                        let function =
-                            r.find_function(step.clone());
-                        let function_name = function.
-                            map(|f| f.name.clone()).
-                            unwrap_or_else(|| "step".to_string());
-                        let source_spec = Some(file_borrowed.clone()).filter(|n| {
-                            !n.starts_with("*")
-                        }).map(|source_file| {
-                            Source {
-                                adapter_data: None,
-                                checksums: None,
-                                name: Some(source_file.clone()),
-                                origin: None,
-                                path: Some(source_file),
-                                presentation_hint: None,
+                    let mut stack_frames = r.scopes.iter().map(|s| {
+                        let loc = s.source.clone();
+                        let fn_borrowed: &String = loc.file.borrow();
+                        StackFrame {
+                            id: s.scope_id as i32,
+                            name: s.name.clone(),
+                            source: Some(Source {
+                                name: Some(fn_borrowed.clone()),
+                                path: None,
                                 source_reference: None,
-                                sources: None
-                            }
-                        });
-                        stack_frames.push(StackFrame {
-                            id: simple_stack_identifier(step.borrow()),
-                            name: function_name,
-                            source: source_spec,
-                            line: current_loc.line as u32,
-                            column: current_loc.col as u32,
-                            end_line: current_loc.until.as_ref().map(|u| {
-                                u.line as u32
+                                presentation_hint: None,
+                                origin: None,
+                                sources: None,
+                                adapter_data: None,
+                                checksums: None
                             }),
-                            end_column: current_loc.until.as_ref().map(|u| {
-                                u.col as u32
-                            }),
+                            line: loc.line as u32,
+                            column: loc.col as u32,
+                            end_line: None,
+                            end_column: None,
                             can_restart: None,
                             instruction_pointer_reference: None,
                             module_id: None,
                             presentation_hint: None
-                        });
-
-                        if let Some(p) = step.parent() {
-                            step = p;
-                        } else {
-                            break;
                         }
-                    }
+                    }).collect();
 
                     self.msg_seq += 1;
                     self.state = State::Launched(r);
@@ -543,34 +621,34 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             message: None,
                             body: Some(ResponseBody::StackTrace(StackTraceResponse {
                                 stack_frames,
-                                total_frames: None
-                            }))
-                        })
+                                total_frames: None,
+                            })),
+                        }),
                     }]));
-                },
+                }
                 (State::Launched(r), RequestCommand::Variables(vreq)) => {
-                    let mut step = Rc::new(r.run.current_step());
+                    let s: Vec<StoredScope> = r.scopes.iter().filter(|s| {
+                        s.scope_id as i32 == vreq.variables_reference
+                    }).cloned().collect();
 
-                    while simple_stack_identifier(step.borrow()) < vreq.variables_reference {
-                        let current_loc = step.loc();
-                        if let Some(p) = step.parent() {
-                            step = p;
+                    let variables =
+                        if s.is_empty() {
+                            vec![]
                         } else {
-                            break;
-                        }
-                    }
-
-                    let mut variables = Vec::new();
-                    if let Some(fun) = r.find_function(step.clone()) {
-                        collect_variables(
-                            &mut variables,
-                            fun.args.
-                                unwrap_or_else(
-                                    || Rc::new(SExp::Nil(Srcloc::start("*nil*")))
-                                ),
-                            fun.tail.clone()
-                        );
-                    }
+                            s[0].named_variables.iter().enumerate().map(|(i,v)| {
+                                Variable {
+                                    name: decode_string(&v.name),
+                                    value: v.value.to_string(),
+                                    var_type: None,
+                                    presentation_hint: None,
+                                    evaluate_name: None,
+                                    variables_reference: i as i32,
+                                    named_variables: Some(s[0].named_variables.len() as i32),
+                                    indexed_variables: None,
+                                    memory_reference: None
+                                }
+                            }).collect()
+                        };
 
                     self.msg_seq += 1;
                     self.state = State::Launched(r);
@@ -581,51 +659,26 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             request_seq: pm.seq,
                             success: true,
                             message: None,
-                            body: Some(ResponseBody::Variables(VariablesResponse {
-                                variables
-                            }))
-                        })
+                            body: Some(ResponseBody::Variables(VariablesResponse { variables })),
+                        }),
                     }]));
-                },
+                }
                 (State::Launched(r), RequestCommand::Scopes(sreq)) => {
-                    let mut step = Rc::new(r.run.current_step());
-
-                    while simple_stack_identifier(step.borrow()) != sreq.frame_id {
-                        let current_loc = step.loc();
-                        if let Some(p) = step.parent() {
-                            step = p;
-                        } else {
-                            break;
+                    let scopes = r.scopes.iter().map(|s| {
+                        Scope {
+                            name: "Arguments".to_string(),
+                            column: None,
+                            end_column: None,
+                            line: None,
+                            end_line: None,
+                            expensive: false,
+                            indexed_variables: None,
+                            named_variables: Some(s.named_variables.len()),
+                            source: None,
+                            variables_reference: s.scope_id as i32,
+                            presentation_hint: None,
                         }
-                    }
-
-                    let mut scopes = Vec::new();
-                    let mut variables = Vec::new();
-
-                    if let Some(fun) = r.find_function(step.clone()) {
-                        collect_variables(
-                            &mut variables,
-                            fun.args.
-                                unwrap_or_else(
-                                    || Rc::new(SExp::Nil(Srcloc::start("*nil*")))
-                                ),
-                            fun.tail.clone()
-                        );
-                    }
-
-                    scopes.push(Scope {
-                        name: "Arguments".to_string(),
-                        column: None,
-                        end_column: None,
-                        line: None,
-                        end_line: None,
-                        expensive: false,
-                        indexed_variables: None,
-                        named_variables: Some(variables.len()),
-                        source: None,
-                        variables_reference: simple_stack_identifier(step.borrow()),
-                        presentation_hint: None,
-                    });
+                    }).collect();
 
                     self.msg_seq += 1;
                     self.state = State::Launched(r);
@@ -636,13 +689,11 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             request_seq: pm.seq,
                             success: true,
                             message: None,
-                            body: Some(ResponseBody::Scopes(ScopesResponse {
-                                scopes
-                            }))
-                        })
+                            body: Some(ResponseBody::Scopes(ScopesResponse { scopes })),
+                        }),
                     }]));
-                },
-                (State::Launched(mut r), RequestCommand::Pause(pi)) => {
+                }
+                (State::Launched(mut r), RequestCommand::Pause(_)) => {
                     let mut out_messages = Vec::new();
 
                     self.msg_seq += 1;
@@ -652,8 +703,8 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             request_seq: pm.seq,
                             success: true,
                             message: None,
-                            body: Some(ResponseBody::Pause)
-                        })
+                            body: Some(ResponseBody::Pause),
+                        }),
                     });
 
                     r.running = false;
@@ -669,14 +720,14 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                                 preserve_focus_hint: Some(true),
                                 text: None,
                                 all_threads_stopped: Some(true),
-                                hit_breakpoint_ids: None
-                            }))
-                        })
+                                hit_breakpoint_ids: None,
+                            })),
+                        }),
                     });
 
                     self.state = State::Launched(r);
                     return Ok(Some(out_messages));
-                },
+                }
                 (State::Launched(mut r), RequestCommand::StepIn(si)) => {
                     r.step(self.log.clone());
 
@@ -690,24 +741,25 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                                 request_seq: pm.seq,
                                 success: true,
                                 message: None,
-                                body: Some(ResponseBody::StepIn)
-                            })
+                                body: Some(ResponseBody::StepIn),
+                            }),
                         });
                     }
 
-                    let stack_depth = get_stack_depth(Rc::new(r.run.current_step()));
+                    let stack_depth = r.get_stack_depth();
                     // We should signal stopped if:
                     // - This is an organic step request from vscode or
                     // - We're running and
                     //   - The program ended or
                     //     - The stack depth target was reached.
-                    let should_stop =
-                        si.thread_id != -1 ||
-                        (r.running && (r.run.is_ended() || match r.target_depth {
-                            None => false,
-                            Some(TargetDepth::LessThan(n)) => stack_depth < n,
-                            Some(TargetDepth::LessOrEqual(n)) => stack_depth <= n
-                        }));
+                    let should_stop = si.thread_id != -1
+                        || (r.running
+                            && (r.run.is_ended()
+                                || match r.target_depth {
+                                    None => false,
+                                    Some(TargetDepth::LessThan(n)) => stack_depth < n,
+                                    Some(TargetDepth::LessOrEqual(n)) => stack_depth <= n,
+                                }));
 
                     // If this message was not synthetic, we should send a
                     // continued event.
@@ -718,9 +770,9 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             message: MessageKind::Event(Event {
                                 body: Some(EventBody::Continued(ContinuedEvent {
                                     thread_id: 1,
-                                    all_threads_continued: Some(true)
-                                }))
-                            })
+                                    all_threads_continued: Some(true),
+                                })),
+                            }),
                         });
                     }
 
@@ -734,23 +786,27 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             seq: self.msg_seq,
                             message: MessageKind::Event(Event {
                                 body: Some(EventBody::Stopped(StoppedEvent {
-                                    reason: r.stopped_reason.as_ref().cloned().unwrap_or(StoppedReason::Step),
+                                    reason: r
+                                        .stopped_reason
+                                        .as_ref()
+                                        .cloned()
+                                        .unwrap_or(StoppedReason::Step),
                                     description: None,
                                     thread_id: Some(1),
                                     preserve_focus_hint: Some(true),
                                     text: None,
                                     all_threads_stopped: Some(true),
-                                    hit_breakpoint_ids: None
-                                }))
-                            })
+                                    hit_breakpoint_ids: None,
+                                })),
+                            }),
                         });
                     }
 
                     self.state = State::Launched(r);
                     return Ok(Some(out_messages));
-                },
-                (State::Launched(mut r), RequestCommand::Next(n)) => {
-                    let depth = get_stack_depth(Rc::new(r.run.current_step()));
+                }
+                (State::Launched(mut r), RequestCommand::Next(_)) => {
+                    let depth = r.get_stack_depth();
 
                     let mut out_messages = Vec::new();
 
@@ -761,8 +817,8 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             request_seq: pm.seq,
                             success: true,
                             message: Some("run next".to_string()),
-                            body: Some(ResponseBody::Next)
-                        })
+                            body: Some(ResponseBody::Next),
+                        }),
                     });
 
                     self.msg_seq += 1;
@@ -771,9 +827,9 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                         message: MessageKind::Event(Event {
                             body: Some(EventBody::Continued(ContinuedEvent {
                                 thread_id: 1,
-                                all_threads_continued: Some(true)
-                            }))
-                        })
+                                all_threads_continued: Some(true),
+                            })),
+                        }),
                     });
 
                     r.running = true;
@@ -782,9 +838,9 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     self.state = State::Launched(r);
 
                     return Ok(Some(out_messages));
-                },
-                (State::Launched(mut r), RequestCommand::StepOut(so)) => {
-                    let depth = get_stack_depth(Rc::new(r.run.current_step()));
+                }
+                (State::Launched(mut r), RequestCommand::StepOut(_)) => {
+                    let depth = r.get_stack_depth();
                     let mut out_messages = Vec::new();
 
                     self.msg_seq += 1;
@@ -794,8 +850,8 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             request_seq: pm.seq,
                             success: true,
                             message: Some("run step out".to_string()),
-                            body: Some(ResponseBody::StepOut)
-                        })
+                            body: Some(ResponseBody::StepOut),
+                        }),
                     });
 
                     self.msg_seq += 1;
@@ -804,9 +860,9 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                         message: MessageKind::Event(Event {
                             body: Some(EventBody::Continued(ContinuedEvent {
                                 thread_id: 1,
-                                all_threads_continued: Some(true)
-                            }))
-                        })
+                                all_threads_continued: Some(true),
+                            })),
+                        }),
                     });
 
                     r.running = true;
@@ -815,8 +871,8 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     self.state = State::Launched(r);
 
                     return Ok(Some(out_messages));
-                },
-                (State::Launched(mut r), RequestCommand::Continue(c)) => {
+                }
+                (State::Launched(mut r), RequestCommand::Continue(_)) => {
                     let mut out_messages = Vec::new();
 
                     self.msg_seq += 1;
@@ -826,8 +882,8 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             request_seq: pm.seq,
                             success: true,
                             message: Some("run continue".to_string()),
-                            body: Some(ResponseBody::StepOut)
-                        })
+                            body: Some(ResponseBody::StepOut),
+                        }),
                     });
 
                     self.msg_seq += 1;
@@ -836,9 +892,9 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                         message: MessageKind::Event(Event {
                             body: Some(EventBody::Continued(ContinuedEvent {
                                 thread_id: 1,
-                                all_threads_continued: Some(true)
-                            }))
-                        })
+                                all_threads_continued: Some(true),
+                            })),
+                        }),
                     });
 
                     r.running = true;
@@ -847,15 +903,16 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     self.state = State::Launched(r);
 
                     return Ok(Some(out_messages));
-                },
+                }
                 (st, _rq) => {
-                    self.log.write(&format!("Don't know what to do with {:?}", req));
+                    self.log
+                        .write(&format!("Don't know what to do with {:?}", req));
                     self.state = st;
                 }
             }
         }
 
         self.log.write(&format!("unhandled message {:?}", pm));
-        return Err(format!("unhandled message {:?}", pm));
+        Err(format!("unhandled message {:?}", pm))
     }
 }

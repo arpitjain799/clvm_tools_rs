@@ -669,13 +669,12 @@ fn codegen_(
                 );
 
                 let mut unused_symbols = HashMap::new();
-                let generated_code_result = updated_opts
-                    .compile_program(
-                        allocator,
-                        runner.clone(),
-                        Rc::new(tocompile),
-                        &mut unused_symbols,
-                    );
+                let generated_code_result = updated_opts.compile_program(
+                    allocator,
+                    runner.clone(),
+                    Rc::new(tocompile),
+                    &mut unused_symbols,
+                );
 
                 generated_code_result
                     .and_then(|code| {

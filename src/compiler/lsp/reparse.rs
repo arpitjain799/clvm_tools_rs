@@ -224,7 +224,10 @@ pub fn reparse_subset(
             took_exp = true;
             result.exp = Some(ReparsedExp {
                 hash: suffix_hash,
-                parsed: compile_bodyform(opts.clone(), suffix_parse[suffix_parse.len() - 1].clone()),
+                parsed: compile_bodyform(
+                    opts.clone(),
+                    suffix_parse[suffix_parse.len() - 1].clone(),
+                ),
             });
         }
     }

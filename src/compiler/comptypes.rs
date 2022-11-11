@@ -438,7 +438,9 @@ impl PrimaryCodegen {
         let hash_str = Bytes::new(Some(BytesFromType::Raw(hash))).hex();
         let name = Bytes::new(Some(BytesFromType::Raw(name.to_owned()))).decode();
         codegen_copy.function_symbols.insert(hash_str.clone(), name);
-        codegen_copy.function_symbols.insert(format!("{}_arguments", hash_str), args.to_string());
+        codegen_copy
+            .function_symbols
+            .insert(format!("{}_arguments", hash_str), args.to_string());
         codegen_copy
     }
 

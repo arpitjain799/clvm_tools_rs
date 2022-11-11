@@ -45,7 +45,7 @@ impl RunStep {
             RunStep::Done(_, s) => s.clone(),
             RunStep::OpResult(_, s, _) => s.clone(),
             RunStep::Op(e, _, _, _, _) => e.clone(),
-            RunStep::Step(e, _, _) => e.clone()
+            RunStep::Step(e, _, _) => e.clone(),
         }
     }
 
@@ -53,7 +53,7 @@ impl RunStep {
         match self {
             RunStep::Step(_, a, _) => Some(a.clone()),
             RunStep::Op(_, a, _, _, _) => Some(a.clone()),
-            _ => None
+            _ => None,
         }
     }
 
@@ -62,7 +62,7 @@ impl RunStep {
             RunStep::Done(l, _) => l.clone(),
             RunStep::OpResult(l, _, _) => l.clone(),
             RunStep::Op(e, _, _, _, _) => e.loc(),
-            RunStep::Step(e, _, _) => e.loc()
+            RunStep::Step(e, _, _) => e.loc(),
         }
     }
 }
