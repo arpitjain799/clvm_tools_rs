@@ -1,4 +1,5 @@
 import * as axios from 'axios';
+var clvm_tools_rs = require('./clvm_tools_wasm.js');
 
 const scrollToBottom = (id) => {
     const element = document.getElementById(id);
@@ -6,12 +7,10 @@ const scrollToBottom = (id) => {
 };
 
 function repl() {
-	console.log('about to require clvm_tools_rs');
-	var r = require('./clvm_tools_rs.js');
+	console.log('about to require clvm_tools_wasm');
 
-  r.then((r) => {
+    var r = clvm_tools_rs;
 	    var repl = r.create_repl();
-	    console.log('repl',repl);
 
 	    var replInput = document.getElementById('repl-input');
       var cm = CodeMirror.fromTextArea(replInput, {
@@ -67,10 +66,9 @@ function repl() {
 	        }
           scrollToBottom('repl-transcript-holder');
 	    });
-  });
 }
 
-axios.get('clvm_tools_rs_bg.wasm', {responseType: 'blob'}).then((resp) => {
+axios.get('clvm_tools_wasm_bg.wasm', {responseType: 'blob'}).then((resp) => {
 	if (resp.status != 200) {
 		console.error(resp);
 		return;
@@ -78,7 +76,7 @@ axios.get('clvm_tools_rs_bg.wasm', {responseType: 'blob'}).then((resp) => {
 	resp.data.arrayBuffer().then((buf) => {
 		const imfs = new BrowserFS.FileSystem.InMemory();
 		BrowserFS.initialize(imfs);
-		BrowserFS.BFSRequire('fs').writeFileSync("clvm_tools_rs_bg.wasm", Buffer.from(buf));
-		repl();
+		BrowserFS.BFSRequire('fs').writeFileSync("clvm_tools_wasm_bg.wasm", Buffer.from(buf));
+		  clvm_tools_rs.default(buf).then((r) => repl(r));
 	});
 });
