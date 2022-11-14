@@ -581,13 +581,11 @@ fn parse_sexp_step(loc: Srcloc, p: &SExpParseState, this_char: u8) -> SExpParseR
         },
         SExpParseState::ParsingList(pl, pp, list_content) => {
             match (this_char as char, pp.borrow()) {
-                ('.', SExpParseState::Empty) => {
-                    resume(SExpParseState::TermList(
-                        pl.ext(&loc),
-                        Rc::new(SExpParseState::Empty),
-                        list_content.to_vec(),
-                    ))
-                },
+                ('.', SExpParseState::Empty) => resume(SExpParseState::TermList(
+                    pl.ext(&loc),
+                    Rc::new(SExpParseState::Empty),
+                    list_content.to_vec(),
+                )),
                 (')', SExpParseState::Empty) => emit(
                     Rc::new(enlist(pl.ext(&loc), list_content.to_vec())),
                     SExpParseState::Empty,

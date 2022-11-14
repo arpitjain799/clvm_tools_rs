@@ -209,7 +209,7 @@ fn make_let_bindings(
 ) -> Result<Vec<Rc<Binding>>, CompileErr> {
     let err = Err(CompileErr(
         body.loc(),
-        format!("Bad binding tail in {}", body)
+        format!("Bad binding tail in {}", body),
     ));
     match body.borrow() {
         SExp::Nil(_) => Ok(vec![]),

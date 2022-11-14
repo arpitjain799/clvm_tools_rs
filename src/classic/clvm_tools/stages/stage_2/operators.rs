@@ -201,7 +201,9 @@ impl Dialect for CompilerOperators {
         &[2]
     }
 
-    fn val_stack_limit(&self) -> usize { 10000000 }
+    fn val_stack_limit(&self) -> usize {
+        10000000
+    }
 
     fn op(
         &self,

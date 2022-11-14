@@ -325,8 +325,8 @@ fn test_fuzz_seed_3956111146_1() {
         "run".to_string(),
         "(mod () (q (r . lbvepvnoc) . dbhk))".to_string(),
     ])
-        .trim()
-        .to_string();
+    .trim()
+    .to_string();
     assert_eq!(res, "(q (r . \"lbvepvnoc\") . \"dbhk\")");
 }
 
