@@ -1,8 +1,8 @@
-#[cfg(test)]
+#[cfg(any(test, feature = "fuzzer"))]
 use rand::distributions::Standard;
-#[cfg(test)]
+#[cfg(any(test, feature = "fuzzer"))]
 use rand::prelude::Distribution;
-#[cfg(test)]
+#[cfg(any(test, feature = "fuzzer"))]
 use rand::Rng;
 
 use std::borrow::Borrow;
@@ -32,7 +32,7 @@ pub enum SExp {
     Atom(Srcloc, Vec<u8>),
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "fuzzer"))]
 pub fn random_atom_name<R: Rng + ?Sized>(rng: &mut R, min_size: usize) -> Vec<u8> {
     let mut bytevec: Vec<u8> = Vec::new();
     let mut len = 0;
@@ -49,12 +49,12 @@ pub fn random_atom_name<R: Rng + ?Sized>(rng: &mut R, min_size: usize) -> Vec<u8
     bytevec
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "fuzzer"))]
 pub fn random_atom<R: Rng + ?Sized>(rng: &mut R) -> SExp {
     SExp::Atom(Srcloc::start("*rng*"), random_atom_name(rng, 1))
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "fuzzer"))]
 pub fn random_sexp<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> SExp {
     if remaining < 2 {
         random_atom(rng)
@@ -93,7 +93,7 @@ pub fn random_sexp<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> SExp {
 }
 
 // Thanks: https://stackoverflow.com/questions/48490049/how-do-i-choose-a-random-value-from-an-enum
-#[cfg(test)]
+#[cfg(any(test, feature = "fuzzer"))]
 impl Distribution<SExp> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> SExp {
         random_sexp(rng, MAX_SEXP_COST)
@@ -581,11 +581,13 @@ fn parse_sexp_step(loc: Srcloc, p: &SExpParseState, this_char: u8) -> SExpParseR
         },
         SExpParseState::ParsingList(pl, pp, list_content) => {
             match (this_char as char, pp.borrow()) {
-                ('.', SExpParseState::Empty) => resume(SExpParseState::TermList(
-                    pl.ext(&loc),
-                    Rc::new(SExpParseState::Empty),
-                    list_content.to_vec(),
-                )),
+                ('.', SExpParseState::Empty) => {
+                    resume(SExpParseState::TermList(
+                        pl.ext(&loc),
+                        Rc::new(SExpParseState::Empty),
+                        list_content.to_vec(),
+                    ))
+                },
                 (')', SExpParseState::Empty) => emit(
                     Rc::new(enlist(pl.ext(&loc), list_content.to_vec())),
                     SExpParseState::Empty,
@@ -639,9 +641,11 @@ fn parse_sexp_step(loc: Srcloc, p: &SExpParseState, this_char: u8) -> SExpParseR
                         if list_copy.is_empty() {
                             emit(Rc::new(new_tail), SExpParseState::Empty)
                         } else {
-                            list_copy.push(Rc::new(new_tail));
-                            let new_list = enlist(pl.ext(&loc), list_copy);
-                            emit(Rc::new(new_list), SExpParseState::Empty)
+                            let mut result_list = new_tail;
+                            for item in list_copy.iter().rev() {
+                                result_list = make_cons(item.clone(), Rc::new(result_list));
+                            }
+                            emit(Rc::new(result_list), SExpParseState::Empty)
                         }
                     }
                     None => error(loc, "Dot as first element of list?"),

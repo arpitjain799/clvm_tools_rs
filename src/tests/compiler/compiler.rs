@@ -1092,3 +1092,50 @@ fn test_modern_mod_form() {
 
     assert_eq!(result.to_string(), "7");
 }
+
+#[test]
+fn test_parse_sexp() {
+    let list =
+        parse_sexp(Srcloc::start("*test*"), "( ( hi-there \"test\"))".bytes()).expect("this should parse");
+    assert_eq!(format!("{}", list[0]), "((hi-there \"test\"))");
+}
+
+#[test]
+fn test_parse_sexp_2() {
+    let list =
+        parse_sexp(Srcloc::start("*test*"), "(\"foo\")".bytes()).expect("should parse");
+    assert_eq!(format!("{}", list[0]), "(\"foo\")");
+}
+
+
+#[test]
+fn test_parse_sexp_3() {
+    let list =
+        parse_sexp(Srcloc::start("*test*"), "(\"foo.bar\")".bytes()).expect("should parse");
+    assert_eq!(format!("{}", list[0]), "(\"foo.bar\")");
+}
+
+#[test]
+fn test_parse_sexp_4() {
+    let list =
+        parse_sexp(Srcloc::start("*test*"), "(mod () (include \"foo.bar\") 9)".bytes()).expect("should parse");
+    assert_eq!(format!("{}", list[0]), "(mod () (include \"foo.bar\") 9)");
+}
+
+#[test]
+fn test_fuzz_seed_3956111146_1_alt_test_1() {
+    let res = run_string(
+        &"(mod () (include *standard-cl-21*) (q (r . lbvepvnoc) dbhk))".to_string(),
+        &"()".to_string()
+    ).unwrap();
+    assert_eq!(res.to_string(), "((r . lbvepvnoc) dbhk)");
+}
+
+#[test]
+fn test_fuzz_seed_3956111146_1() {
+    let res = run_string(
+        &"(mod () (include *standard-cl-21*) (q (r . lbvepvnoc) . dbhk))".to_string(),
+        &"()".to_string()
+    ).unwrap();
+    assert_eq!(res.to_string(), "((r . lbvepvnoc) . dbhk)");
+}

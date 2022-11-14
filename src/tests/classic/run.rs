@@ -319,6 +319,17 @@ fn test_classic_mod_form() {
     assert_eq!(res, "(q . 7)");
 }
 
+#[test]
+fn test_fuzz_seed_3956111146_1() {
+    let res = do_basic_run(&vec![
+        "run".to_string(),
+        "(mod () (q (r . lbvepvnoc) . dbhk))".to_string(),
+    ])
+        .trim()
+        .to_string();
+    assert_eq!(res, "(q (r . \"lbvepvnoc\") . \"dbhk\")");
+}
+
 #[cfg(test)]
 pub fn random_clvm_number<R: Rng + ?Sized>(rng: &mut R) -> RandomClvmNumber {
     // Make a number by creating some random atom bytes.

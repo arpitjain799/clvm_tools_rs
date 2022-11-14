@@ -149,6 +149,13 @@ pub fn compile_file(
     compile_pre_forms(allocator, runner, opts, pre_forms, symbol_table)
 }
 
+pub fn run_failure_to_compile_err(e: RunFailure) -> CompileErr {
+    match e {
+        RunFailure::RunErr(l, e) => CompileErr(l.clone(), e.to_string()),
+        RunFailure::RunExn(s, e) => CompileErr(s.clone(), format!("exception {}\n", e)),
+    }
+}
+
 pub fn run_optimizer(
     allocator: &mut Allocator,
     runner: Rc<dyn TRunProgram>,
@@ -156,19 +163,14 @@ pub fn run_optimizer(
 ) -> Result<Rc<SExp>, CompileErr> {
     let to_clvm_rs = convert_to_clvm_rs(allocator, r.clone())
         .map(|x| (r.loc(), x))
-        .map_err(|e| match e {
-            RunFailure::RunErr(l, e) => CompileErr(l, e),
-            RunFailure::RunExn(s, e) => CompileErr(s, format!("exception {}\n", e)),
-        })?;
+        .map_err(run_failure_to_compile_err)?;
 
     let optimized = optimize_sexp(allocator, to_clvm_rs.1, runner)
         .map_err(|e| CompileErr(to_clvm_rs.0.clone(), e.1))
         .map(|x| (to_clvm_rs.0, x))?;
 
-    convert_from_clvm_rs(allocator, optimized.0, optimized.1).map_err(|e| match e {
-        RunFailure::RunErr(l, e) => CompileErr(l, e),
-        RunFailure::RunExn(s, e) => CompileErr(s, format!("exception {}\n", e)),
-    })
+    convert_from_clvm_rs(allocator, optimized.0, optimized.1)
+        .map_err(run_failure_to_compile_err)
 }
 
 impl CompilerOpts for DefaultCompilerOpts {
