@@ -748,12 +748,6 @@ fn interpret_program(
                 true,
                 0,
             );
-            println!(
-                "call {} with args: {} (parent {} funs)",
-                called_fun.1.to_sexp(prog).to_string(),
-                distributed_args.1.to_string(),
-                prog.functions.len()
-            );
             interpret_program(
                 &called_fun.1.to_program(prog),
                 &distributed_args.1,
