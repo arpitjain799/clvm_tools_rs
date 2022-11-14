@@ -42,10 +42,10 @@ fuzz_target!(|data: &[u8]| {
 
         let prog: FuzzProgram =
             if old {
-                rng.gen()
-            } else {
                 let old_program: FuzzOldProgram = rng.gen();
                 old_program.program
+            } else {
+                rng.gen()
             };
 
         println!("prog: {}", prog.to_sexp().to_string());
@@ -138,6 +138,7 @@ fuzz_target!(|data: &[u8]| {
                 }
 
                 if let (Ok(old), Ok(new)) = (&old_run, &new_run) {
+                    println!("old-run: {}", disassemble(&mut allocator, old.1));
                     let new_version_of_old_run_output =
                         clvm::convert_from_clvm_rs(
                             &mut allocator,
@@ -163,13 +164,15 @@ fuzz_target!(|data: &[u8]| {
                 None
             };
 
-        if interpret_result.is_err() != run_result.is_err() ||
-            // If we generated an old result, check here.
-            old_result.as_ref().map(|or| {
-                interpret_result.is_err() != or.is_err()
-            }).unwrap_or(false)
-        {
+        if interpret_result.is_err() != run_result.is_err() {
             panic!("error results disagree on error");
+        }
+
+        // If we generated an old result, check here.
+        if old_result.as_ref().map(|or| {
+            interpret_result.is_err() != or.is_err()
+        }).unwrap_or(false) {
+            panic!("old run and new run disagree on error");
         }
 
         if let (Ok(interp), Ok(compiled)) = (interpret_result, run_result) {
