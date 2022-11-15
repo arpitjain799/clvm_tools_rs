@@ -189,6 +189,8 @@ fn create_name_lookup(
     name: &[u8],
     lookup: Option<LookupType>,
 ) -> Result<Rc<SExp>, CompileErr> {
+    // Support looking up by kind, since function and variable namespaces
+    // are distinct in lisp and its strict descendants.
     let left_of = |c: Rc<SExp>| match c.borrow() {
         SExp::Cons(_, a, _) => a.clone(),
         _ => Rc::new(SExp::Nil(c.loc())),
@@ -198,12 +200,14 @@ fn create_name_lookup(
         _ => Rc::new(SExp::Nil(c.loc())),
     };
 
+    // Lookup in either right or left env based on kind.
     let pre_treat = |env| match lookup {
         None => env,
         Some(LookupType::Function) => left_of(env),
         Some(LookupType::Variable) => right_of(env),
     };
 
+    // Promote found path to function or variable space.
     let two = 2_u32.to_bigint().unwrap();
     let post_process = |path| match lookup {
         None => path,
