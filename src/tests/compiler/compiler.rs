@@ -1141,3 +1141,12 @@ fn test_fuzz_seed_3956111146_1() {
     .unwrap();
     assert_eq!(res.to_string(), "((r . lbvepvnoc) . dbhk)");
 }
+
+#[test]
+fn test_fuzz_seed_2481330870_1() {
+    let res = run_string(
+        &"(mod (((gy . jj) . i) kp (wrhkfc fqgbxj . a) ((k . ky) lskk . abnfrlk)) (include *standard-cl-21*) (defun fun_0 () (q . u)) (defun fun_1 (sr yl kgknom f) (q)) (* (fun_1 (q . cftsje) (q) (q . xdc) (q . hpm)) (if (q . ugyvo) (q . oapre) (q))))".to_string(),
+        &"(((14000279176256627967 . 11515651697205401106) . 3317589908385436358) 482391571527016531 (923582168393492300 6554050284760806821 . 12422180248928398101) ((7375629381008634002 . 6847998847549853116) 2483407944554486143 . 17667897448456717619))".to_string(),
+    ).unwrap();
+    assert_eq!(res.to_string(), "()");
+}

@@ -26,7 +26,7 @@ use crate::compiler::prims::{primapply, primcons, primquote};
 use crate::compiler::runtypes::RunFailure;
 use crate::compiler::sexp::{decode_string, SExp};
 use crate::compiler::srcloc::Srcloc;
-use crate::util::u8_from_number;
+use crate::util::{Number, u8_from_number};
 
 /* As in the python code, produce a pair whose (thanks richard)
  *
@@ -118,11 +118,12 @@ pub fn create_name_lookup_(
     name: &[u8],
     env: Rc<SExp>,
     find: Rc<SExp>,
-) -> Result<u64, CompileErr> {
+) -> Result<Number, CompileErr> {
+    eprintln!("name {} env {} find {}", decode_string(name), env, find);
     match find.borrow() {
         SExp::Atom(l, a) => {
             if *a == *name {
-                Ok(1_u64)
+                Ok(bi_one())
             } else {
                 Err(CompileErr(
                     l.clone(),
@@ -137,7 +138,7 @@ pub fn create_name_lookup_(
         SExp::Integer(l, i) => {
             let a = u8_from_number(i.clone());
             if a == *name {
-                Ok(1_u64)
+                Ok(bi_one())
             } else {
                 Err(CompileErr(
                     l.clone(),
@@ -150,17 +151,18 @@ pub fn create_name_lookup_(
             }
         }
         SExp::Cons(l, head, rest) => {
+            let two = 2_u32.to_bigint().unwrap();
             if let Some((capture, substructure)) = is_at_capture(head.clone(), rest.clone()) {
                 if *capture == *name {
-                    Ok(1_u64)
+                    Ok(bi_one())
                 } else {
                     create_name_lookup_(l.clone(), name, env, substructure)
                 }
             } else {
                 create_name_lookup_(l.clone(), name, env.clone(), head.clone())
-                    .map(|v| Ok(2 * v))
+                    .map(|v| Ok(two.clone() * v))
                     .unwrap_or_else(|_| {
-                        create_name_lookup_(l.clone(), name, env, rest.clone()).map(|v| 2 * v + 1)
+                        create_name_lookup_(l.clone(), name, env, rest.clone()).map(|v| two * v + 1)
                     })
             }
         }
@@ -176,18 +178,55 @@ pub fn create_name_lookup_(
     }
 }
 
+#[derive(Clone, Debug)]
+enum LookupType {
+    Function,
+    Variable
+}
+
 fn create_name_lookup(
     compiler: &PrimaryCodegen,
     l: Srcloc,
     name: &[u8],
+    lookup: Option<LookupType>
 ) -> Result<Rc<SExp>, CompileErr> {
+    let left_of = |c: Rc<SExp>| {
+        match c.borrow() {
+            SExp::Cons(_,a,_) => a.clone(),
+            _ => Rc::new(SExp::Nil(c.loc()))
+        }
+    };
+    let right_of = |c: Rc<SExp>| {
+        match c.borrow() {
+            SExp::Cons(_,_,b) => b.clone(),
+            _ => Rc::new(SExp::Nil(c.loc()))
+        }
+    };
+
+    let pre_treat = |env| {
+        match lookup {
+            None => env,
+            Some(LookupType::Function) => left_of(env),
+            Some(LookupType::Variable) => right_of(env)
+        }
+    };
+
+    let two = 2_u32.to_bigint().unwrap();
+    let post_process = |path| {
+        match lookup {
+            None => path,
+            Some(LookupType::Function) => path * two,
+            Some(LookupType::Variable) => (path * two) + 1
+        }
+    };
+
     compiler
         .constants
         .get(name)
         .map(|x| Ok(x.clone()))
         .unwrap_or_else(|| {
-            create_name_lookup_(l.clone(), name, compiler.env.clone(), compiler.env.clone())
-                .map(|i| Rc::new(SExp::Integer(l.clone(), i.to_bigint().unwrap())))
+            create_name_lookup_(l.clone(), name, compiler.env.clone(), pre_treat(compiler.env.clone()))
+                .map(|i| Rc::new(SExp::Integer(l.clone(), post_process(i))))
         })
 }
 
@@ -211,11 +250,13 @@ pub fn get_callable(
     l: Srcloc,
     atom: Rc<SExp>,
 ) -> Result<Callable, CompileErr> {
+    eprintln!("get_callable {}", atom);
+    eprintln!("compiler constants {:?}", compiler.constants);
     match atom.borrow() {
         SExp::Atom(l, name) => {
             let macro_def = compiler.macros.get(name);
             let inline = compiler.inlines.get(name);
-            let defun = create_name_lookup(compiler, l.clone(), name);
+            let defun = create_name_lookup(compiler, l.clone(), name, Some(LookupType::Function));
             let prim = get_prim(l.clone(), compiler.prims.clone(), name);
             let atom_is_com = *name == "com".as_bytes().to_vec();
             let atom_is_at = *name == "@".as_bytes().to_vec();
@@ -232,6 +273,7 @@ pub fn get_callable(
                     Ok(Callable::CallDefun(l.clone(), defun_clone.clone()))
                 }
                 (_, _, _, Some(prim), _, _) => {
+                    eprintln!("prim {}", prim);
                     let prim_clone: &SExp = prim.borrow();
                     Ok(Callable::CallPrim(l.clone(), prim_clone.clone()))
                 }
@@ -265,6 +307,7 @@ pub fn process_macro_call(
     let args_to_macro = list_to_cons(l.clone(), &converted_args);
     build_swap_table_mut(&mut swap_table, &args_to_macro);
 
+    eprintln!("call macro {} with args {}", code, args_to_macro);
     run(
         allocator,
         runner.clone(),
@@ -277,10 +320,16 @@ pub fn process_macro_call(
         RunFailure::RunErr(rl, e) => CompileErr(l, format!("error executing macro: {} {}", rl, e)),
     })
     .and_then(|v| {
+        eprintln!("got macro result {}", v);
         let relabeled_expr = relabel(&swap_table, &v);
         compile_bodyform(opts.clone(), Rc::new(relabeled_expr))
     })
-    .and_then(|body| generate_expr_code(allocator, runner, opts, compiler, Rc::new(body)))
+    .and_then(|body| {
+        eprintln!("generate code {}", body.to_sexp());
+        let res = generate_expr_code(allocator, runner, opts, compiler, Rc::new(body))?;
+        eprintln!("generated code {}", res.1);
+        Ok(res)
+    })
 }
 
 fn generate_args_code(
@@ -403,6 +452,7 @@ fn compile_call(
             ),
 
             Callable::CallDefun(l, lookup) => {
+                eprintln!("lookup {} for {}", lookup, decode_string(an));
                 generate_args_code(allocator, runner, opts.clone(), compiler, l.clone(), &tl)
                     .and_then(|args| {
                         process_defun_call(
@@ -498,6 +548,7 @@ pub fn generate_expr_code(
     compiler: &PrimaryCodegen,
     expr: Rc<BodyForm>,
 ) -> Result<CompiledCode, CompileErr> {
+    eprintln!("generate_expr_code {:?}", expr);
     match expr.borrow() {
         BodyForm::Let(LetFormKind::Parallel, letdata) => {
             /* Depends on a defun having been desugared from this let and the let
@@ -520,7 +571,7 @@ pub fn generate_expr_code(
                             Rc::new(SExp::Integer(l.clone(), bi_one())),
                         ))
                     } else {
-                        create_name_lookup(compiler, l.clone(), atom)
+                        create_name_lookup(compiler, l.clone(), atom, Some(LookupType::Variable))
                             .map(|f| Ok(CompiledCode(l.clone(), f)))
                             .unwrap_or_else(|_| {
                                 // Pass through atoms that don't look up on behalf of
@@ -563,6 +614,10 @@ pub fn generate_expr_code(
                     "created a call with no forms".to_string(),
                 ))
             } else {
+                eprintln!("call {}", expr.to_sexp());
+                for (i, arg) in list.iter().skip(1).enumerate() {
+                    eprintln!("- {} = {}", i, arg.to_sexp());
+                }
                 compile_call(allocator, runner, l.clone(), opts, compiler, list.to_vec())
             }
         }
