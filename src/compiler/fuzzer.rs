@@ -142,11 +142,7 @@ fn make_operator(op: String, args: Vec<SExp>) -> SExp {
 
     for i_reverse in 0..args.len() {
         let i = args.len() - i_reverse - 1;
-        result = SExp::Cons(
-            loc.clone(),
-            Rc::new(args[i].clone()),
-            Rc::new(result),
-        );
+        result = SExp::Cons(loc.clone(), Rc::new(args[i].clone()), Rc::new(result));
     }
 
     SExp::Cons(
@@ -206,11 +202,7 @@ fn distribute_args(
                 argn + first_res.0,
             );
             let res = if spine {
-                SExp::Cons(
-                    l.clone(),
-                    Rc::new(first_res.1),
-                    Rc::new(rest_res.1),
-                )
+                SExp::Cons(l.clone(), Rc::new(first_res.1), Rc::new(rest_res.1))
             } else {
                 make_operator("c".to_string(), vec![first_res.1, rest_res.1])
             };
@@ -401,7 +393,10 @@ fn random_operation<R: Rng + ?Sized>(rng: &mut R, dialect: u32, remaining: usize
                         expr: random_operation(rng, dialect, remaining - 1),
                     })
                     .collect();
-                FuzzOperation::Let(new_bindings, Rc::new(random_operation(rng, dialect, remaining - 1)))
+                FuzzOperation::Let(
+                    new_bindings,
+                    Rc::new(random_operation(rng, dialect, remaining - 1)),
+                )
             }
         }
     }
@@ -675,8 +670,7 @@ fn interpret_program(
                     Rc::new(prog.args.to_sexp()),
                 )
                 .map_err(|e| RunFailure::RunErr(e.0.clone(), e.1.clone()))?;
-                let argval =
-                    choose_path(argpath.to_bigint().unwrap(), Rc::new(args.clone()))?;
+                let argval = choose_path(argpath.to_bigint().unwrap(), Rc::new(args.clone()))?;
                 let argval_borrow: &SExp = argval.borrow();
                 interpret_program(
                     prog,
