@@ -143,13 +143,7 @@ fn rename_in_bodyform(namemap: &HashMap<Vec<u8>, Vec<u8>>, b: Rc<BodyForm>) -> B
             )
         }
 
-        BodyForm::Quoted(atom) => match atom.borrow() {
-            SExp::Atom(l, n) => match namemap.get(n) {
-                Some(named) => BodyForm::Quoted(SExp::Atom(l.clone(), named.to_vec())),
-                None => BodyForm::Quoted(atom.clone()),
-            },
-            _ => BodyForm::Quoted(atom.clone()),
-        },
+        BodyForm::Quoted(atom) => BodyForm::Quoted(atom.clone()),
 
         BodyForm::Value(atom) => match atom.borrow() {
             SExp::Atom(l, n) => match namemap.get(n) {

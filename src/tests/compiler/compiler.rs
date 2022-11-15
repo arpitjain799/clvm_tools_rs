@@ -1150,3 +1150,17 @@ fn test_fuzz_seed_2481330870_1() {
     ).unwrap();
     assert_eq!(res.to_string(), "()");
 }
+
+#[test]
+fn test_fuzz_seed_1839384357_1() {
+    let res = run_string(
+        &indoc!{"
+    (mod (((l . ltodpyiguqbyrd) j . mns) ((a . n) . cvy) ((nk . rnxx) f . dou) b)
+     (include *standard-cl-21*)
+     (defun-inline fun_0 (ihmi n iczz ki) (q . ki))
+     (fun_0 (q . dhqtjg) (q . ijxr) (q . qshbgiipbh) (q . aij))
+    )"}.to_string(),
+        &"()".to_string()
+    ).unwrap();
+    assert_eq!(res.to_string(), "ki");
+}
