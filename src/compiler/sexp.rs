@@ -55,6 +55,21 @@ pub fn random_atom<R: Rng + ?Sized>(rng: &mut R) -> SExp {
 }
 
 #[cfg(any(test, feature = "fuzzer"))]
+pub fn random_quoted_string<R: Rng + ?Sized>(rng: &mut R, min_size: u8) -> SExp {
+    let mut bytevec: Vec<u8> = Vec::new();
+    let mut len = 0;
+    loop {
+        len += 1;
+        if len < min_size || rng.gen() {
+            bytevec.push(rng.gen());
+        } else {
+            break;
+        }
+    }
+    SExp::QuotedString(Srcloc::start("*rng*"), b'"', bytevec)
+}
+
+#[cfg(any(test, feature = "fuzzer"))]
 pub fn random_sexp<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> SExp {
     if remaining < 2 {
         random_atom(rng)
@@ -86,7 +101,16 @@ pub fn random_sexp<R: Rng + ?Sized>(rng: &mut R, remaining: usize) -> SExp {
             }
             _ => {
                 // atom
-                random_atom(rng)
+                let atom_kind: u8 = rng.gen();
+                if atom_kind >= 0xa0 {
+                    let mut min_len = rng.gen_range(0..=8);
+                    if min_len == 8 {
+                        min_len = rng.gen_range(0..=129);
+                    }
+                    random_quoted_string(rng, min_len)
+                } else {
+                    random_atom(rng)
+                }
             }
         }
     }
