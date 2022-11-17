@@ -66,7 +66,7 @@ impl IFileReader for JSFileReader {
     fn read(&self, name: &str) -> Result<Vec<u8>, String> {
         let name_str = JsValue::from_str(name);
         let res = self.file_reader.call1(&JsValue::null(), &name_str);
-        res.map_err(|e| format!("{:?}", e)).and_then(|content| {
+        res.map_err(|_| "Could not read file".to_string()).and_then(|content| {
             if content.loose_eq(&JsValue::null()) {
                 Err("could not read file".to_string())
             } else if let Some(s) = content.as_string() {

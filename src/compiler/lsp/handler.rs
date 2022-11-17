@@ -82,7 +82,7 @@ impl LSPServiceProvider {
         Ok(res)
     }
 
-    fn reconfigure(&mut self) -> Option<ConfigJson> {
+    pub fn reconfigure(&mut self) -> Option<ConfigJson> {
         self.get_config_path()
             .and_then(|config_path| self.fs.read(&config_path).ok())
             .and_then(|config_data| serde_json::from_str(&decode_string(&config_data)).ok())
@@ -153,15 +153,15 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                 } else if let Ok((id, params)) = cast::<Completion>(req.clone()) {
                     return self.handle_completion_request(id, &params);
                 } else {
-                    eprintln!("unknown request {:?}", req);
+                    self.log.write(&format!("unknown request {:?}", req));
                 };
                 // ...
             }
             Message::Response(resp) => {
-                eprintln!("got response: {:?}", resp);
+                self.log.write(&format!("got response: {:?}", resp));
             }
             Message::Notification(not) => {
-                eprintln!("got notification: {:?}", not);
+                self.log.write(&format!("got notification: {:?}", not));
                 if not.method == "textDocument/didOpen" {
                     let stringified_params = serde_json::to_string(&not.params).unwrap();
                     if let Ok(params) =
@@ -180,7 +180,7 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                             },
                         );
                     } else {
-                        eprintln!("cast failed in didOpen");
+                        self.log.write(&format!("cast failed in didOpen"));
                     }
                 } else if not.method == "workspace/didChangeWatchedFiles" {
                     let stringified_params = serde_json::to_string(&not.params).unwrap();
@@ -193,7 +193,7 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                             if doc_id.ends_with("chialisp.json") {
                                 if let Some(config) = self.reconfigure() {
                                     // We have a config file and can read the filesystem.
-                                    eprintln!("reconfigured");
+                                    self.log.write(&format!("reconfigured"));
                                     self.config = config;
                                     self.parsed_documents.clear();
                                     self.goto_defs.clear();
@@ -211,7 +211,7 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                         if doc_id.ends_with("chialisp.json") {
                             if let Some(config) = self.reconfigure() {
                                 // We have a config file and can read the filesystem.
-                                eprintln!("reconfigured");
+                                self.log.write(&format!("reconfigured"));
                                 self.config = config;
                             }
                         }
@@ -222,10 +222,10 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                             &params.content_changes,
                         );
                     } else {
-                        eprintln!("case failed in didChange");
+                        self.log.write(&format!("case failed in didChange"));
                     }
                 } else {
-                    eprintln!("not sure what we got: {:?}", not);
+                    self.log.write(&format!("not sure what we got: {:?}", not));
                 }
             }
         }

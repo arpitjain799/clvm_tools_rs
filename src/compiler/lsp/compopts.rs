@@ -12,12 +12,13 @@ use crate::compiler::compiler::{
 };
 use crate::compiler::comptypes::{CompileErr, CompilerOpts, PrimaryCodegen};
 use crate::compiler::lsp::patch::{compute_comment_lines, split_text, stringify_doc};
-use crate::compiler::lsp::types::{DocData, IFileReader};
+use crate::compiler::lsp::types::{DocData, IFileReader, ILogWriter};
 use crate::compiler::sexp::{decode_string, SExp};
 use crate::compiler::srcloc::Srcloc;
 
 #[derive(Clone)]
 pub struct LSPCompilerOpts {
+    pub log: Rc<dyn ILogWriter>,
     pub fs: Rc<dyn IFileReader>,
     pub ws_root: Option<PathBuf>,
     pub include_dirs: Vec<String>,
@@ -136,24 +137,25 @@ impl CompilerOpts for LSPCompilerOpts {
 }
 
 pub fn get_file_content(
+    log: Rc<dyn ILogWriter>,
     reader: Rc<dyn IFileReader>,
     ws_root: Option<PathBuf>,
     include_paths: &[String],
     name: &str,
 ) -> Result<(String, DocData), String> {
-    eprintln!("get_file_content {}", name);
+    log.write(&format!("get_file_content {}", name));
     for find_path in include_paths.iter() {
         let joined_find_to_root = if let Some(ref r) = ws_root {
             r.join(find_path).to_path_buf()
         } else {
             Path::new(r".").to_path_buf()
         };
-        eprintln!(
+        log.write(&format!(
             "joined_find_to_root {}",
             joined_find_to_root.to_str().unwrap()
-        );
+        ));
         if let Some(try_path) = joined_find_to_root.join(name).to_str() {
-            eprintln!("try path {}", try_path);
+            log.write(&format!("try path {}", try_path));
             if let Ok(filedata) = reader.read(try_path) {
                 let doc_text = split_text(&decode_string(&filedata));
                 let comments = compute_comment_lines(&doc_text);
@@ -175,6 +177,7 @@ pub fn get_file_content(
 
 impl LSPCompilerOpts {
     pub fn new(
+        log: Rc<dyn ILogWriter>,
         fs: Rc<dyn IFileReader>,
         ws_root: Option<PathBuf>,
         filename: &str,
@@ -182,6 +185,7 @@ impl LSPCompilerOpts {
         docs: Rc<RefCell<HashMap<String, DocData>>>,
     ) -> Self {
         LSPCompilerOpts {
+            log,
             fs,
             ws_root,
             include_dirs: paths.to_owned(),
@@ -199,13 +203,14 @@ impl LSPCompilerOpts {
     }
 
     fn get_file(&self, name: &str) -> Result<(String, DocData), String> {
-        eprintln!("get_file {}", name);
+        self.log.write(&format!("get_file {}", name));
         let cell: &RefCell<HashMap<String, DocData>> = self.lsp.borrow();
         let coll: Ref<HashMap<String, DocData>> = cell.borrow();
         coll.get(name)
             .map(|x| Ok((x.fullname.clone(), x.clone())))
             .unwrap_or_else(|| {
                 get_file_content(
+                    self.log.clone(),
                     self.fs.clone(),
                     self.ws_root.clone(),
                     &self.include_dirs,

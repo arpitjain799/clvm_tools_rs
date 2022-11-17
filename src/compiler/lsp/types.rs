@@ -448,6 +448,7 @@ impl LSPServiceProvider {
 
     pub fn ensure_parsed_document(&mut self, uristring: &str) {
         let opts = Rc::new(LSPCompilerOpts::new(
+            self.log.clone(),
             self.fs.clone(),
             self.get_workspace_root(),
             uristring,
@@ -463,7 +464,7 @@ impl LSPServiceProvider {
                 .cloned()
                 .unwrap_or_else(|| ParsedDoc::new(startloc));
             let ranges = make_simple_ranges(&doc.text);
-            eprintln!("ranges {:?}", ranges);
+            self.log.write(&format!("ranges {:?}", ranges));
             let mut new_helpers = reparse_subset(
                 opts,
                 &doc.text,
@@ -481,8 +482,9 @@ impl LSPServiceProvider {
                     continue;
                 }
 
-                eprintln!("incfile.filename {}", decode_string(&incfile.filename));
+                self.log.write(&format!("incfile.filename {}", decode_string(&incfile.filename)));
                 if let Ok((filename, file_body)) = get_file_content(
+                    self.log.clone(),
                     self.fs.clone(),
                     self.get_workspace_root(),
                     &self.config.include_paths,
