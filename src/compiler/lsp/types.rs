@@ -10,10 +10,10 @@ use std::rc::Rc;
 use lsp_server::{ExtractError, Message, Notification, Request, RequestId};
 
 use lsp_types::{
-    CompletionOptions, Diagnostic, InitializeParams, OneOf, Position, PublishDiagnosticsParams,
+    CodeActionKind, CodeActionProviderCapability, CodeActionOptions, CompletionOptions, Diagnostic, ExecuteCommandParams, InitializeParams, OneOf, Position, PublishDiagnosticsParams,
     Range, SemanticTokenModifier, SemanticTokenType, SemanticTokensFullOptions,
     SemanticTokensLegend, SemanticTokensOptions, SemanticTokensServerCapabilities,
-    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, WorkDoneProgressOptions,
+    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, WorkDoneProgressOptions, WorkDoneProgressParams
 };
 
 use percent_encoding::percent_decode;
@@ -380,6 +380,37 @@ impl LSPServiceProvider {
         if let (Some(d), Some(p)) = (self.get_doc(uristring), self.get_parsed(uristring)) {
             let mut errors = Vec::new();
 
+            let missing_includes = self.check_for_missing_include_files();
+            let mut include_diagnostics: Vec<Diagnostic> = missing_includes.iter().map(|i| {
+                Diagnostic {
+                    range: DocRange::from_srcloc(i.nl.clone()).to_range(),
+                    severity: None,
+                    code: None,
+                    code_description: None,
+                    source: Some("chialisp".to_string()),
+                    message: format!("missing include file {} or path not set", decode_string(&i.filename)),
+                    tags: None,
+                    related_information: None,
+                    data: None,
+                }
+            }).collect();
+
+            if !missing_includes.is_empty() {
+                // Send command to show the status bar item.
+                res.push(Message::Notification(Notification {
+                    method: "workspace/executeCommand".to_string(),
+                    params: serde_json::to_value(ExecuteCommandParams {
+                        command: "chialisp.locateIncludeFile".to_string(),
+                        arguments: vec![serde_json::to_value(decode_string(&missing_includes[0].filename)).unwrap()],
+                        work_done_progress_params: WorkDoneProgressParams {
+                            work_done_token: None
+                        }
+                    }).unwrap()
+                }));
+            }
+
+            errors.append(&mut include_diagnostics);
+
             for error in p.errors.iter() {
                 errors.push(Diagnostic {
                     range: DocRange::from_srcloc(error.0.clone()).to_range(),
@@ -538,6 +569,15 @@ impl LSPServiceProvider {
                 //             trigger_characters: Some(completion_start),
                 ..Default::default()
             }),
+            code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+                code_action_kinds: Some(vec![
+                    CodeActionKind::QUICKFIX
+                ]),
+                work_done_progress_options: WorkDoneProgressOptions {
+                    work_done_progress: None
+                },
+                resolve_provider: None
+            })),
             ..Default::default()
         }
     }

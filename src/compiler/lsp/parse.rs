@@ -43,6 +43,7 @@ pub struct IncludeData {
     pub kw: Srcloc,
     pub kind: IncludeKind,
     pub filename: Vec<u8>,
+    pub found: Option<bool>
 }
 
 #[derive(Debug, Clone)]

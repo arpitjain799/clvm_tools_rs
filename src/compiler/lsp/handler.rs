@@ -3,8 +3,8 @@ use std::path::Path;
 use std::rc::Rc;
 
 use lsp_types::{
-    request::Completion, request::GotoDefinition, request::Initialize,
-    request::SemanticTokensFullRequest, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
+    request::Completion, request::CodeActionRequest, request::GotoDefinition, request::Initialize,
+    request::SemanticTokensFullRequest, CodeAction, CodeActionKind, CodeActionParams, CodeActionOrCommand, Command, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
     DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, Location, Position,
     Range, Url,
 };
@@ -12,11 +12,12 @@ use lsp_types::{
 use lsp_server::{ErrorCode, Message, RequestId, Response};
 
 use crate::compiler::lsp::completion::LSPCompletionRequestHandler;
+use crate::compiler::lsp::parse::IncludeData;
 use crate::compiler::lsp::patch::{
     compute_comment_lines, split_text, LSPServiceProviderApplyDocumentPatch,
 };
 use crate::compiler::lsp::semtok::LSPSemtokRequestHandler;
-use crate::compiler::lsp::types::{cast, ConfigJson, DocData, InitState, LSPServiceProvider};
+use crate::compiler::lsp::types::{cast, ConfigJson, DocRange, DocData, InitState, LSPServiceProvider};
 use crate::compiler::sexp::decode_string;
 use crate::compiler::srcloc::Srcloc;
 
@@ -82,6 +83,75 @@ impl LSPServiceProvider {
         Ok(res)
     }
 
+    // Update include state
+    fn update_include_state(
+        &mut self,
+        parsed_file: &str,
+        file_name: &[u8],
+        file_found: bool
+    ) {
+        if let Some(found) = self.parsed_documents.get_mut(parsed_file) {
+            let mut found_hash = None;
+            for (h, inc) in found.includes.iter() {
+                if &inc.filename == file_name {
+                    found_hash = Some(h.clone());
+                    break;
+                }
+            }
+
+            if let Some(h) = &found_hash {
+                if let Some(inc) = found.includes.get_mut(h) {
+                    inc.found = Some(file_found);
+                }
+            }
+        }
+    }
+
+    // Return the includes that couldn't be resolved.
+    pub fn check_for_missing_include_files(&mut self) -> Vec<IncludeData> {
+        let mut to_resolve = Vec::new();
+
+        // Find includes we need to resolve
+        for (k,v) in self.parsed_documents.iter() {
+            for (_,i) in v.includes.iter() {
+                if i.found != Some(true) {
+                    to_resolve.push((k, i.clone()));
+                }
+            }
+        }
+
+        // Errors is specifically the ones we tried to resolve and failed.
+        let mut ask_ui_for_resolution = Vec::new();
+
+        let to_read_files: Vec<(String, IncludeData)> = to_resolve.iter().map(|(parsed, i)| {
+            (parsed.to_string(), i.clone())
+        }).collect();
+        for (parsed, i) in to_read_files.iter() {
+            if i.filename.is_empty() || i.filename[0] == b'*' || i.found == Some(true) {
+                continue;
+            }
+
+            let mut found_include = false;
+            for path in self.config.include_paths.iter() {
+                let target_name = Path::new(&path).join(&decode_string(&i.filename)).to_str().map(|o| o.to_owned());
+                if let Some(target) = target_name {
+                    if let Ok(_) = self.fs.read(&target) {
+                        found_include = true;
+                        self.update_include_state(parsed, &i.filename, true);
+                        break;
+                    }
+                }
+            }
+
+            if !found_include {
+                ask_ui_for_resolution.push(i.clone());
+                self.update_include_state(parsed, &i.filename, false);
+            }
+        }
+
+        ask_ui_for_resolution
+    }
+
     pub fn reconfigure(&mut self) -> Option<ConfigJson> {
         self.get_config_path()
             .and_then(|config_path| self.fs.read(&config_path).ok())
@@ -102,6 +172,43 @@ impl LSPServiceProvider {
 
                 result
             })
+    }
+
+    fn handle_code_action_request(
+        &mut self,
+        id: RequestId,
+        params: &CodeActionParams,
+    ) -> Result<Vec<Message>, String> {
+        let mut result_messages = Vec::new();
+        if let Some(doc) = self.parsed_documents.get(&params.text_document.uri.to_string()) {
+            for (_, inc) in doc.includes.iter() {
+                if DocRange::from_srcloc(inc.nl.clone()).to_range() == params.range {
+                    let code_action = vec![
+                        CodeActionOrCommand::CodeAction(CodeAction {
+                            title: "Locate include path".to_string(),
+                            kind: Some(CodeActionKind::QUICKFIX),
+                            diagnostics: None,
+                            edit: None,
+                            command: Some(Command {
+                                title: "Locate include path".to_string(),
+                                command: "chialisp.locateIncludePath".to_string(),
+                                arguments: Some(vec![serde_json::to_value(&decode_string(&inc.filename)).unwrap()])
+                            }),
+                            is_preferred: None,
+                            disabled: None,
+                            data: None
+                        })
+                    ];
+                    result_messages.push(Message::Response(Response {
+                        id: id.clone(),
+                        result: Some(serde_json::to_value(code_action).unwrap()),
+                        error: None
+                    }));
+                }
+            }
+        }
+
+        Ok(result_messages)
     }
 }
 
@@ -152,6 +259,8 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                     return self.goto_definition(id, &params);
                 } else if let Ok((id, params)) = cast::<Completion>(req.clone()) {
                     return self.handle_completion_request(id, &params);
+                } else if let Ok((id, params)) = cast::<CodeActionRequest>(req.clone()) {
+                    return self.handle_code_action_request(id, &params);
                 } else {
                     self.log.write(&format!("unknown request {:?}", req));
                 };

@@ -843,6 +843,10 @@ fn compile_file_is_annotated() {
         Rc::new(EPrintWriter::new()),
         true,
     );
+    lsp.set_workspace_root(PathBuf::from(r"."));
+    lsp.set_config(ConfigJson {
+        include_paths: vec!["./resources/tests".to_string()],
+    });
     let file = "file:test.cl".to_string();
     let open_msg = make_did_open_message(&file, 1, "( (compile-file test t1.cl) )".to_string());
     let sem_tok = make_get_semantic_tokens_msg(&file, 2);
@@ -887,6 +891,10 @@ fn embed_file_is_annotated() {
         Rc::new(EPrintWriter::new()),
         true,
     );
+    lsp.set_workspace_root(PathBuf::from(r"."));
+    lsp.set_config(ConfigJson {
+        include_paths: vec!["./resources/tests".to_string()],
+    });
     let file = "file:test.cl".to_string();
     let open_msg = make_did_open_message(&file, 1, "( (embed-file test sexp t1.cl) )".to_string());
     let sem_tok = make_get_semantic_tokens_msg(&file, 2);

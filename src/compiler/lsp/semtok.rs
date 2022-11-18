@@ -309,6 +309,7 @@ fn process_body_code(
                         kw: i.kw.clone(),
                         kind: IncludeKind::Include,
                         filename: i.name.clone(),
+                        found: None
                     },
                 );
             }
