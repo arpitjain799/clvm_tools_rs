@@ -814,7 +814,7 @@ fn evaluate_to_number(
         SExp::Integer(_, a) => Ok(a.clone()),
         SExp::Cons(l, _, _) => Err(RunFailure::RunErr(
             l.clone(),
-            format!("*: expected atom got {}", a_val.to_string()),
+            format!("expected atom got {}", a_val.to_string()),
         )),
         a => {
             let num_a = a
@@ -889,7 +889,11 @@ fn run_op(
     for arg in args.iter().rev() {
         opargs = SExp::Cons(
             loc.clone(),
-            Rc::new(arg.clone()),
+            Rc::new(SExp::Cons(
+                loc.clone(),
+                Rc::new(SExp::Atom(loc.clone(), vec![1])),
+                Rc::new(arg.clone()),
+            )),
             Rc::new(opargs)
         );
     }
@@ -923,6 +927,7 @@ fn interpret_program(
         ));
     }
     let loc = Srcloc::start(&"*interp*".to_string());
+    eprintln!("running {} with {} in {}", expr.to_sexp(prog, bindings), args, prog.to_sexp());
     match &expr {
         FuzzOperation::Argref(n) => {
             let (argname, run_expression) = select_argument(*n as usize, prog, bindings);
@@ -949,7 +954,9 @@ fn interpret_program(
                 )
             }
         }
-        FuzzOperation::Quote(exp) => Ok(exp.clone()),
+        FuzzOperation::Quote(exp) => {
+            Ok(exp.clone())
+        },
         FuzzOperation::If(cond, iftrue, iffalse) => {
             let borrowed_cond: &FuzzOperation = cond.borrow();
             interpret_program(prog, args, bindings, borrowed_cond, steps - 1)
@@ -1004,12 +1011,16 @@ fn interpret_program(
         }
         FuzzOperation::OneArg(FuzzOneArg::Lognot, arg) => {
             let output = interpret_program(prog, args, bindings, &arg, steps - 1)?;
-            let bv = byte_vec_of_sexp(&output)?.iter().map(|b| b ^ 0xff).collect();
-            Ok(SExp::Atom(loc, bv))
+            let bv: Vec<u8> = byte_vec_of_sexp(&output)?.iter().map(|b| b ^ 0xff).collect();
+            if bv.is_empty() {
+                Ok(SExp::Atom(loc, vec![0xff]))
+            } else {
+                Ok(SExp::Atom(loc, bv))
+            }
         }
         FuzzOperation::OneArg(FuzzOneArg::Not, arg) => {
             let output = interpret_program(prog, args, bindings, &arg, steps - 1)?;
-            let is_truthy = truthy(Rc::new(output));
+            let is_truthy = !truthy(Rc::new(output));
             Ok(SExp::Integer(loc, (is_truthy as u32).to_bigint().unwrap()))
         }
         FuzzOperation::TwoArg(op, a, b) => {
@@ -1135,14 +1146,14 @@ fn interpret_program(
             ))
         }
         FuzzOperation::MultiArg(FuzzMultiArg::Any, lst) => {
-            if lst.is_empty() {
-                Ok(SExp::Integer(loc, bi_zero()))
-            } else {
-                do_multi_arg(loc, prog, args, bindings, |a,b| {
-                    let new_val = (a != bi_zero() || b != bi_zero()) as u32;
-                    new_val.to_bigint().unwrap()
-                }, lst, steps - 1)
+            let mut result = SExp::Integer(loc.clone(), bi_zero());
+            for x in lst.iter() {
+                if truthy(Rc::new(interpret_program(prog, args, bindings, &x, steps - 1)?)) {
+                    result = SExp::Integer(loc.clone(), bi_one());
+                }
             }
+
+            Ok(result)
         }
         FuzzOperation::MultiArg(FuzzMultiArg::All, lst) => {
             if lst.is_empty() {
@@ -1212,13 +1223,6 @@ fn interpret_program(
             }
             Ok(list)
         }
-        /*
-        FuzzOperation::Sub(a, b) => {
-            let (a_val, b_val) =
-                evaluate_to_numbers(prog, args, bindings, a.borrow(), b.borrow(), steps - 1)?;
-            Ok(SExp::Integer(loc, a_val - b_val))
-        }
-        */
         FuzzOperation::Let(new_bindings, body) => {
             let mut total_bindings = bindings.to_vec();
             total_bindings.push(new_bindings.clone());
