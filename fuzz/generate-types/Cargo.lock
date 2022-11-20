@@ -332,8 +332,8 @@ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 name = "fuzz-types"
 version = "0.1.0"
 dependencies = [
+ "bitvec 1.0.1",
  "clvm_tools_rs",
- "funty 1.2.0",
  "libfuzzer-sys",
  "rand",
  "rand_chacha",

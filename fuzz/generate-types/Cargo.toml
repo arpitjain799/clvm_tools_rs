@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 libfuzzer-sys = "0.4.0"
-funty = "1.2.0"
+bitvec = "1.0.1"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 clvm_tools_rs = { path = "../..", features = ["fuzzer"] }
