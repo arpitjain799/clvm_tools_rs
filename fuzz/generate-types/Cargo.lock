@@ -333,6 +333,7 @@ name = "fuzz-types"
 version = "0.1.0"
 dependencies = [
  "clvm_tools_rs",
+ "funty 1.2.0",
  "libfuzzer-sys",
  "rand",
  "rand_chacha",
