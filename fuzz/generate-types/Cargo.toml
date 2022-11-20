@@ -9,4 +9,4 @@ edition = "2021"
 libfuzzer-sys = "0.4.0"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
-clvm_tools_rs = { path = "..", features = ["fuzzer"] }
+clvm_tools_rs = { path = "../..", features = ["fuzzer"] }

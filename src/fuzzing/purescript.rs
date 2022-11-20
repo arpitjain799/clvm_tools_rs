@@ -310,11 +310,13 @@ fn produce_body(opts: Rc<dyn CompilerOpts>, result_vec: &mut Vec<String>, prog: 
     result_vec.push(format!("-- produce_body {}", body.to_sexp()));
     match body {
         BodyForm::Let(_, _, bindings, letbody) => {
-            result_vec.push(format!("{}do", do_indent(indent)));
+            result_vec.push(format!("{}let", do_indent(indent)));
             for b in bindings.iter() {
-                result_vec.push(format!("{}{} <-", do_indent(indent + 2), decode_string(&un_dollar(&b.name))));
+                result_vec.push(format!("{}{} :: ChiaResult {}", do_indent(indent + 2), decode_string(&un_dollar(&b.name)), "Any"));
+                result_vec.push(format!("{}{} = do", do_indent(indent + 2), decode_string(&un_dollar(&b.name))));
                 produce_body(opts.clone(), result_vec, prog, indent + 4, b.body.borrow());
             }
+            result_vec.push(format!("{}in", do_indent(indent)));
             produce_body(opts.clone(), result_vec, prog, indent + 2, letbody.borrow());
         },
         BodyForm::Call(cl, elts) => {
@@ -341,12 +343,14 @@ fn produce_body(opts: Rc<dyn CompilerOpts>, result_vec: &mut Vec<String>, prog: 
                     );
                 } else if let Some(callable) = find_callable(prog, n) {
                     if let HelperForm::Defun(_, defname, _, _, _, _) = callable {
-                        result_vec.push(format!("{}do", do_indent(indent)));
+                        result_vec.push(format!("{}let", do_indent(indent)));
                         for (i,a) in elts.iter().skip(1).enumerate() {
-                            result_vec.push(format!("{}farg_{} <- getValue <$> do", do_indent(indent + 2), i));
+                            result_vec.push(format!("{}farg_{} :: ChiaOutcome Any", do_indent(indent + 2), i));
+                            result_vec.push(format!("{}farg_{} = getValue <$>", do_indent(indent + 2), i));
                             produce_body(opts.clone(), result_vec, prog, indent + 4, a);
                         }
-                        result_vec.push(format!("{}cvt <$> {} (Pair $ ", do_indent(indent + 2), decode_string(&defname)));
+                        result_vec.push(format!("{}in", do_indent(indent)));
+                        result_vec.push(format!("{}cvt <$> {} (Pair $ ", do_indent(indent), decode_string(&defname)));
                         for (i,_) in elts.iter().skip(1).enumerate() {
                             result_vec.push(format!("{}ChiaCons (getValue farg_{}) $", do_indent(indent + 4), i));
                         }
@@ -558,14 +562,16 @@ pub fn chialisp_to_purescript(opts: Rc<dyn CompilerOpts>, prog: &CompileForm) ->
         result_vec.push(format!("-- produce helper {}", h.to_sexp()));
         if let HelperForm::Defun(_, _, _, defargs, defbody, ty) = h.borrow() {
             let name = decode_string(&h.name());
-            result_vec.push(format!("{} args = do", name));
+            result_vec.push(format!("{} args =", name));
 
             let args = collect_args(defargs.clone());
             result_vec.push("-- produce args".to_string());
             if !args.is_empty() {
+                result_vec.push("  let".to_string());
                 for (path, a) in args.iter() {
-                    result_vec.push(format!("  {} <- {}", decode_string(&un_dollar(&a)), choose_path(path.clone(), "pure (cvt args)".to_string())));
+                    result_vec.push(format!("    {} <- {}", decode_string(&un_dollar(&a)), choose_path(path.clone(), "pure (cvt args)".to_string())));
                 }
+                result_vec.push("  in".to_string());
             }
 
             result_vec.push(format!("-- produce body for {}", name));
@@ -574,15 +580,18 @@ pub fn chialisp_to_purescript(opts: Rc<dyn CompilerOpts>, prog: &CompileForm) ->
     }
 
     // Write out main
-    result_vec.push(format!("chia_main :: Any -> ChiaOutcome {}", pstype));
-    result_vec.push("chia_main args = do".to_string());
+    result_vec.push(format!("chia_main :: Any -> ChiaOutcome ({})", decode_string(&un_dollar(&pstype.to_string().as_bytes()))));
+    result_vec.push("chia_main args =".to_string());
 
     let args = collect_args(prog.args.clone());
     result_vec.push("-- produce args".to_string());
     if !args.is_empty() {
+        result_vec.push("  let".to_string());
         for (path, a) in args.iter() {
-            result_vec.push(format!("  {} <- {}", decode_string(&a), choose_path(path.clone(), "pure (cvt args)".to_string())));
+            result_vec.push(format!("    {} :: ChiaOutcome Any", decode_string(&un_dollar(&a))));
+            result_vec.push(format!("    {} = {}", decode_string(&un_dollar(&a)), choose_path(path.clone(), "pure (cvt args)".to_string())));
         }
+        result_vec.push("  in".to_string());
     }
     produce_body(opts, &mut result_vec, prog, 2, prog.exp.borrow());
 
