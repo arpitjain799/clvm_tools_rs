@@ -3,8 +3,9 @@ use std::path::Path;
 use std::rc::Rc;
 
 use lsp_types::{
-    request::Completion, request::CodeActionRequest, request::GotoDefinition, request::Initialize,
-    request::SemanticTokensFullRequest, CodeAction, CodeActionKind, CodeActionParams, CodeActionOrCommand, Command, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
+    request::CodeActionRequest, request::Completion, request::GotoDefinition, request::Initialize,
+    request::SemanticTokensFullRequest, CodeAction, CodeActionKind, CodeActionOrCommand,
+    CodeActionParams, Command, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
     DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, Location, Position,
     Range, Url,
 };
@@ -17,7 +18,9 @@ use crate::compiler::lsp::patch::{
     compute_comment_lines, split_text, LSPServiceProviderApplyDocumentPatch,
 };
 use crate::compiler::lsp::semtok::LSPSemtokRequestHandler;
-use crate::compiler::lsp::types::{cast, ConfigJson, DocRange, DocData, InitState, LSPServiceProvider};
+use crate::compiler::lsp::types::{
+    cast, ConfigJson, DocData, DocRange, InitState, LSPServiceProvider,
+};
 use crate::compiler::sexp::decode_string;
 use crate::compiler::srcloc::Srcloc;
 
@@ -84,12 +87,7 @@ impl LSPServiceProvider {
     }
 
     // Update include state
-    fn update_include_state(
-        &mut self,
-        parsed_file: &str,
-        file_name: &[u8],
-        file_found: bool
-    ) {
+    fn update_include_state(&mut self, parsed_file: &str, file_name: &[u8], file_found: bool) {
         if let Some(found) = self.parsed_documents.get_mut(parsed_file) {
             let mut found_hash = None;
             for (h, inc) in found.includes.iter() {
@@ -112,8 +110,8 @@ impl LSPServiceProvider {
         let mut to_resolve = Vec::new();
 
         // Find includes we need to resolve
-        for (k,v) in self.parsed_documents.iter() {
-            for (_,i) in v.includes.iter() {
+        for (k, v) in self.parsed_documents.iter() {
+            for (_, i) in v.includes.iter() {
                 if i.found != Some(true) {
                     to_resolve.push((k, i.clone()));
                 }
@@ -123,9 +121,10 @@ impl LSPServiceProvider {
         // Errors is specifically the ones we tried to resolve and failed.
         let mut ask_ui_for_resolution = Vec::new();
 
-        let to_read_files: Vec<(String, IncludeData)> = to_resolve.iter().map(|(parsed, i)| {
-            (parsed.to_string(), i.clone())
-        }).collect();
+        let to_read_files: Vec<(String, IncludeData)> = to_resolve
+            .iter()
+            .map(|(parsed, i)| (parsed.to_string(), i.clone()))
+            .collect();
         for (parsed, i) in to_read_files.iter() {
             if i.filename.is_empty() || i.filename[0] == b'*' || i.found == Some(true) {
                 continue;
@@ -133,7 +132,10 @@ impl LSPServiceProvider {
 
             let mut found_include = false;
             for path in self.config.include_paths.iter() {
-                let target_name = Path::new(&path).join(&decode_string(&i.filename)).to_str().map(|o| o.to_owned());
+                let target_name = Path::new(&path)
+                    .join(&decode_string(&i.filename))
+                    .to_str()
+                    .map(|o| o.to_owned());
                 if let Some(target) = target_name {
                     if let Ok(_) = self.fs.read(&target) {
                         found_include = true;
@@ -188,26 +190,27 @@ impl LSPServiceProvider {
         if let Some(doc) = self.parsed_documents.get(&uristring) {
             for (_, inc) in doc.includes.iter() {
                 if DocRange::from_srcloc(inc.nl.clone()).to_range() == params.range {
-                    let code_action = vec![
-                        CodeActionOrCommand::CodeAction(CodeAction {
+                    let code_action = vec![CodeActionOrCommand::CodeAction(CodeAction {
+                        title: "Locate include path".to_string(),
+                        kind: Some(CodeActionKind::QUICKFIX),
+                        diagnostics: None,
+                        edit: None,
+                        command: Some(Command {
                             title: "Locate include path".to_string(),
-                            kind: Some(CodeActionKind::QUICKFIX),
-                            diagnostics: None,
-                            edit: None,
-                            command: Some(Command {
-                                title: "Locate include path".to_string(),
-                                command: "chialisp.locateIncludePath".to_string(),
-                                arguments: Some(vec![serde_json::to_value(&decode_string(&inc.filename)).unwrap()])
-                            }),
-                            is_preferred: None,
-                            disabled: None,
-                            data: None
-                        })
-                    ];
+                            command: "chialisp.locateIncludePath".to_string(),
+                            arguments: Some(vec![serde_json::to_value(&decode_string(
+                                &inc.filename,
+                            ))
+                            .unwrap()]),
+                        }),
+                        is_preferred: None,
+                        disabled: None,
+                        data: None,
+                    })];
                     result_messages.push(Message::Response(Response {
                         id: id.clone(),
                         result: Some(serde_json::to_value(code_action).unwrap()),
-                        error: None
+                        error: None,
                     }));
                 }
             }
@@ -219,7 +222,7 @@ impl LSPServiceProvider {
             result_messages.push(Message::Response(Response {
                 id: id.clone(),
                 result: Some(serde_json::to_value(code_action).unwrap()),
-                error: None
+                error: None,
             }));
         }
 

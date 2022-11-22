@@ -28,6 +28,7 @@ pub struct LSPCompilerOpts {
     pub stdenv: bool,
     pub optimize: bool,
     pub frontend_opt: bool,
+    pub frontend_check_live: bool,
     pub start_env: Option<Rc<SExp>>,
     pub prim_map: Rc<HashMap<Vec<u8>, Rc<SExp>>>,
 
@@ -56,7 +57,7 @@ impl CompilerOpts for LSPCompilerOpts {
         self.frontend_opt
     }
     fn frontend_check_live(&self) -> bool {
-        false
+        self.frontend_check_live
     }
     fn start_env(&self) -> Option<Rc<SExp>> {
         self.start_env.clone()
@@ -88,6 +89,11 @@ impl CompilerOpts for LSPCompilerOpts {
     fn set_frontend_opt(&self, optimize: bool) -> Rc<dyn CompilerOpts> {
         let mut copy = self.clone();
         copy.frontend_opt = optimize;
+        Rc::new(copy)
+    }
+    fn set_frontend_check_live(&self, check: bool) -> Rc<dyn CompilerOpts> {
+        let mut copy = self.clone();
+        copy.frontend_check_live = check;
         Rc::new(copy)
     }
     fn set_compiler(&self, new_compiler: PrimaryCodegen) -> Rc<dyn CompilerOpts> {
@@ -195,6 +201,7 @@ impl LSPCompilerOpts {
             stdenv: true,
             optimize: false,
             frontend_opt: false,
+            frontend_check_live: true,
             start_env: None,
             prim_map: create_prim_map(),
             lsp: docs,

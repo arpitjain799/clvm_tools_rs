@@ -64,7 +64,7 @@ pub fn parse_include(sexp: Rc<SExp>) -> Option<IncludeData> {
                         nl,
                         kind: IncludeKind::Include,
                         filename: fname,
-                        found: None
+                        found: None,
                     });
                 }
             }
@@ -79,7 +79,7 @@ pub fn parse_include(sexp: Rc<SExp>) -> Option<IncludeData> {
                         nl: nl.clone(),
                         kind: IncludeKind::CompileFile(il.clone()),
                         filename: fname.clone(),
-                        found: None
+                        found: None,
                     });
                 }
             }
@@ -98,7 +98,7 @@ pub fn parse_include(sexp: Rc<SExp>) -> Option<IncludeData> {
                         nl: nl.clone(),
                         kind: IncludeKind::EmbedFile(il.clone(), tl.clone()),
                         filename: fname.clone(),
-                        found: None
+                        found: None,
                     });
                 }
             }
