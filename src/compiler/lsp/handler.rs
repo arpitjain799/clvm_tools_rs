@@ -179,8 +179,13 @@ impl LSPServiceProvider {
         id: RequestId,
         params: &CodeActionParams,
     ) -> Result<Vec<Message>, String> {
+        let uristring = params.text_document.uri.to_string();
         let mut result_messages = Vec::new();
-        if let Some(doc) = self.parsed_documents.get(&params.text_document.uri.to_string()) {
+
+        // Double check parsed state.
+        self.ensure_parsed_document(&uristring);
+
+        if let Some(doc) = self.parsed_documents.get(&uristring) {
             for (_, inc) in doc.includes.iter() {
                 if DocRange::from_srcloc(inc.nl.clone()).to_range() == params.range {
                     let code_action = vec![
@@ -206,6 +211,16 @@ impl LSPServiceProvider {
                     }));
                 }
             }
+        }
+
+        if result_messages.is_empty() {
+            // Return a reply regardless of what happened.
+            let code_action: Vec<CodeActionOrCommand> = vec![];
+            result_messages.push(Message::Response(Response {
+                id: id.clone(),
+                result: Some(serde_json::to_value(code_action).unwrap()),
+                error: None
+            }));
         }
 
         Ok(result_messages)
