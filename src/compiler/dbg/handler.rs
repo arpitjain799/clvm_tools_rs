@@ -22,10 +22,10 @@ use debug_types::{MessageKind, ProtocolMessage};
 
 use clvmr::allocator::Allocator;
 
-use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType};
+use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, bi_one, bi_zero};
 use crate::classic::clvm::casts::bigint_from_bytes;
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
-use crate::compiler::cldb::{CldbNoOverride, CldbRun, CldbRunEnv};
+use crate::compiler::cldb::{CldbNoOverride, CldbRun, CldbRunEnv, ComputedArgument, RunStepRelevantInfo, HierarchialRunner};
 use crate::compiler::clvm::{sha256tree, start_step, RunStep};
 use crate::compiler::compiler::{compile_file, DefaultCompilerOpts};
 use crate::compiler::comptypes::CompilerOpts;
@@ -33,6 +33,7 @@ use crate::compiler::dbg::types::MessageHandler;
 use crate::compiler::lsp::types::{IFileReader, ILogWriter};
 use crate::compiler::sexp::{decode_string, parse_sexp, SExp};
 use crate::compiler::srcloc::Srcloc;
+use crate::util::Number;
 
 // Lifecycle:
 // (a (code... ) (c arg ...))
@@ -59,26 +60,12 @@ pub enum TargetDepth {
 }
 
 #[derive(Clone, Debug)]
-pub struct StoredValue {
-    name: Vec<u8>,
-    value: Rc<SExp>
-}
-
-#[derive(Clone, Debug)]
 pub struct StoredScope {
     scope_id: u32,
     hash: Vec<u8>,
     name: String,
     source: Srcloc,
-    named_variables: Vec<StoredValue>,
-}
-
-#[derive(Clone, Debug)]
-struct RunStepRelevantInfo {
-    hash: Vec<u8>,
-    enter: bool,
-    op: Rc<SExp>,
-    args: Rc<SExp>,
+    named_variables: Vec<ComputedArgument>,
 }
 
 #[derive(Clone, Debug)]
@@ -91,23 +78,14 @@ pub struct StoredStep {
 pub struct RunningDebugger {
     initialized: InitializeRequestArguments,
     launch_info: LaunchRequestArguments,
-    running: bool,
-    run: CldbRun,
     target_depth: Option<TargetDepth>,
     stopped_reason: Option<StoppedReason>,
 
-    pub symbol_table: HashMap<String, String>,
-    pub scopes: Vec<StoredScope>,
-    pub prev_steps: Vec<StoredStep>,
-    pub opts: Rc<dyn CompilerOpts>,
-    pub allocator: Allocator,
-}
+    running: bool,
+    run: HierarchialRunner,
 
-pub struct RunningFunction {
-    pub hash: Vec<u8>,
-    pub name: String,
-    pub args: Option<Rc<SExp>>,
-    pub tail: Rc<SExp>,
+    pub scopes: Vec<StoredScope>,
+    pub opts: Rc<dyn CompilerOpts>,
 }
 
 // Simple way of thinking about steps
@@ -120,26 +98,6 @@ fn step_string(hash: &str, rs: &RunStep) -> String {
         RunStep::Step(_, _, _) => "Step",
     };
     format!("{} - {}({})", hash, selector, sexp)
-}
-
-fn hex_of_hash(hash: &[u8]) -> String {
-    Bytes::new(Some(BytesFromType::Raw(hash.to_vec()))).hex()
-}
-
-fn collect_variables(vars: &mut Vec<StoredValue>, args: Rc<SExp>, argvals: Rc<SExp>) {
-    match (args.borrow(), argvals.borrow()) {
-        (SExp::Atom(_, name), v) => {
-            vars.push(StoredValue {
-                name: name.clone(),
-                value: Rc::new(v.clone())
-            });
-        }
-        (SExp::Cons(_, a, b), SExp::Cons(_, x, y)) => {
-            collect_variables(vars, a.clone(), x.clone());
-            collect_variables(vars, b.clone(), y.clone());
-        }
-        _ => {}
-    }
 }
 
 fn simple_stack_identifier(step: &RunStep) -> i32 {
@@ -159,154 +117,11 @@ impl RunningDebugger {
         self.scopes.len()
     }
 
-    fn prim_step(&mut self, log: Rc<dyn ILogWriter>) -> StoredStep {
-        let prev_step = Rc::new(self.run.current_step());
-        let prev_result = self.run.step(&mut self.allocator);
-        let info = self.relevant_run_step_info(log, prev_step.borrow());
-        StoredStep {
-            info,
-            prev_step,
-            prev_result,
-        }
-    }
-
-    fn get_fun_hash(&self, log: Rc<dyn ILogWriter>, sexp: Rc<SExp>) -> Option<(Vec<u8>, Rc<SExp>)> {
-        log.write(&format!("get_fun_hash checking {}", sexp.clone()));
-        if let SExp::Cons(_, op, args) = sexp.borrow() {
-            if let SExp::Integer(_, i) = op.borrow() {
-                if *i == 2_u32.to_bigint().unwrap() {
-                    if let SExp::Cons(_, prog, tail) = args.borrow() {
-                        log.write(&format!("get_fun_hash looking at invocation prog {} tail {}", prog, tail));
-                        return Some((sha256tree(prog.clone()), tail.clone()));
-                    }
-                }
-            } else if let SExp::Atom(_, n) = op.borrow() {
-                if *n == vec![2] {
-                    if let SExp::Cons(_, prog, tail) = args.borrow() {
-                        log.write(&format!("get_fun_hash looking at invocation prog {} tail {}", prog, tail));
-                        return Some((sha256tree(prog.clone()), tail.clone()));
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
-    fn relevant_run_step_info(&self, log: Rc<dyn ILogWriter>, step: &RunStep) -> Option<RunStepRelevantInfo> {
-        let enter =
-            if let RunStep::Step(op, args, _) = step {
-                Some((true, Rc::new(SExp::Cons(op.loc(), op.clone(), args.clone()))))
-            } else if let RunStep::OpResult(l, whole_expr, _) = step.borrow() {
-                Some((false, whole_expr.clone()))
-            } else {
-                None
-            };
-
-        enter.and_then(|(enter, whole_expr)| {
-            log.write(&format!("enter whole_expr {}", whole_expr));
-            self.get_fun_hash(log, whole_expr.clone()).map(|fun| {
-                (enter, whole_expr, fun)
-            })
-        }).and_then(|(enter, whole_expr, fun)| {
-            if let SExp::Cons(_, op, args) = whole_expr.borrow() {
-                Some((enter, whole_expr.clone(), op.clone(), args.clone(), fun))
-            } else {
-                None
-            }
-        }).map(|(enter, whole_expr, op, args, fun)| {
-            RunStepRelevantInfo {
-                hash: sha256tree(whole_expr.clone()),
-                enter: true,
-                op: op.clone(),
-                args: args.clone()
-            }
-        })
-    }
-
-    fn find_function(&self, log: Rc<dyn ILogWriter>, sexp: Rc<SExp>) -> Option<RunningFunction> {
-        if let Some((fun_hash, tail_sexp)) = self.get_fun_hash(log, sexp) {
-            let fun_hash_str = Bytes::new(Some(BytesFromType::Raw(fun_hash.clone()))).hex();
-
-            if let Some(funname) = self.symbol_table.get(&fun_hash_str) {
-                return Some(RunningFunction {
-                    hash: fun_hash,
-                    name: funname.clone(),
-                    args: self
-                        .symbol_table
-                        .get(&format!("{}_arguments", fun_hash_str))
-                        .and_then(|args_str| {
-                            parse_sexp(Srcloc::start("*args*"), args_str.bytes()).ok()
-                        })
-                        .and_then(|parsed| {
-                            if parsed.is_empty() {
-                                None
-                            } else {
-                                Some(parsed[0].clone())
-                            }
-                        }),
-                    tail: tail_sexp,
-                });
-            }
-        }
-
-        None
-    }
-
     fn step(
         &mut self,
         log: Rc<dyn ILogWriter>
     ) -> Option<BTreeMap<String, String>> {
-        loop {
-            let stored = self.prim_step(log.clone());
-            let mut recent_step = None;
-            if let Some(r) = &stored.prev_result {
-                recent_step = Some(r.clone());
-            }
-            if let Some(info) = &stored.info {
-                if let Some(fun) =
-                    self.find_function(log.clone(), Rc::new(SExp::Cons(info.op.loc(), info.op.clone(), info.args.clone())))
-                {
-                    if info.enter {
-                        // Enter a depth.
-
-                        log.write(&format!("enter {}", &step_string(&hex_of_hash(&info.hash), stored.prev_step.borrow())));
-
-                        let mut variables = Vec::new();
-                        let current_loc = stored.prev_step.loc();
-                        let file_borrowed: &String = current_loc.file.borrow();
-                        log.write(&format!("enter fun {}", fun.name));
-                        collect_variables(
-                            &mut variables,
-                            fun.args
-                                .unwrap_or_else(|| Rc::new(SExp::Nil(Srcloc::start("*nil*")))),
-                            fun.tail,
-                        );
-                        self.scopes.push(StoredScope {
-                            scope_id: simple_stack_identifier(stored.prev_step.borrow()) as u32,
-                            hash: info.hash.clone(),
-                            name: fun.name,
-                            source: stored.prev_step.loc(),
-                            named_variables: variables,
-                        });
-                    } else {
-                        // Leave instruction's scope with matching hash.
-                        log.write(&format!("leave {}", &step_string(&hex_of_hash(&info.hash), stored.prev_step.borrow())));
-
-                        if false && !self.scopes.is_empty() {
-                            if self.scopes[self.scopes.len() - 1].hash == fun.hash {
-                                self.scopes.pop();
-                            }
-                        }
-                    }
-                }
-            }
-
-            if stop_step(stored.prev_step.borrow()) {
-                self.prev_steps.push(stored);
-                return recent_step;
-            }
-        }
+        todo!();
     }
 }
 
@@ -415,13 +230,13 @@ fn is_mod(sexp: Rc<SExp>) -> bool {
 impl Debugger {
     fn launch(
         &self,
-        mut allocator: Allocator,
         pm: &ProtocolMessage,
         name: &str,
         i: &InitializeRequestArguments,
         l: &LaunchRequestArguments,
         stop_on_entry: bool,
     ) -> Result<(i64, State, Vec<ProtocolMessage>), String> {
+        let mut allocator = Allocator::new();
         let mut seq_nr = self.msg_seq;
         let read_in_file = self.fs.read(name)?;
         let opts = Rc::new(DefaultCompilerOpts::new(name));
@@ -453,25 +268,25 @@ impl Debugger {
             .collect();
         let env = CldbRunEnv::new(
             Some(name.to_owned()),
-            program_lines,
+            Rc::new(program_lines.clone()),
             Box::new(CldbNoOverride::new()),
         );
-        let cldb_run = CldbRun::new(
+        let run = HierarchialRunner::new(
             self.runner.clone(),
             self.prim_map.clone(),
-            Box::new(env),
-            start_step(parsed_program[0].clone(), arguments),
+            Some(name.to_string()),
+            Rc::new(program_lines),
+            Rc::new(use_symbol_table),
+            parsed_program[0].clone(),
+            arguments
         );
         let state = State::Launched(RunningDebugger {
             initialized: i.clone(),
             launch_info: l.clone(),
             running: !stop_on_entry,
-            run: cldb_run,
+            run,
             opts,
             scopes: Vec::new(),
-            prev_steps: Vec::new(),
-            symbol_table: use_symbol_table,
-            allocator: Allocator::new(),
             stopped_reason: None,
             target_depth: None,
         });
@@ -540,7 +355,6 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     }]));
                 }
                 (State::Initialized(i), RequestCommand::Launch(l)) => {
-                    let allocator = Allocator::new();
                     let launch_extra: Option<RequestContainer<ExtraLaunchData>> =
                         serde_json::from_value(raw_json.clone())
                             .map(Some)
@@ -553,7 +367,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
 
                     if let Some(name) = &l.name {
                         let (new_seq, new_state, out_msgs) =
-                            self.launch(allocator, pm, name, &i, l, stop_on_entry)?;
+                            self.launch(pm, name, &i, l, stop_on_entry)?;
                         self.msg_seq = new_seq;
                         self.state = new_state;
 
@@ -631,25 +445,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                         s.scope_id as i32 == vreq.variables_reference
                     }).cloned().collect();
 
-                    let variables =
-                        if s.is_empty() {
-                            vec![]
-                        } else {
-                            s[0].named_variables.iter().enumerate().map(|(i,v)| {
-                                Variable {
-                                    name: decode_string(&v.name),
-                                    value: v.value.to_string(),
-                                    var_type: None,
-                                    presentation_hint: None,
-                                    evaluate_name: None,
-                                    variables_reference: i as i32,
-                                    named_variables: Some(s[0].named_variables.len() as i32),
-                                    indexed_variables: None,
-                                    memory_reference: None
-                                }
-                            }).collect()
-                        };
-
+                    let variables = todo!();
                     self.msg_seq += 1;
                     self.state = State::Launched(r);
 

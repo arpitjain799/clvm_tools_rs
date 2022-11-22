@@ -43,14 +43,15 @@ use crate::classic::platform::argparse::{
     TArgOptionAction, TArgumentParserProps,
 };
 
-use crate::compiler::cldb::{hex_to_modern_sexp, CldbNoOverride, CldbRun, CldbRunEnv};
+use crate::compiler::cldb::{hex_to_modern_sexp, CldbNoOverride, CldbRun, CldbRunEnv, CldbEnvironment, HierarchialStepResult, HierarchialRunner};
 use crate::compiler::clvm::start_step;
 use crate::compiler::compiler::{compile_file, run_optimizer, DefaultCompilerOpts};
 use crate::compiler::comptypes::{CompileErr, CompilerOpts};
 use crate::compiler::debug::build_symbol_table_mut;
 use crate::compiler::prims;
+use crate::compiler::runtypes::{RunFailure};
 use crate::compiler::sexp;
-use crate::compiler::sexp::parse_sexp;
+use crate::compiler::sexp::{decode_string, parse_sexp};
 use crate::compiler::srcloc::Srcloc;
 use crate::util::collapse;
 
@@ -257,6 +258,68 @@ fn to_yaml(entries: &[BTreeMap<String, String>]) -> Yaml {
     Yaml::Array(result_array)
 }
 
+fn do_indent(n: usize) -> String {
+    let spaces: Vec<u8> = (0..n).map(|_| b' ').collect();
+    decode_string(&spaces)
+}
+
+pub fn cldb_hierarchy(
+    runner: Rc<dyn TRunProgram>,
+    prim_map: Rc<HashMap<Vec<u8>, Rc<sexp::SExp>>>,
+    input_file: Option<String>,
+    lines: Rc<Vec<String>>,
+    symbol_table: Rc<HashMap<String, String>>,
+    prog: Rc<sexp::SExp>,
+    args: Rc<sexp::SExp>
+) {
+    let yamlette_string = |to_print: Vec<BTreeMap<String, String>>| {
+        let mut result = String::new();
+        let mut emitter = YamlEmitter::new(&mut result);
+        match emitter.dump(&to_yaml(&to_print)) {
+            Ok(_) => result,
+            Err(e) => format!("error producing yaml: {:?}", e),
+        }
+    };
+    let mut runner = HierarchialRunner::new(
+        runner,
+        prim_map,
+        input_file,
+        lines,
+        symbol_table,
+        prog,
+        args
+    );
+
+    loop {
+        if runner.is_ended() {
+            break;
+        }
+
+        match runner.step() {
+            Ok(HierarchialStepResult::ShapeChange) => {
+                eprintln!("Shape change:");
+                for (i, r) in runner.running.iter().enumerate() {
+                    eprintln!("{}{}", do_indent(i * 2), r.function_name);
+                }
+            },
+            Ok(HierarchialStepResult::Info(Some(info))) => {
+                eprintln!("{}", yamlette_string(vec![info]));
+            },
+            Ok(HierarchialStepResult::Info(None)) => {
+                // Nothing
+            },
+            Err(RunFailure::RunErr(l,e)) => {
+                eprintln!("Runtime Error: {}: {}", l, e);
+                break;
+            },
+            Err(RunFailure::RunExn(l,e)) => {
+                eprintln!("Raised exception: {}: {}", l, e);
+                break;
+            }
+        }
+    }
+}
+
 pub fn cldb(args: &[String]) {
     let tool_name = "cldb".to_string();
     let props = TArgumentParserProps {
@@ -291,6 +354,12 @@ pub fn cldb(args: &[String]) {
         Argument::new()
             .set_type(Rc::new(PathOrCodeConv {}))
             .set_help("path to symbol file".to_string()),
+    );
+    parser.add_argument(
+        vec!["-t".to_string(), "--tree".to_string()],
+        Argument::new()
+            .set_action(TArgOptionAction::StoreTrue)
+            .set_help("new style hierarchial view".to_string())
     );
     parser.add_argument(
         vec!["path_or_code".to_string()],
@@ -455,15 +524,28 @@ pub fn cldb(args: &[String]) {
     for p in prims::prims().iter() {
         prim_map.insert(p.0.clone(), Rc::new(p.1.clone()));
     }
-    let program_lines: Vec<String> = input_program.lines().map(|x| x.to_string()).collect();
-    let step = start_step(program, args);
+    let program_lines: Rc<Vec<String>> = Rc::new(input_program.lines().map(|x| x.to_string()).collect());
     let cldbenv = CldbRunEnv::new(
-        input_file,
-        program_lines,
-        Box::new(CldbNoOverride::new_symbols(use_symbol_table)),
+        input_file.clone(),
+        program_lines.clone(),
+        Box::new(CldbNoOverride::new_symbols(use_symbol_table.clone())),
     );
-    let mut cldbrun = CldbRun::new(runner, Rc::new(prim_map), Box::new(cldbenv), step);
 
+    if parsed_args.get("tree").is_some() {
+        cldb_hierarchy(
+            runner,
+            Rc::new(prim_map),
+            input_file,
+            program_lines,
+            Rc::new(use_symbol_table),
+            program,
+            args
+        );
+        return;
+    }
+
+    let step = start_step(program, args);
+    let mut cldbrun = CldbRun::new(runner, Rc::new(prim_map), Box::new(cldbenv), step);
     loop {
         if cldbrun.is_ended() {
             println!("{}", yamlette_string(output));
