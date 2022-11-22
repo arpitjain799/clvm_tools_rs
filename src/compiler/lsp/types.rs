@@ -464,7 +464,6 @@ impl LSPServiceProvider {
                 .cloned()
                 .unwrap_or_else(|| ParsedDoc::new(startloc));
             let ranges = make_simple_ranges(&doc.text);
-            self.log.write(&format!("ranges {:?}", ranges));
             let mut new_helpers = reparse_subset(
                 opts,
                 &doc.text,
@@ -482,7 +481,6 @@ impl LSPServiceProvider {
                     continue;
                 }
 
-                self.log.write(&format!("incfile.filename {}", decode_string(&incfile.filename)));
                 if let Ok((filename, file_body)) = get_file_content(
                     self.log.clone(),
                     self.fs.clone(),

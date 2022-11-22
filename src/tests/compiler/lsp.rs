@@ -13,10 +13,10 @@ use crate::compiler::lsp::{
 
 use lsp_server::{Message, Notification, Request, RequestId};
 use lsp_types::{
-    CompletionItem, CompletionParams, CompletionResponse, DidOpenTextDocumentParams,
-    PartialResultParams, Position, Range, SemanticToken, SemanticTokens, SemanticTokensParams,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, Url, WorkDoneProgressParams,
+    CompletionItem, CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
+    DidOpenTextDocumentParams, PartialResultParams, Position, Range, SemanticToken, SemanticTokens,
+    SemanticTokensParams, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, Url, VersionedTextDocumentIdentifier, WorkDoneProgressParams,
 };
 
 use crate::compiler::compiler::DefaultCompilerOpts;
@@ -58,6 +58,24 @@ fn make_get_semantic_tokens_msg(uri: &String, rid: i32) -> Message {
             text_document: TextDocumentIdentifier {
                 uri: Url::parse(uri).unwrap(),
             },
+        })
+        .unwrap(),
+    })
+}
+
+fn make_insert_text_msg(uri: &String, v: i32, replace: DocRange, text: String) -> Message {
+    Message::Notification(Notification {
+        method: "textDocument/didChange".to_string(),
+        params: serde_json::to_value(DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier {
+                version: v,
+                uri: Url::parse(uri).unwrap(),
+            },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: Some(replace.to_range()),
+                range_length: None,
+                text: text,
+            }],
         })
         .unwrap(),
     })
@@ -1227,6 +1245,206 @@ fn test_inner_mod_in_defun_expr() {
                 delta_start: 6,
                 length: 1,
                 token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 0
+            }
+        ]
+    );
+}
+
+#[test]
+fn test_line_move() {
+    let mut lsp = LSPServiceProvider::new(
+        Rc::new(FSFileReader::new()),
+        Rc::new(EPrintWriter::new()),
+        true,
+    );
+    let file = "file:test.cl".to_string();
+    let open_msg = make_did_open_message(
+        &file,
+        1,
+        indoc! {"
+(mod ()
+  (defun F () (mod (X) (+ X 1)))
+  (F) ;; Foo
+  )"}
+        .to_string(),
+    );
+    lsp.handle_message(&open_msg)
+        .expect("should be ok to take open msg");
+    let sem_tok = make_get_semantic_tokens_msg(&file, 3);
+    let st_reply_1 = lsp
+        .handle_message(&sem_tok)
+        .expect("should be ok to send sem tok");
+    let insert_msg = make_insert_text_msg(
+        &file,
+        1,
+        DocRange {
+            start: DocPosition {
+                line: 1,
+                character: 0,
+            },
+            end: DocPosition {
+                line: 1,
+                character: 0,
+            },
+        },
+        "\n".to_string(),
+    );
+    lsp.handle_message(&insert_msg).expect("should take patch");
+    let st_reply_2 = lsp
+        .handle_message(&sem_tok)
+        .expect("should be ok to send sem tok");
+
+    let decoded_tokens_1: SemanticTokens =
+        serde_json::from_str(&get_msg_params(&st_reply_1[0])).unwrap();
+    assert_eq!(
+        decoded_tokens_1.data,
+        vec![
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 1,
+                length: 3,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 1,
+                delta_start: 3,
+                length: 5,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 6,
+                length: 1,
+                token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 1 << TK_DEFINITION_BIT,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 6,
+                length: 3,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 5,
+                length: 1,
+                token_type: TK_PARAMETER_IDX,
+                token_modifiers_bitset: 1 << TK_DEFINITION_BIT,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 4,
+                length: 1,
+                token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 2,
+                length: 1,
+                token_type: TK_PARAMETER_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 2,
+                length: 1,
+                token_type: TK_NUMBER_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 1,
+                delta_start: 3,
+                length: 1,
+                token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 0
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 3,
+                length: 7,
+                token_type: TK_COMMENT_IDX,
+                token_modifiers_bitset: 0
+            }
+        ]
+    );
+    let decoded_tokens_2: SemanticTokens =
+        serde_json::from_str(&get_msg_params(&st_reply_2[0])).unwrap();
+    assert_eq!(
+        decoded_tokens_2.data,
+        vec![
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 1,
+                length: 3,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 2,
+                delta_start: 3,
+                length: 5,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 6,
+                length: 1,
+                token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 1 << TK_DEFINITION_BIT,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 6,
+                length: 3,
+                token_type: TK_KEYWORD_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 5,
+                length: 1,
+                token_type: TK_PARAMETER_IDX,
+                token_modifiers_bitset: 1 << TK_DEFINITION_BIT,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 4,
+                length: 1,
+                token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 2,
+                length: 1,
+                token_type: TK_PARAMETER_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 2,
+                length: 1,
+                token_type: TK_NUMBER_IDX,
+                token_modifiers_bitset: 0,
+            },
+            SemanticToken {
+                delta_line: 1,
+                delta_start: 3,
+                length: 1,
+                token_type: TK_FUNCTION_IDX,
+                token_modifiers_bitset: 0
+            },
+            SemanticToken {
+                delta_line: 0,
+                delta_start: 3,
+                length: 7,
+                token_type: TK_COMMENT_IDX,
                 token_modifiers_bitset: 0
             }
         ]
