@@ -64,8 +64,6 @@ impl PatchableDocument for DocData {
         // Try to do an efficient job of patching the old document content.
         for p in patches.iter() {
             let split_input = split_text(&p.text);
-            let old_lines = doc_copy.len();
-
             if let Some(r) = p.range {
                 let prelude_start = if r.start.line > 0 {
                     doc_copy
@@ -146,20 +144,11 @@ impl PatchableDocument for DocData {
                 for line in suffix_after.iter() {
                     doc_copy.push(line.clone());
                 }
-
-                let new_lines = doc_copy.len();
-                if old_lines > new_lines {
-                    for i in new_lines..old_lines {
-                        comments_copy.remove(&i);
-                    }
-                }
-                for i in (r.start.line as usize)..(r.start.line as usize) + split_input.len() + 1 {
-                    redo_comment_line(&mut comments_copy, &doc_copy, i);
-                }
             } else {
                 doc_copy = split_text(&p.text);
-                comments_copy = compute_comment_lines(&doc_copy);
             }
+
+            comments_copy = compute_comment_lines(&doc_copy);
         }
 
         DocData {

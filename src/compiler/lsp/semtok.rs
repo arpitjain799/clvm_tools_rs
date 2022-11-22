@@ -282,6 +282,7 @@ fn process_body_code(
                     h.name().clone(),
                     ReparsedHelper {
                         hash: sha256tree(h.to_sexp()),
+                        range: DocRange::from_srcloc(h.loc()),
                         parsed: Ok(h.clone()),
                     },
                 );

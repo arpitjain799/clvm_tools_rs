@@ -72,7 +72,7 @@ impl LSPServiceProvider {
             }
         }
         let result = goto_response.map(GotoDefinitionResponse::Scalar);
-        let result = serde_json::to_value(&result).unwrap();
+        let result = serde_json::to_value(result).unwrap();
         let resp = Response {
             id,
             result: Some(result),
@@ -304,7 +304,7 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                             },
                         );
                     } else {
-                        self.log.write(&format!("cast failed in didOpen"));
+                        self.log.write("cast failed in didOpen");
                     }
                 } else if not.method == "workspace/didChangeWatchedFiles" {
                     let stringified_params = serde_json::to_string(&not.params).unwrap();
@@ -317,7 +317,7 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                             if doc_id.ends_with("chialisp.json") {
                                 if let Some(config) = self.reconfigure() {
                                     // We have a config file and can read the filesystem.
-                                    self.log.write(&format!("reconfigured"));
+                                    self.log.write("reconfigured");
                                     self.config = config;
                                     self.parsed_documents.clear();
                                     self.goto_defs.clear();
@@ -335,7 +335,7 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                         if doc_id.ends_with("chialisp.json") {
                             if let Some(config) = self.reconfigure() {
                                 // We have a config file and can read the filesystem.
-                                self.log.write(&format!("reconfigured"));
+                                self.log.write("reconfigured");
                                 self.config = config;
                             }
                         }
@@ -346,7 +346,7 @@ impl LSPServiceMessageHandler for LSPServiceProvider {
                             &params.content_changes,
                         );
                     } else {
-                        self.log.write(&format!("case failed in didChange"));
+                        self.log.write("case failed in didChange");
                     }
                 } else {
                     self.log.write(&format!("not sure what we got: {:?}", not));

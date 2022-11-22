@@ -20,6 +20,7 @@ lazy_static! {
 #[derive(Debug, Clone)]
 pub struct ReparsedHelper {
     pub hash: Vec<u8>,
+    pub range: DocRange,
     pub parsed: Result<HelperForm, CompileErr>,
 }
 
@@ -34,7 +35,7 @@ pub struct ReparsedModule {
     pub args: Rc<SExp>,
     pub helpers: HashMap<Vec<u8>, ReparsedHelper>,
     pub exp: Option<ReparsedExp>,
-    pub unparsed: HashSet<Vec<u8>>,
+    pub unparsed: HashMap<Vec<u8>, DocRange>,
     pub includes: HashMap<Vec<u8>, IncludeData>,
     pub errors: Vec<CompileErr>,
 }
@@ -121,7 +122,7 @@ pub fn reparse_subset(
         helpers: HashMap::new(),
         exp: None,
         includes: HashMap::new(),
-        unparsed: HashSet::new(),
+        unparsed: HashMap::new(),
         errors: Vec::new(),
     };
 
@@ -270,7 +271,11 @@ pub fn reparse_subset(
 
         // Always reparse the body for convenience.  It's one form so it won't
         // accumulate.
-        if !prev_helpers.contains_key(&hash) || i == parse_as_body {
+        let same_range = prev_helpers
+            .get(&hash)
+            .map(|earlier| r == &earlier.range)
+            .unwrap_or(false);
+        if !prev_helpers.contains_key(&hash) || i == parse_as_body || !same_range {
             let loc = Srcloc::new(
                 Rc::new(uristring.to_owned()),
                 (r.start.line + 1) as usize,
@@ -296,6 +301,7 @@ pub fn reparse_subset(
                         hash.clone(),
                         ReparsedHelper {
                             hash,
+                            range: r.clone(),
                             parsed: compile_helperform(opts.clone(), parsed[0].clone()).and_then(
                                 |mh| {
                                     if let Some(h) = mh {
@@ -313,13 +319,14 @@ pub fn reparse_subset(
                         hash.clone(),
                         ReparsedHelper {
                             hash,
+                            range: r.clone(),
                             parsed: Err(CompileErr(l, s)),
                         },
                     );
                 }
             }
         } else {
-            result.unparsed.insert(hash);
+            result.unparsed.insert(hash, r.clone());
         }
     }
 
@@ -393,7 +400,7 @@ pub fn combine_new_with_old_parse(
 
     // Collect to-delete set.
     for (h, _) in new_helpers.iter() {
-        if !reparse.unparsed.contains(h) && !reparse.helpers.contains_key(h) {
+        if !reparse.unparsed.contains_key(h) && !reparse.helpers.contains_key(h) {
             if let Some(name) = parsed.hash_to_name.get(h) {
                 remove_names.insert(name.clone());
             }
