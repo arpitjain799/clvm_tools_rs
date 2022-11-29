@@ -8,7 +8,7 @@ use clvm_rs::allocator::{Allocator, NodePtr};
 use clvm_rs::reduction::EvalErr;
 use num_bigint::ToBigInt;
 
-use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, Stream, bi_one, bi_zero};
+use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, Stream};
 use crate::classic::clvm::serialize::{sexp_from_stream, SimpleCreateCLVMObject};
 use crate::classic::clvm_tools::sha256tree::sha256tree;
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
@@ -16,7 +16,7 @@ use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
 use crate::compiler::clvm;
 use crate::compiler::clvm::{convert_from_clvm_rs, run_step, RunStep};
 use crate::compiler::runtypes::RunFailure;
-use crate::compiler::sexp::{SExp, decode_string, parse_sexp};
+use crate::compiler::sexp::{SExp, parse_sexp};
 use crate::compiler::srcloc::Srcloc;
 use crate::util::Number;
 
@@ -28,27 +28,10 @@ pub struct PriorResult {
 
 #[derive(Clone, Debug)]
 pub struct RunStepRelevantInfo {
-    hash: Vec<u8>,
-    enter: bool,
-    op: Rc<SExp>,
     name: String,
     prog: Rc<SExp>,
     args: Rc<SExp>,
     tail: Rc<SExp>
-}
-
-#[derive(Clone, Debug)]
-pub struct ComputedArgument {
-    pub path: Number,
-    pub name: Vec<u8>,
-    pub value: Rc<SExp>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ToComputeArgument {
-    path: Number,
-    name: Vec<u8>,
-    program: Rc<SExp>,
 }
 
 pub fn is_op(v: u8, op: Rc<SExp>) -> bool {
@@ -63,16 +46,6 @@ pub fn is_op(v: u8, op: Rc<SExp>) -> bool {
 
 pub fn is_apply_op(op: Rc<SExp>) -> bool { is_op(2, op) }
 pub fn is_cons_op(op: Rc<SExp>) -> bool { is_op(4, op) }
-
-fn decode_cons(form: Rc<SExp>) -> Option<(Rc<SExp>, Rc<SExp>)> {
-    if let Some(lst) = form.proper_list() {
-        if lst.len() == 3 && is_cons_op(Rc::new(lst[0].clone())) {
-            return Some((Rc::new(lst[1].clone()), Rc::new(lst[2].clone())));
-        }
-    }
-
-    None
-}
 
 pub fn format_arg_inputs(args: &[PriorResult]) -> String {
     let value_strings: Vec<String> = args.iter().map(|pr| pr.reference.to_string()).collect();
@@ -129,7 +102,6 @@ pub fn relevant_run_step_info(symbol_table: &HashMap<String, String>, step: &Run
             return get_fun_hash(op.clone(), args.clone()).and_then(|(hash, prog, env)| {
                 make_relevant_info(
                     symbol_table,
-                    op.clone(),
                     &hash,
                     prog,
                     env
@@ -609,7 +581,6 @@ pub enum RunClass {
 
 fn make_relevant_info(
     symbol_table: &HashMap<String, String>,
-    op: Rc<SExp>,
     hash: &[u8],
     prog: Rc<SExp>,
     env: Rc<SExp>
@@ -626,81 +597,12 @@ fn make_relevant_info(
     });
     symbol_table.get(&hex_hash).map(|fun_name| {
         RunStepRelevantInfo {
-            hash: hash.to_vec(),
-            enter: true,
-            op: op.clone(),
             name: fun_name.clone(),
             args: fun_args,
             prog: prog.clone(),
             tail: env.clone()
         }
     })
-}
-
-fn does_apply(
-    symbol_table: &HashMap<String, String>,
-    prog: Rc<SExp>
-) -> RunClass {
-    eprintln!("does_apply {}", prog);
-    if let Some(lst) = prog.proper_list() {
-        if lst.len() == 3 && is_apply_op(Rc::new(lst[0].clone())) {
-            let op = Rc::new(lst[0].clone());
-            let prog = Rc::new(lst[1].clone());
-            let env = Rc::new(lst[2].clone());
-            let hash = clvm::sha256tree(prog.clone());
-            if let Some(info) =
-                make_relevant_info(
-                    symbol_table,
-                    op,
-                    &hash,
-                    prog,
-                    env
-                )
-            {
-                return RunClass::Application(info);
-            }
-        }
-    }
-
-    RunClass::Primitive(prog.clone())
-}
-
-fn synthesize_arguments(
-    loc: Srcloc,
-    args: &[ComputedArgument],
-    path: Number,
-    mask: Number
-) -> Rc<SExp> {
-    let this_path = path.clone() | mask.clone();
-    if args.is_empty() {
-        return Rc::new(SExp::Nil(loc));
-    }
-
-    for a in args.iter() {
-        if a.path == this_path {
-            return a.value.clone();
-        }
-    }
-
-    let next_mask = 2_u32.to_bigint().unwrap() * mask.clone();
-    let filtered_args: Vec<ComputedArgument> =
-        args.iter().filter(|a| a.path < next_mask).cloned().collect();
-    let right_path = mask | path.clone();
-    Rc::new(SExp::Cons(
-        loc.clone(),
-        synthesize_arguments(
-            loc.clone(),
-            &filtered_args,
-            path,
-            next_mask.clone()
-        ),
-        synthesize_arguments(
-            loc,
-            &filtered_args,
-            right_path,
-            next_mask
-        )
-    ))
 }
 
 impl HierarchialRunner {
@@ -761,7 +663,7 @@ impl HierarchialRunner {
         let mut idx = self.running.len() - 1;
         if let Some(outcome) = self.running[idx].run.final_result() {
             eprintln!("final result for frame {}: {}", idx, outcome);
-            let old_running: HierarchyFrame = self.running.pop().unwrap();
+            self.running.pop().unwrap();
             eprintln!("idx {} self.running.len() {}", idx, self.running.len());
             if self.running.is_empty() {
                 return Ok(HierarchialStepResult::Done(None));

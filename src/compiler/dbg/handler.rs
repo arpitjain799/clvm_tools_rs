@@ -16,24 +16,23 @@ use debug_types::responses::{
     ThreadsResponse, VariablesResponse,
 };
 use debug_types::types::{
-    Capabilities, ChecksumAlgorithm, Scope, Source, StackFrame, Thread, Variable,
+    Capabilities, ChecksumAlgorithm, Scope, Source, StackFrame, Thread
 };
 use debug_types::{MessageKind, ProtocolMessage};
 
 use clvmr::allocator::Allocator;
 
-use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, bi_one, bi_zero};
+use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType};
 use crate::classic::clvm::casts::bigint_from_bytes;
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
-use crate::compiler::cldb::{CldbNoOverride, CldbRun, CldbRunEnv, ComputedArgument, RunStepRelevantInfo, HierarchialRunner};
-use crate::compiler::clvm::{sha256tree, start_step, RunStep};
+use crate::compiler::cldb::{RunStepRelevantInfo, HierarchialRunner};
+use crate::compiler::clvm::{sha256tree, RunStep};
 use crate::compiler::compiler::{compile_file, DefaultCompilerOpts};
 use crate::compiler::comptypes::CompilerOpts;
 use crate::compiler::dbg::types::MessageHandler;
 use crate::compiler::lsp::types::{IFileReader, ILogWriter};
 use crate::compiler::sexp::{decode_string, parse_sexp, SExp};
 use crate::compiler::srcloc::Srcloc;
-use crate::util::Number;
 
 // Lifecycle:
 // (a (code... ) (c arg ...))
@@ -65,7 +64,7 @@ pub struct StoredScope {
     hash: Vec<u8>,
     name: String,
     source: Srcloc,
-    named_variables: Vec<ComputedArgument>,
+    named_variables: HashMap<String, Rc<SExp>>,
 }
 
 #[derive(Clone, Debug)]
@@ -119,7 +118,6 @@ impl RunningDebugger {
 
     fn step(
         &mut self,
-        log: Rc<dyn ILogWriter>
     ) -> Option<BTreeMap<String, String>> {
         todo!();
     }
@@ -266,11 +264,6 @@ impl Debugger {
             .lines()
             .map(|x| x.unwrap())
             .collect();
-        let env = CldbRunEnv::new(
-            Some(name.to_owned()),
-            Rc::new(program_lines.clone()),
-            Box::new(CldbNoOverride::new()),
-        );
         let run = HierarchialRunner::new(
             self.runner.clone(),
             self.prim_map.clone(),
@@ -397,7 +390,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     }]));
                 }
                 (State::Launched(r), RequestCommand::StackTrace(_)) => {
-                    let mut stack_frames = r.scopes.iter().map(|s| {
+                    let stack_frames = r.scopes.iter().map(|s| {
                         let loc = s.source.clone();
                         let fn_borrowed: &String = loc.file.borrow();
                         StackFrame {
@@ -525,7 +518,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     return Ok(Some(out_messages));
                 }
                 (State::Launched(mut r), RequestCommand::StepIn(si)) => {
-                    r.step(self.log.clone());
+                    r.step();
 
                     self.msg_seq += 1;
 
