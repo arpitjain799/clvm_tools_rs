@@ -113,7 +113,7 @@ pub fn get_fun_hash(
     if let SExp::Cons(_, prog, args) = sexp.borrow() {
         if is_apply_op(op.clone()) {
             if let SExp::Cons(_, env, _) = args.borrow() {
-                eprintln!("get_fun_hash args {} env {}", args, env);
+                eprintln!("function: {} env {}", prog, env);
                 return Some((clvm::sha256tree(prog.clone()), prog.clone(), env.clone()));
             }
         }
@@ -122,43 +122,11 @@ pub fn get_fun_hash(
     None
 }
 
-fn isolate_arguments(args: Rc<SExp>, tail: Rc<SExp>, path: Number, mask: Number, skip_first: bool) -> Vec<ComputedArgument> {
-    let this_path = path.clone() | mask.clone();
-    let name =
-        if let SExp::Atom(_, n) = args.borrow() {
-            n.clone()
-        } else {
-            format!("arg_path_{}", this_path).as_bytes().to_vec()
-        };
-
-    if let SExp::Cons(_, f, r) = tail.borrow() {
-        if skip_first {
-            return isolate_arguments(args, r.clone(), path, mask, false);
-        }
-
-        if let SExp::Cons(_, a, b) = args.borrow() {
-            let next_mask = 2_u32.to_bigint().unwrap() * mask.clone();
-            let mut first =
-                isolate_arguments(a.clone(), f.clone(), path, next_mask.clone(), false);
-            let mut rest =
-                isolate_arguments(b.clone(), r.clone(), this_path, next_mask, false);
-            first.append(&mut rest);
-            return first;
-        }
-    }
-
-    vec![ComputedArgument {
-        path: this_path,
-        name: name,
-        value: tail.clone()
-    }]
-}
-
 pub fn relevant_run_step_info(symbol_table: &HashMap<String, String>, step: &RunStep) -> Option<RunStepRelevantInfo> {
-    if let RunStep::Step(sexp, ctx, _) = step {
-        if let SExp::Cons(_, op, args) = sexp.borrow() {
-            return get_fun_hash(op.clone(), args.clone()).map(|(hash, prog, env)| {
-                eprintln!("runstep::op {} prog {} env {}", op, prog, env);
+    if let RunStep::Op(op, _, args, Some(remaining_args), _) = step {
+        if remaining_args.is_empty() {
+            eprintln!("runstep::op {} args {}", op, args);
+            return get_fun_hash(op.clone(), args.clone()).and_then(|(hash, prog, env)| {
                 make_relevant_info(
                     symbol_table,
                     op.clone(),
@@ -172,42 +140,6 @@ pub fn relevant_run_step_info(symbol_table: &HashMap<String, String>, step: &Run
 
     None
 }
-
-pub fn capture_argument_generation(
-    args: Rc<SExp>,
-    path: Number,
-    mask: Number,
-    tail: Rc<SExp>
-) -> Vec<ToComputeArgument> {
-    let this_path = path.clone() | mask.clone();
-    if let (SExp::Cons(_, a, b), Some((left, right))) = (args.borrow(), decode_cons(tail.clone())) {
-        let next_mask = mask.clone() * 2_u32.to_bigint().unwrap();
-        let right_path = mask | path.clone();
-        let mut left_vec = capture_argument_generation(
-            args.clone(), path, next_mask.clone(), left
-        );
-        let mut right_vec = capture_argument_generation(
-            args, right_path, next_mask, right
-        );
-        left_vec.append(&mut right_vec);
-        left_vec
-    } else if let SExp::Atom(_, name) = args.borrow() {
-        vec![ToComputeArgument {
-            path: this_path,
-            name: name.clone(),
-            program: tail
-        }]
-    } else {
-        // We should compute this, but we'll just call it by a name
-        vec![ToComputeArgument {
-            name: format!("arg_path_{}", path).as_bytes().to_vec(),
-            path: this_path,
-            program: tail
-        }]
-    }
-}
-
-
 
 pub trait CldbRunnable {
     fn replace_step(&self, step: &RunStep) -> Option<Result<RunStep, RunFailure>>;
@@ -640,7 +572,7 @@ pub enum RunPurpose {
 }
 
 pub struct HierarchyFrame {
-    purpose: RunPurpose,
+    pub purpose: RunPurpose,
 
     prog: Rc<SExp>,
     env: Rc<SExp>,
@@ -648,8 +580,6 @@ pub struct HierarchyFrame {
     pub function_name: String,
     pub function_arguments: Rc<SExp>,
 
-    arguments_to_compute: Vec<ToComputeArgument>,
-    arguments_to_show: Vec<ComputedArgument>,
     run: CldbRun
 }
 
@@ -668,7 +598,8 @@ pub struct HierarchialRunner {
 #[derive(Clone, Debug)]
 pub enum HierarchialStepResult {
     ShapeChange,
-    Info(Option<BTreeMap<String, String>>)
+    Info(Option<BTreeMap<String, String>>),
+    Done(Option<BTreeMap<String, String>>)
 }
 
 pub enum RunClass {
@@ -682,29 +613,28 @@ fn make_relevant_info(
     hash: &[u8],
     prog: Rc<SExp>,
     env: Rc<SExp>
-) -> RunStepRelevantInfo {
+) -> Option<RunStepRelevantInfo> {
     let hex_hash = hex_of_hash(&hash);
-    let fun_name = symbol_table.get(&hex_hash).cloned().unwrap_or_else(|| {
-        format!("function_{}", hex_hash)
-    });
-    let fun_args_name = format!("{}_arguments", hex_hash);
-    let fun_args = symbol_table.get(&fun_args_name).and_then(|fun_args| {
+    let args_name = format!("{}_arguments", hex_hash);
+    let fun_args = symbol_table.get(&args_name).and_then(|fun_args| {
         parse_sexp(prog.loc(), fun_args.as_bytes().iter().copied()).map(|p| {
             Some(p[0].clone())
         }).unwrap_or_else(|_| None)
     }).unwrap_or_else(|| {
-        let name: Vec<u8> = fun_args_name.as_bytes().to_vec();
+        let name: Vec<u8> = args_name.as_bytes().to_vec();
         Rc::new(SExp::Atom(prog.loc(), name))
     });
-    RunStepRelevantInfo {
-        hash: hash.to_vec(),
-        enter: true,
-        op: op.clone(),
-        name: fun_name,
-        args: fun_args,
-        prog: prog.clone(),
-        tail: env.clone()
-    }
+    symbol_table.get(&hex_hash).map(|fun_name| {
+        RunStepRelevantInfo {
+            hash: hash.to_vec(),
+            enter: true,
+            op: op.clone(),
+            name: fun_name.clone(),
+            args: fun_args,
+            prog: prog.clone(),
+            tail: env.clone()
+        }
+    })
 }
 
 fn does_apply(
@@ -718,13 +648,17 @@ fn does_apply(
             let prog = Rc::new(lst[1].clone());
             let env = Rc::new(lst[2].clone());
             let hash = clvm::sha256tree(prog.clone());
-            return RunClass::Application(make_relevant_info(
-                symbol_table,
-                op,
-                &hash,
-                prog,
-                env
-            ));
+            if let Some(info) =
+                make_relevant_info(
+                    symbol_table,
+                    op,
+                    &hash,
+                    prog,
+                    env
+                )
+            {
+                return RunClass::Application(info);
+            }
         }
     }
 
@@ -810,9 +744,6 @@ impl HierarchialRunner {
                 function_name: input_file.unwrap_or_else(|| format!("clvm_program_{}", hex_of_hash(&clvm::sha256tree(prog.clone())))),
                 function_arguments: Rc::new(SExp::Nil(prog.loc())),
 
-                arguments_to_compute: Vec::new(),
-                arguments_to_show: Vec::new(),
-
                 run
             }]
         }
@@ -829,123 +760,37 @@ impl HierarchialRunner {
 
         let mut idx = self.running.len() - 1;
         if let Some(outcome) = self.running[idx].run.final_result() {
+            eprintln!("final result for frame {}: {}", idx, outcome);
             let old_running: HierarchyFrame = self.running.pop().unwrap();
-            if let RunPurpose::ComputeArgument = old_running.purpose {
-                if self.running.is_empty() {
-                    return Err(RunFailure::RunErr(self.prog.loc(), "nothing to return argument computation to".to_string()));
-                }
-
-                // Retire one argument, start new argument if needed, otherwise
-                // pop to main of the function.
-                idx -= 1;
-                // let this_run = &mut self.running[idx];
-                if self.running[idx].arguments_to_compute.is_empty() {
-                    return Err(RunFailure::RunErr(self.prog.loc(), "computing an argument but no remaining argument was available".to_string()));
-                }
-
-                // Remove the argument we just computed.
-                let last_arg = self.running[idx].arguments_to_compute.len() - 1;
-                let this_arg = self.running[idx].arguments_to_compute[last_arg].clone();
-                self.running[idx].arguments_to_show.insert(0, ComputedArgument {
-                    path: this_arg.path.clone(),
-                    name: this_arg.name.clone(),
-                    value: outcome.clone()
-                });
-
-                self.running[idx].arguments_to_compute.pop();
-
-                if self.running[idx].arguments_to_compute.is_empty() {
-                    // If we computed the last argument, synthesize the argument
-                    // data back into an env and launch the function.
-                    let new_arguments = synthesize_arguments(
-                        self.running[idx].prog.loc(),
-                        &self.running[idx].arguments_to_show,
-                        bi_zero(),
-                        bi_one()
-                    );
-                    self.running[idx].env = new_arguments.clone();
-                    let step = clvm::start_step(self.running[idx].prog.clone(), new_arguments);
-                    let run = CldbRun::new(
-                        self.runner.clone(),
-                        self.prim_map.clone(),
-                        Box::new(CldbRunEnv::new(
-                            self.input_file.clone(),
-                            self.program_lines.clone(),
-                            Box::new(CldbNoOverride::new())
-                        )),
-                        step
-                    );
-                    match does_apply(self.symbol_table.borrow(), self.running[idx].prog.clone()) {
-                        RunClass::Application(info) => {
-                            // Runs a subprogram.
-                            eprintln!("run a subprogram: {}", info.name);
-                            let to_compute = capture_argument_generation(
-                                info.args.clone(),
-                                bi_zero(),
-                                bi_one(),
-                                info.tail.clone()
-                            );
-
-                            self.running.push(HierarchyFrame {
-                                purpose: RunPurpose::Main,
-                                prog: info.prog,
-                                env: Rc::new(SExp::Nil(info.tail.loc())),
-
-                                function_name: info.name,
-                                function_arguments: info.args,
-
-                                arguments_to_compute: to_compute,
-                                arguments_to_show: Vec::new(),
-
-                                run
-                            });
-                        }
-                        RunClass::Primitive(op) => {
-                            // Runs a primitive.
-                            eprintln!("run a primitive: {}", op);
-                            let step = clvm::start_step(op.clone(), self.running[idx].env.clone());
-                            let run = CldbRun::new(
-                                self.runner.clone(),
-                                self.prim_map.clone(),
-                                Box::new(CldbRunEnv::new(
-                                    self.input_file.clone(),
-                                    self.program_lines.clone(),
-                                    Box::new(CldbNoOverride::new())
-                                )),
-                                step
-                            );
-
-                            self.running.push(HierarchyFrame {
-                                purpose: RunPurpose::Main,
-                                prog: op.clone(),
-                                env: self.running[idx].env.clone(),
-
-                                function_name: "op".to_string(),
-                                function_arguments: Rc::new(SExp::Atom(op.loc(), b"_".to_vec())),
-
-                                arguments_to_compute: Vec::new(),
-                                arguments_to_show: Vec::new(),
-
-                                run
-                            });
-                        }
-                    }
-                }
-            } else {
-                // This function ran another function as its expression form.
-                // Its result passes through.
-                let mut old_running = self.running.pop().unwrap();
-                idx = self.running.len() - 1;
-                let this_run = &mut self.running[idx];
-
-                swap(&mut this_run.run, &mut old_running.run);
+            eprintln!("idx {} self.running.len() {}", idx, self.running.len());
+            if self.running.is_empty() {
+                return Ok(HierarchialStepResult::Done(None));
             }
+
+            idx -= 1;
+
+            self.running[idx].env = outcome.clone();
+            eprintln!("end arg creation prog {} env {}", self.running[idx].prog, self.running[idx].env);
+            let step = clvm::step_return_value(
+                &self.running[idx].run.current_step(),
+                self.running[idx].env.clone()
+            );
+
+            self.running[idx].run = CldbRun::new(
+                self.runner.clone(),
+                self.prim_map.clone(),
+                Box::new(CldbRunEnv::new(
+                    self.input_file.clone(),
+                    self.program_lines.clone(),
+                    Box::new(CldbNoOverride::new())
+                )),
+                step
+            );
 
             Ok(HierarchialStepResult::ShapeChange)
         } else {
             let current_env = self.running[idx].env.clone();
             let current_step = self.running[idx].run.current_step();
-            eprintln!("step {}", current_step.sexp());
             if let Some(info) = relevant_run_step_info(
                 &self.symbol_table,
                 &current_step
@@ -954,27 +799,13 @@ impl HierarchialRunner {
                 eprintln!("args {}", info.args);
                 eprintln!("tail {}", info.tail);
 
-                // If we're passing on the whole environment like when
-                // starting the program, we can just pass the whole env.
-                let isolated_arguments =
-                    capture_argument_generation(
-                        info.args.clone(),
-                        bi_zero(),
-                        bi_one(),
-                        info.tail.clone()
-                    );
-
-                if isolated_arguments.is_empty() {
-                    // Just pass on execution.
-                    todo!()
-                }
+                eprintln!("function_code {}", info.prog);
+                eprintln!("function_args {}", info.tail);
 
                 // Create a frame based on the last argument.
-                let nil = Rc::new(SExp::Nil(info.args.loc()));
-                let arg_idx = isolated_arguments.len() - 1;
-                let last_argument_computation = &isolated_arguments[arg_idx];
                 let arg_step =
-                    clvm::start_step(last_argument_computation.program.clone(), current_env.clone());
+                    clvm::start_step(info.prog.clone(), info.tail.clone());
+
                 let arg_run = CldbRun::new(
                     self.runner.clone(),
                     self.prim_map.clone(),
@@ -985,17 +816,15 @@ impl HierarchialRunner {
                     )),
                     arg_step
                 );
+
                 let arg_frame = HierarchyFrame {
                     purpose: RunPurpose::ComputeArgument,
 
-                    prog: last_argument_computation.program.clone(),
-                    env: current_env.clone(),
+                    prog: info.prog.clone(),
+                    env: info.tail.clone(),
 
-                    function_name: format!("{}_{}", info.name.clone(), decode_string(&last_argument_computation.name)),
-                    function_arguments: nil.clone(),
-
-                    arguments_to_compute: Vec::new(),
-                    arguments_to_show: Vec::new(),
+                    function_name: info.name.clone(),
+                    function_arguments: info.tail,
 
                     run: arg_run
                 };
@@ -1021,9 +850,6 @@ impl HierarchialRunner {
 
                     function_name: info.name.clone(),
                     function_arguments: info.args.clone(),
-
-                    arguments_to_compute: isolated_arguments,
-                    arguments_to_show: Vec::new(),
 
                     run
                 });

@@ -43,7 +43,7 @@ use crate::classic::platform::argparse::{
     TArgOptionAction, TArgumentParserProps,
 };
 
-use crate::compiler::cldb::{hex_to_modern_sexp, CldbNoOverride, CldbRun, CldbRunEnv, CldbEnvironment, HierarchialStepResult, HierarchialRunner};
+use crate::compiler::cldb::{hex_to_modern_sexp, CldbNoOverride, CldbRun, CldbRunEnv, CldbEnvironment, HierarchialStepResult, HierarchialRunner, RunPurpose};
 use crate::compiler::clvm::start_step;
 use crate::compiler::compiler::{compile_file, run_optimizer, DefaultCompilerOpts};
 use crate::compiler::comptypes::{CompileErr, CompilerOpts};
@@ -297,23 +297,38 @@ pub fn cldb_hierarchy(
 
         match runner.step() {
             Ok(HierarchialStepResult::ShapeChange) => {
-                eprintln!("Shape change:");
-                for (i, r) in runner.running.iter().enumerate() {
-                    eprintln!("{}{}", do_indent(i * 2), r.function_name);
-                }
+                // Nothing.
             },
             Ok(HierarchialStepResult::Info(Some(info))) => {
-                eprintln!("{}", yamlette_string(vec![info]));
+                let raw_string = yamlette_string(vec![info]);
+                let running_frames = runner.running.iter().map(|f| f.purpose.clone()).filter(|p| {
+                    matches!(p, RunPurpose::Main)
+                }).count();
+                let show_frames = running_frames;
+                let run_idx = runner.running.len() - 1;
+                let lines: Vec<String> = raw_string.lines().map(|l| {
+                    format!("{}{}", do_indent(2 * (show_frames + 1)), l)
+                }).collect();
+                println!("{}- {}", do_indent(2 * show_frames), runner.running[run_idx].function_name);
+                for l in lines.iter() {
+                    println!("{}", l);
+                }
             },
             Ok(HierarchialStepResult::Info(None)) => {
                 // Nothing
             },
+            Ok(HierarchialStepResult::Done(Some(info))) => {
+                println!("{}", yamlette_string(vec![info]));
+            },
+            Ok(HierarchialStepResult::Done(None)) => {
+                // Nothing
+            }
             Err(RunFailure::RunErr(l,e)) => {
-                eprintln!("Runtime Error: {}: {}", l, e);
+                println!("Runtime Error: {}: {}", l, e);
                 break;
             },
             Err(RunFailure::RunExn(l,e)) => {
-                eprintln!("Raised exception: {}: {}", l, e);
+                println!("Raised exception: {}: {}", l, e);
                 break;
             }
         }
