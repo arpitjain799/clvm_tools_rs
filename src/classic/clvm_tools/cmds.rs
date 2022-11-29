@@ -43,7 +43,8 @@ use crate::classic::platform::argparse::{
     TArgOptionAction, TArgumentParserProps,
 };
 
-use crate::compiler::cldb::{hex_to_modern_sexp, CldbNoOverride, CldbRun, CldbRunEnv, HierarchialStepResult, HierarchialRunner, RunPurpose};
+use crate::compiler::cldb::{hex_to_modern_sexp, CldbNoOverride, CldbRun, CldbRunEnv};
+use crate::compiler::cldb_hierarchy::{HierarchialStepResult, HierarchialRunner, RunPurpose};
 use crate::compiler::clvm::start_step;
 use crate::compiler::compiler::{compile_file, run_optimizer, DefaultCompilerOpts};
 use crate::compiler::comptypes::{CompileErr, CompilerOpts};
@@ -287,7 +288,7 @@ pub fn cldb_hierarchy(
         lines,
         symbol_table,
         prog,
-        args
+        args,
     );
 
     loop {
@@ -310,6 +311,11 @@ pub fn cldb_hierarchy(
                     format!("{}{}", do_indent(2 * (show_frames + 1)), l)
                 }).collect();
                 println!("{}- {}", do_indent(2 * show_frames), runner.running[run_idx].function_name);
+                println!("{}- Decoded-Arguments", do_indent(2 * show_frames));
+                for (k,v) in runner.running[run_idx].named_args.iter() {
+                    println!("{}{}: {}", do_indent(2 * (show_frames + 1)), k, v);
+                }
+                println!("{}- Output", do_indent(2 * show_frames));
                 for l in lines.iter() {
                     println!("{}", l);
                 }

@@ -25,7 +25,7 @@ use clvmr::allocator::Allocator;
 use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType};
 use crate::classic::clvm::casts::bigint_from_bytes;
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
-use crate::compiler::cldb::{RunStepRelevantInfo, HierarchialRunner};
+use crate::compiler::cldb_hierarchy::{RunStepRelevantInfo, HierarchialRunner};
 use crate::compiler::clvm::{sha256tree, RunStep};
 use crate::compiler::compiler::{compile_file, DefaultCompilerOpts};
 use crate::compiler::comptypes::CompilerOpts;

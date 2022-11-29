@@ -693,11 +693,12 @@ fn codegen_(
                     .map(|code| {
                         compiler.add_defun(
                             &defun.name,
-                            defun.args.clone(),
+                            defun.orig_args.clone(),
                             DefunCall {
                                 required_env: defun.args.clone(),
                                 code,
                             },
+                            true // Always take left env for now
                         )
                     })
             }
@@ -744,11 +745,11 @@ fn generate_let_defun(
         .map(|b| Rc::new(SExp::Atom(l.clone(), b.name.clone())))
         .collect();
 
-    let inner_function_args = SExp::Cons(
+    let inner_function_args = Rc::new(SExp::Cons(
         l.clone(),
         args,
         Rc::new(list_to_cons(l.clone(), &new_arguments)),
-    );
+    ));
 
     HelperForm::Defun(
         true,
@@ -757,7 +758,8 @@ fn generate_let_defun(
             nl: l,
             kw: kwl,
             name: name.to_owned(),
-            args: Rc::new(inner_function_args),
+            orig_args: inner_function_args.clone(),
+            args: inner_function_args,
             body,
         },
     )
@@ -924,6 +926,7 @@ fn process_helper_let_bindings(
                         kw: defun.kw.clone(),
                         name: defun.name.clone(),
                         args: defun.args.clone(),
+                        orig_args: defun.orig_args.clone(),
                         body: hoisted_body,
                     },
                 );

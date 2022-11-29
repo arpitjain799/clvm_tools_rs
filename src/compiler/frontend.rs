@@ -409,7 +409,8 @@ fn compile_defun(opts: Rc<dyn CompilerOpts>, data: CompileDefun) -> Result<Helpe
                 nl: data.nl,
                 kw: data.kwl,
                 name: data.name,
-                args: data.args,
+                args: data.args.clone(),
+                orig_args: data.args.clone(),
                 body: Rc::new(bf),
             },
         )
