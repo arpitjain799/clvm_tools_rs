@@ -71,6 +71,7 @@ pub struct DefaultCompilerOpts {
     pub stdenv: bool,
     pub optimize: bool,
     pub frontend_opt: bool,
+    pub frontend_check_live: bool,
     pub start_env: Option<Rc<SExp>>,
     pub prim_map: Rc<HashMap<Vec<u8>, Rc<SExp>>>,
 
@@ -158,6 +159,7 @@ fn fe_opt(
 
     Ok(CompileForm {
         loc: compileform.loc.clone(),
+        include_forms: compileform.include_forms.clone(),
         args: compileform.args,
         helpers: optimized_helpers.clone(),
         exp: shrunk,
@@ -177,6 +179,7 @@ pub fn compile_pre_forms(
     } else {
         CompileForm {
             loc: g.loc.clone(),
+            include_forms: g.include_forms.clone(),
             args: g.args.clone(),
             helpers: g.helpers.clone(), // optimized_helpers.clone(),
             exp: g.exp,
@@ -240,7 +243,7 @@ impl CompilerOpts for DefaultCompilerOpts {
         self.frontend_opt
     }
     fn frontend_check_live(&self) -> bool {
-        true
+        self.frontend_check_live
     }
     fn start_env(&self) -> Option<Rc<SExp>> {
         self.start_env.clone()
@@ -272,6 +275,11 @@ impl CompilerOpts for DefaultCompilerOpts {
     fn set_frontend_opt(&self, optimize: bool) -> Rc<dyn CompilerOpts> {
         let mut copy = self.clone();
         copy.frontend_opt = optimize;
+        Rc::new(copy)
+    }
+    fn set_frontend_check_live(&self, check: bool) -> Rc<dyn CompilerOpts> {
+        let mut copy = self.clone();
+        copy.frontend_check_live = check;
         Rc::new(copy)
     }
     fn set_compiler(&self, new_compiler: PrimaryCodegen) -> Rc<dyn CompilerOpts> {
@@ -335,6 +343,7 @@ impl DefaultCompilerOpts {
             stdenv: true,
             optimize: false,
             frontend_opt: false,
+            frontend_check_live: true,
             start_env: None,
             prim_map: create_prim_map(),
             known_dialects: Rc::new(KNOWN_DIALECTS.clone()),
