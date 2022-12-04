@@ -11,7 +11,6 @@ pub mod evaluate;
 pub mod frontend;
 pub mod gensym;
 mod inline;
-pub mod lsp;
 mod optimize;
 pub mod preprocessor;
 pub mod prims;

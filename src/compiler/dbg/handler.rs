@@ -29,8 +29,7 @@ use crate::compiler::cldb_hierarchy::{RunStepRelevantInfo, HierarchialRunner};
 use crate::compiler::clvm::{sha256tree, RunStep};
 use crate::compiler::compiler::{compile_file, DefaultCompilerOpts};
 use crate::compiler::comptypes::CompilerOpts;
-use crate::compiler::dbg::types::MessageHandler;
-use crate::compiler::lsp::types::{IFileReader, ILogWriter};
+use crate::compiler::dbg::types::{IFileReader, ILogWriter, MessageHandler};
 use crate::compiler::sexp::{decode_string, parse_sexp, SExp};
 use crate::compiler::srcloc::Srcloc;
 

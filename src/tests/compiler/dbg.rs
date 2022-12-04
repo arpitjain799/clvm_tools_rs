@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
 use crate::compiler::dbg::handler::Debugger;
 use crate::compiler::dbg::server::MessageBuffer;
-use crate::compiler::lsp::types::{EPrintWriter, FSFileReader};
+use crate::compiler::dbg::types::{EPrintWriter, FSFileReader};
 use crate::compiler::prims;
 
 #[test]

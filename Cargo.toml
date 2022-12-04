@@ -31,8 +31,6 @@ sha2 = "0.9.5"
 tempfile = "3.3.0"
 clvmr = "0.1.21"
 binascii = "0.1.4"
-lsp-server = "0.6.0"
-lsp-types = "0.93.0"
 serde = "1.0.142"
 bisection = "0.1.0"
 yaml-rust = "0.4"
@@ -94,10 +92,6 @@ path = "src/classic/bins/shrink.rs"
 [[bin]]
 name = "repl"
 path = "src/classic/bins/repl.rs"
-
-[[bin]]
-name = "lsp"
-path = "src/classic/bins/lsp.rs"
 
 [[bin]]
 name = "dbg"

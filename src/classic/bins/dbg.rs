@@ -7,7 +7,7 @@ use std::rc::Rc;
 use clvm_tools_rs::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
 use clvm_tools_rs::compiler::dbg::handler::Debugger;
 use clvm_tools_rs::compiler::dbg::server::MessageBuffer;
-use clvm_tools_rs::compiler::lsp::types::{EPrintWriter, FSFileReader};
+use clvm_tools_rs::compiler::dbg::types::{EPrintWriter, FSFileReader};
 use clvm_tools_rs::compiler::prims::prims;
 
 fn main_loop(connection: &mut MessageBuffer<Debugger>) -> Result<(), Box<dyn Error + Sync + Send>> {
@@ -42,9 +42,12 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         prim_map.insert(name.clone(), Rc::new(sexp.clone()));
     }
 
+    let fsreader: FSFileReader = Default::default();
+    let logwriter: EPrintWriter = Default::default();
+
     let dbg_provider = Debugger::new(
-        Rc::new(FSFileReader::new()),
-        Rc::new(EPrintWriter::new()),
+        Rc::new(fsreader),
+        Rc::new(logwriter),
         Rc::new(DefaultProgramRunner::new()),
         Rc::new(prim_map),
     );
