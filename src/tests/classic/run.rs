@@ -365,7 +365,6 @@ fn test_assert_with_strict_succeed() {
         .trim()
         .to_string();
 
-    eprintln!("result {}", result);
     assert_eq!(result.find(":").is_none(), true);
 }
 
