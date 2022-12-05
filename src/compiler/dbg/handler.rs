@@ -16,7 +16,7 @@ use debug_types::responses::{
     ThreadsResponse, VariablesResponse,
 };
 use debug_types::types::{
-    Capabilities, ChecksumAlgorithm, Scope, Source, StackFrame, Thread
+    Capabilities, ChecksumAlgorithm, Scope, Source, StackFrame, Thread, Variable
 };
 use debug_types::{MessageKind, ProtocolMessage};
 
@@ -25,11 +25,12 @@ use clvmr::allocator::Allocator;
 use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType};
 use crate::classic::clvm::casts::bigint_from_bytes;
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
-use crate::compiler::cldb_hierarchy::{RunStepRelevantInfo, HierarchialRunner};
+use crate::compiler::cldb_hierarchy::{RunStepRelevantInfo, HierarchialRunner, HierarchialStepResult, RunPurpose};
 use crate::compiler::clvm::{sha256tree, RunStep};
 use crate::compiler::compiler::{compile_file, DefaultCompilerOpts};
 use crate::compiler::comptypes::CompilerOpts;
 use crate::compiler::dbg::types::{IFileReader, ILogWriter, MessageHandler};
+use crate::compiler::runtypes::RunFailure;
 use crate::compiler::sexp::{decode_string, parse_sexp, SExp};
 use crate::compiler::srcloc::Srcloc;
 
@@ -60,10 +61,15 @@ pub enum TargetDepth {
 #[derive(Clone, Debug)]
 pub struct StoredScope {
     scope_id: u32,
+
+    prog: Rc<SExp>,
     hash: Vec<u8>,
     name: String,
+    arguments: Rc<SExp>,
+    left_env: bool,
+    named_args: HashMap<String, Rc<SExp>>,
+
     source: Srcloc,
-    named_variables: HashMap<String, Rc<SExp>>,
 }
 
 #[derive(Clone, Debug)]
@@ -81,8 +87,8 @@ pub struct RunningDebugger {
 
     running: bool,
     run: HierarchialRunner,
+    output_stack: Vec<StoredScope>,
 
-    pub scopes: Vec<StoredScope>,
     pub opts: Rc<dyn CompilerOpts>,
 }
 
@@ -98,27 +104,99 @@ fn step_string(hash: &str, rs: &RunStep) -> String {
     format!("{} - {}({})", hash, selector, sexp)
 }
 
-fn simple_stack_identifier(step: &RunStep) -> i32 {
-    let hash = sha256tree(step.sexp());
-    let as_integer = bigint_from_bytes(&Bytes::new(Some(BytesFromType::Raw(hash))), None);
-    (as_integer & 0x7fffffff_u32.to_bigint().unwrap())
-        .to_i32()
-        .unwrap()
-}
-
 fn stop_step(step: &RunStep) -> bool {
     matches!(step, RunStep::Step(_, _, _)) || matches!(step, RunStep::OpResult(_, _, _))
 }
 
 impl RunningDebugger {
     fn get_stack_depth(&self) -> usize {
-        self.scopes.len()
+        self.output_stack.len()
+    }
+
+    fn real_step(
+        &mut self,
+        frame: StoredScope,
+        info: BTreeMap<String, String>
+    ) -> Option<BTreeMap<String, String>> {
+        let running_frames = self.run.running.iter().map(|f| f.purpose.clone()).filter(|p| {
+            matches!(p, RunPurpose::Main)
+        }).count();
+
+        // Ensure we're showing enough frames.
+        if running_frames >= self.output_stack.len() {
+            self.output_stack.push(frame.clone());
+        }
+
+        if running_frames < self.output_stack.len() {
+            self.output_stack.pop();
+        }
+
+        if !self.output_stack.is_empty() {
+            let last_idx = self.output_stack.len() - 1;
+            self.output_stack[last_idx] = frame;
+        }
+
+        Some(info)
     }
 
     fn step(
         &mut self,
     ) -> Option<BTreeMap<String, String>> {
-        todo!();
+        if self.run.is_ended() {
+            return None;
+        }
+
+        match self.run.step() {
+            Ok(HierarchialStepResult::ShapeChange) => {
+                // Nothing.
+            },
+            Ok(HierarchialStepResult::Info(Some(info))) => {
+                if self.run.running.is_empty() {
+                    return None;
+                } else {
+                    let frame_idx = self.run.running.len() - 1;
+                    let frame = &self.run.running[frame_idx];
+                    return self.real_step(StoredScope {
+                        scope_id: frame_idx as u32,
+                        prog: frame.prog.clone(),
+                        hash: frame.function_hash.clone(),
+                        name: frame.function_name.clone(),
+                        arguments: frame.function_arguments.clone(),
+                        left_env: frame.function_left_env,
+
+                        source: frame.source.clone(),
+                        named_args: frame.named_args.clone()
+                    }, info);
+                }
+            },
+            Ok(HierarchialStepResult::Info(None)) => {
+                // Nothing
+            },
+            Ok(HierarchialStepResult::Done(Some(info))) => {
+                // I don't think anything is needed.
+                /*
+                let mut done_output = BTreeMap::new();
+                for (k,v) in info.iter() {
+                    done_output.insert(k.clone(), YamlElement::String(v.clone()));
+                }
+                let os_last = output_stack.len() - 1;
+                output_stack[os_last].push(done_output);
+                */
+            },
+            Ok(HierarchialStepResult::Done(None)) => {
+                // Nothing
+            }
+            Err(RunFailure::RunErr(l,e)) => {
+                println!("Runtime Error: {}: {}", l, e);
+                // Nothing
+            },
+            Err(RunFailure::RunExn(l,e)) => {
+                println!("Raised exception: {}: {}", l, e);
+                // Nothing
+            }
+        }
+
+        None
     }
 }
 
@@ -278,7 +356,7 @@ impl Debugger {
             running: !stop_on_entry,
             run,
             opts,
-            scopes: Vec::new(),
+            output_stack: Vec::new(),
             stopped_reason: None,
             target_depth: None,
         });
@@ -389,7 +467,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     }]));
                 }
                 (State::Launched(r), RequestCommand::StackTrace(_)) => {
-                    let stack_frames = r.scopes.iter().map(|s| {
+                    let stack_frames = r.output_stack.iter().map(|s| {
                         let loc = s.source.clone();
                         let fn_borrowed: &String = loc.file.borrow();
                         StackFrame {
@@ -409,7 +487,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             column: loc.col as u32,
                             end_line: None,
                             end_column: None,
-                            can_restart: None,
+                            can_restart: Some(true),
                             instruction_pointer_reference: None,
                             module_id: None,
                             presentation_hint: None
@@ -433,11 +511,28 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     }]));
                 }
                 (State::Launched(r), RequestCommand::Variables(vreq)) => {
-                    let s: Vec<StoredScope> = r.scopes.iter().filter(|s| {
+                    let s: Vec<StoredScope> = r.output_stack.iter().filter(|s| {
                         s.scope_id as i32 == vreq.variables_reference
                     }).cloned().collect();
 
-                    let variables = todo!();
+                    let variables =
+                        if s.is_empty() {
+                            vec![]
+                        } else {
+                            s[0].named_args.iter().map(|(k,v)| {
+                                Variable {
+                                    indexed_variables: None,
+                                    named_variables: None,
+                                    presentation_hint: None,
+                                    value: v.to_string(),
+                                    var_type: None,
+                                    variables_reference: s[0].scope_id as i32,
+                                    memory_reference: None,
+                                    evaluate_name: Some(format!("{}:{}", s[0].scope_id, k.clone())),
+                                    name: k.clone(),
+                                }
+                            }).collect()
+                        };
                     self.msg_seq += 1;
                     self.state = State::Launched(r);
 
@@ -452,16 +547,18 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     }]));
                 }
                 (State::Launched(r), RequestCommand::Scopes(sreq)) => {
-                    let scopes = r.scopes.iter().map(|s| {
+                    let scopes = r.output_stack.iter().filter(|s| {
+                        s.scope_id as i32 == sreq.frame_id
+                    }).map(|s| {
                         Scope {
-                            name: "Arguments".to_string(),
+                            name: s.name.clone(),
                             column: None,
                             end_column: None,
                             line: None,
                             end_line: None,
                             expensive: false,
                             indexed_variables: None,
-                            named_variables: Some(s.named_variables.len()),
+                            named_variables: Some(s.named_args.len()),
                             source: None,
                             variables_reference: s.scope_id as i32,
                             presentation_hint: None,

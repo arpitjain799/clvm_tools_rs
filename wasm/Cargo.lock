@@ -37,26 +37,14 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitvec"
-version = "0.22.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5237f00a8c86130a0cc317830e558b966dd7850d48a953d998c813f01a41b527"
-dependencies = [
- "funty 1.2.0",
- "radium 0.6.2",
- "tap",
- "wyz 0.4.0",
-]
-
-[[package]]
-name = "bitvec"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1bc2832c24239b0141d5674bb9174f9d68a8b5b3f2753311927c172ca46f7e9c"
 dependencies = [
- "funty 2.0.0",
- "radium 0.7.0",
+ "funty",
+ "radium",
  "tap",
- "wyz 0.5.0",
+ "wyz",
 ]
 
 [[package]]
@@ -79,26 +67,13 @@ dependencies = [
 
 [[package]]
 name = "bls12_381"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54757888b09a69be70b5ec303e382a74227392086ba808cb01eeca29233a2397"
-dependencies = [
- "ff 0.10.1",
- "group 0.10.0",
- "pairing 0.20.0",
- "rand_core",
- "subtle",
-]
-
-[[package]]
-name = "bls12_381"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62250ece575fa9b22068b3a8d59586f01d426dd7785522efd97632959e71c986"
 dependencies = [
- "ff 0.12.1",
- "group 0.12.1",
- "pairing 0.22.0",
+ "ff",
+ "group",
+ "pairing",
  "rand_core",
  "subtle",
 ]
@@ -132,11 +107,11 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "clvm_tools_rs"
-version = "0.1.25"
+version = "0.1.28"
 dependencies = [
  "binascii",
  "bisection",
- "bls12_381 0.5.0",
+ "bls12_381",
  "bytestream",
  "clvmr",
  "debug_types",
@@ -149,8 +124,6 @@ dependencies = [
  "js-sys",
  "lazy_static",
  "linked-hash-map",
- "lsp-server",
- "lsp-types",
  "num",
  "num-bigint",
  "num-traits",
@@ -171,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "clvm_tools_wasm"
-version = "0.1.24"
+version = "0.1.28"
 dependencies = [
  "clvm_tools_rs",
  "clvmr",
@@ -187,7 +160,7 @@ version = "0.1.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "239e0ffdc0f1b21c4247e93df1afec00e9c5c7d3567442b074ce16c301b454de"
 dependencies = [
- "bls12_381 0.7.0",
+ "bls12_381",
  "hex",
  "lazy_static",
  "num-bigint",
@@ -213,25 +186,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d997bd5e24a5928dd43e46dc529867e207907fe0b239c3477d924f7f2ca320"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "crossbeam-channel"
-version = "0.5.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2dd04ddaf88237dc3b8d8f9a3c1004b506b54b3313403944054d23c0870c521"
-dependencies = [
- "cfg-if",
- "crossbeam-utils",
-]
-
-[[package]]
-name = "crossbeam-utils"
-version = "0.8.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edbafec5fa1f196ca66527c1b12c2ec4745ca14b50f1ad8f9f6f720b55d11fac"
-dependencies = [
- "cfg-if",
 ]
 
 [[package]]
@@ -308,22 +262,11 @@ dependencies = [
 
 [[package]]
 name = "ff"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0f40b2dcd8bc322217a5f6559ae5f9e9d1de202a2ecee2e9eafcbece7562a4f"
-dependencies = [
- "bitvec 0.22.3",
- "rand_core",
- "subtle",
-]
-
-[[package]]
-name = "ff"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d013fc25338cc558c5c2cfbad646908fb23591e2404481826742b651c9af7160"
 dependencies = [
- "bitvec 1.0.1",
+ "bitvec",
  "rand_core",
  "subtle",
 ]
@@ -336,12 +279,6 @@ checksum = "a9c384f161156f5260c24a097c56119f9be8c798586aecc13afbcbe7b7e26bf8"
 dependencies = [
  "percent-encoding",
 ]
-
-[[package]]
-name = "funty"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1847abb9cb65d566acd5942e94aea9c8f547ad02c98e1649326fc0e8910b8b1e"
 
 [[package]]
 name = "funty"
@@ -374,23 +311,11 @@ dependencies = [
 
 [[package]]
 name = "group"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c363a5301b8f153d80747126a04b3c82073b9fe3130571a9d170cacdeaf7912"
-dependencies = [
- "byteorder",
- "ff 0.10.1",
- "rand_core",
- "subtle",
-]
-
-[[package]]
-name = "group"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5dfbfb3a6cfbd390d5c9564ab283a0349b9b9fcd46a706c1eb10e0db70bfbac7"
 dependencies = [
- "ff 0.12.1",
+ "ff",
  "rand_core",
  "subtle",
 ]
@@ -502,31 +427,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lsp-server"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f70570c1c29cf6654029b8fe201a5507c153f0d85be6f234d471d756bc36775a"
-dependencies = [
- "crossbeam-channel",
- "log",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "lsp-types"
-version = "0.93.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9be6e9c7e2d18f651974370d7aff703f9513e0df6e464fd795660edc77e6ca51"
-dependencies = [
- "bitflags",
- "serde",
- "serde_json",
- "serde_repr",
- "url",
-]
-
-[[package]]
 name = "memchr"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -622,20 +522,11 @@ checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
 
 [[package]]
 name = "pairing"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7de9d09263c9966e8196fe0380c9dbbc7ea114b5cf371ba29004bc1f9c6db7f3"
-dependencies = [
- "group 0.10.0",
-]
-
-[[package]]
-name = "pairing"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "135590d8bdba2b31346f9cd1fb2a912329f5135e832a4f422942eb6ead8b6b3b"
 dependencies = [
- "group 0.12.1",
+ "group",
 ]
 
 [[package]]
@@ -771,12 +662,6 @@ dependencies = [
 
 [[package]]
 name = "radium"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "643f8f41a8ebc4c5dc4515c82bb8abd397b527fc20fd681b7c011c2aee5d44fb"
-
-[[package]]
-name = "radium"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
@@ -869,17 +754,6 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
-]
-
-[[package]]
-name = "serde_repr"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fe39d9fbb0ebf5eb2c7cb7e2a47e4f462fad1379f1166b8ae49ad9eae89a7ca"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -1012,7 +886,6 @@ dependencies = [
  "form_urlencoded",
  "idna",
  "percent-encoding",
- "serde",
 ]
 
 [[package]]
@@ -1150,15 +1023,6 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
-
-[[package]]
-name = "wyz"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "129e027ad65ce1453680623c3fb5163cbf7107bfe1aa32257e7d0e63f9ced188"
-dependencies = [
- "tap",
-]
 
 [[package]]
 name = "wyz"
