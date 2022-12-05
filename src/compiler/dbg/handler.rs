@@ -16,7 +16,7 @@ use debug_types::responses::{
     ThreadsResponse, VariablesResponse,
 };
 use debug_types::types::{
-    Capabilities, ChecksumAlgorithm, Scope, Source, StackFrame, Thread, Variable
+    Capabilities, ChecksumAlgorithm, Scope, Source, StackFrame, Thread, Variable,
 };
 use debug_types::{MessageKind, ProtocolMessage};
 
@@ -25,7 +25,9 @@ use clvmr::allocator::Allocator;
 use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType};
 use crate::classic::clvm::casts::bigint_from_bytes;
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
-use crate::compiler::cldb_hierarchy::{RunStepRelevantInfo, HierarchialRunner, HierarchialStepResult, RunPurpose};
+use crate::compiler::cldb_hierarchy::{
+    HierarchialRunner, HierarchialStepResult, RunPurpose, RunStepRelevantInfo,
+};
 use crate::compiler::clvm::{sha256tree, RunStep};
 use crate::compiler::compiler::{compile_file, DefaultCompilerOpts};
 use crate::compiler::comptypes::CompilerOpts;
@@ -116,11 +118,15 @@ impl RunningDebugger {
     fn real_step(
         &mut self,
         frame: StoredScope,
-        info: BTreeMap<String, String>
+        info: BTreeMap<String, String>,
     ) -> Option<BTreeMap<String, String>> {
-        let running_frames = self.run.running.iter().map(|f| f.purpose.clone()).filter(|p| {
-            matches!(p, RunPurpose::Main)
-        }).count();
+        let running_frames = self
+            .run
+            .running
+            .iter()
+            .map(|f| f.purpose.clone())
+            .filter(|p| matches!(p, RunPurpose::Main))
+            .count();
 
         // Ensure we're showing enough frames.
         if running_frames >= self.output_stack.len() {
@@ -139,9 +145,7 @@ impl RunningDebugger {
         Some(info)
     }
 
-    fn step(
-        &mut self,
-    ) -> Option<BTreeMap<String, String>> {
+    fn step(&mut self) -> Option<BTreeMap<String, String>> {
         if self.run.is_ended() {
             return None;
         }
@@ -149,29 +153,32 @@ impl RunningDebugger {
         match self.run.step() {
             Ok(HierarchialStepResult::ShapeChange) => {
                 // Nothing.
-            },
+            }
             Ok(HierarchialStepResult::Info(Some(info))) => {
                 if self.run.running.is_empty() {
                     return None;
                 } else {
                     let frame_idx = self.run.running.len() - 1;
                     let frame = &self.run.running[frame_idx];
-                    return self.real_step(StoredScope {
-                        scope_id: frame_idx as u32,
-                        prog: frame.prog.clone(),
-                        hash: frame.function_hash.clone(),
-                        name: frame.function_name.clone(),
-                        arguments: frame.function_arguments.clone(),
-                        left_env: frame.function_left_env,
+                    return self.real_step(
+                        StoredScope {
+                            scope_id: frame_idx as u32,
+                            prog: frame.prog.clone(),
+                            hash: frame.function_hash.clone(),
+                            name: frame.function_name.clone(),
+                            arguments: frame.function_arguments.clone(),
+                            left_env: frame.function_left_env,
 
-                        source: frame.source.clone(),
-                        named_args: frame.named_args.clone()
-                    }, info);
+                            source: frame.source.clone(),
+                            named_args: frame.named_args.clone(),
+                        },
+                        info,
+                    );
                 }
-            },
+            }
             Ok(HierarchialStepResult::Info(None)) => {
                 // Nothing
-            },
+            }
             Ok(HierarchialStepResult::Done(Some(info))) => {
                 // I don't think anything is needed.
                 /*
@@ -182,15 +189,15 @@ impl RunningDebugger {
                 let os_last = output_stack.len() - 1;
                 output_stack[os_last].push(done_output);
                 */
-            },
+            }
             Ok(HierarchialStepResult::Done(None)) => {
                 // Nothing
             }
-            Err(RunFailure::RunErr(l,e)) => {
+            Err(RunFailure::RunErr(l, e)) => {
                 println!("Runtime Error: {}: {}", l, e);
                 // Nothing
-            },
-            Err(RunFailure::RunExn(l,e)) => {
+            }
+            Err(RunFailure::RunExn(l, e)) => {
                 println!("Raised exception: {}: {}", l, e);
                 // Nothing
             }
@@ -337,10 +344,7 @@ impl Debugger {
 
         // XXX Empty arguments for now.
         let arguments = Rc::new(SExp::Nil(parsed_program[0].loc()));
-        let program_lines: Vec<String> = read_in_file
-            .lines()
-            .map(|x| x.unwrap())
-            .collect();
+        let program_lines: Vec<String> = read_in_file.lines().map(|x| x.unwrap()).collect();
         let run = HierarchialRunner::new(
             self.runner.clone(),
             self.prim_map.clone(),
@@ -348,7 +352,7 @@ impl Debugger {
             Rc::new(program_lines),
             Rc::new(use_symbol_table),
             parsed_program[0].clone(),
-            arguments
+            arguments,
         );
         let state = State::Launched(RunningDebugger {
             initialized: i.clone(),
@@ -467,32 +471,36 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     }]));
                 }
                 (State::Launched(r), RequestCommand::StackTrace(_)) => {
-                    let stack_frames = r.output_stack.iter().map(|s| {
-                        let loc = s.source.clone();
-                        let fn_borrowed: &String = loc.file.borrow();
-                        StackFrame {
-                            id: s.scope_id as i32,
-                            name: s.name.clone(),
-                            source: Some(Source {
-                                name: Some(fn_borrowed.clone()),
-                                path: None,
-                                source_reference: None,
+                    let stack_frames = r
+                        .output_stack
+                        .iter()
+                        .map(|s| {
+                            let loc = s.source.clone();
+                            let fn_borrowed: &String = loc.file.borrow();
+                            StackFrame {
+                                id: s.scope_id as i32,
+                                name: s.name.clone(),
+                                source: Some(Source {
+                                    name: Some(fn_borrowed.clone()),
+                                    path: None,
+                                    source_reference: None,
+                                    presentation_hint: None,
+                                    origin: None,
+                                    sources: None,
+                                    adapter_data: None,
+                                    checksums: None,
+                                }),
+                                line: loc.line as u32,
+                                column: loc.col as u32,
+                                end_line: None,
+                                end_column: None,
+                                can_restart: Some(true),
+                                instruction_pointer_reference: None,
+                                module_id: None,
                                 presentation_hint: None,
-                                origin: None,
-                                sources: None,
-                                adapter_data: None,
-                                checksums: None
-                            }),
-                            line: loc.line as u32,
-                            column: loc.col as u32,
-                            end_line: None,
-                            end_column: None,
-                            can_restart: Some(true),
-                            instruction_pointer_reference: None,
-                            module_id: None,
-                            presentation_hint: None
-                        }
-                    }).collect();
+                            }
+                        })
+                        .collect();
 
                     self.msg_seq += 1;
                     self.state = State::Launched(r);
@@ -511,28 +519,31 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     }]));
                 }
                 (State::Launched(r), RequestCommand::Variables(vreq)) => {
-                    let s: Vec<StoredScope> = r.output_stack.iter().filter(|s| {
-                        s.scope_id as i32 == vreq.variables_reference
-                    }).cloned().collect();
+                    let s: Vec<StoredScope> = r
+                        .output_stack
+                        .iter()
+                        .filter(|s| s.scope_id as i32 == vreq.variables_reference)
+                        .cloned()
+                        .collect();
 
-                    let variables =
-                        if s.is_empty() {
-                            vec![]
-                        } else {
-                            s[0].named_args.iter().map(|(k,v)| {
-                                Variable {
-                                    indexed_variables: None,
-                                    named_variables: None,
-                                    presentation_hint: None,
-                                    value: v.to_string(),
-                                    var_type: None,
-                                    variables_reference: s[0].scope_id as i32,
-                                    memory_reference: None,
-                                    evaluate_name: Some(format!("{}:{}", s[0].scope_id, k.clone())),
-                                    name: k.clone(),
-                                }
-                            }).collect()
-                        };
+                    let variables = if s.is_empty() {
+                        vec![]
+                    } else {
+                        s[0].named_args
+                            .iter()
+                            .map(|(k, v)| Variable {
+                                indexed_variables: None,
+                                named_variables: None,
+                                presentation_hint: None,
+                                value: v.to_string(),
+                                var_type: None,
+                                variables_reference: s[0].scope_id as i32,
+                                memory_reference: None,
+                                evaluate_name: Some(format!("{}:{}", s[0].scope_id, k.clone())),
+                                name: k.clone(),
+                            })
+                            .collect()
+                    };
                     self.msg_seq += 1;
                     self.state = State::Launched(r);
 
@@ -547,10 +558,11 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     }]));
                 }
                 (State::Launched(r), RequestCommand::Scopes(sreq)) => {
-                    let scopes = r.output_stack.iter().filter(|s| {
-                        s.scope_id as i32 == sreq.frame_id
-                    }).map(|s| {
-                        Scope {
+                    let scopes = r
+                        .output_stack
+                        .iter()
+                        .filter(|s| s.scope_id as i32 == sreq.frame_id)
+                        .map(|s| Scope {
                             name: s.name.clone(),
                             column: None,
                             end_column: None,
@@ -562,8 +574,8 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             source: None,
                             variables_reference: s.scope_id as i32,
                             presentation_hint: None,
-                        }
-                    }).collect();
+                        })
+                        .collect();
 
                     self.msg_seq += 1;
                     self.state = State::Launched(r);
