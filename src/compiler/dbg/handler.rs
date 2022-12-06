@@ -526,10 +526,10 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                         .cloned()
                         .collect();
 
-                    let variables = if s.is_empty() {
-                        vec![]
-                    } else {
-                        s[0].named_args
+                    let mut variables = Vec::new();
+
+                    = if let Some(scope) = s.get(0) {
+                        let function_args = scope.named_args
                             .iter()
                             .map(|(k, v)| Variable {
                                 indexed_variables: None,
@@ -537,13 +537,37 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                                 presentation_hint: None,
                                 value: v.to_string(),
                                 var_type: None,
-                                variables_reference: s[0].scope_id as i32,
+                                variables_reference: -1,
                                 memory_reference: None,
-                                evaluate_name: Some(format!("{}:{}", s[0].scope_id, k.clone())),
+                                evaluate_name: Some(format!("{}:{}", scope.scope_id, k.clone())),
                                 name: k.clone(),
                             })
-                            .collect()
+                            .collect();
+                        variables.append(&mut function_args);
+                        variables.push(Variable {
+                            name: "program",
+                            indexed_variables: None,
+                            named_variables: None,
+                            presentation_hint: None,
+                            value: scope.program.to_string(),
+                            var_type: None,
+                            variables_reference: -1,
+                            memory_reference: None,
+                            evaluate_name: None
+                        });
+                        variables.push(Variable {
+                            name: "env",
+                            indexed_variables: None,
+                            named_variables: None,
+                            presentation_hint: None,
+                            value: scope.env.to_string(),
+                            var_type: None,
+                            variables_reference: -1,
+                            memory_reference: None,
+                            evaluate_name: None
+                        });
                     };
+
                     self.msg_seq += 1;
                     self.state = State::Launched(r);
 
