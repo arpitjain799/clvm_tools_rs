@@ -12,7 +12,7 @@ use std::rc::Rc;
 use debug_types::events::{ContinuedEvent, Event, EventBody, StoppedEvent, StoppedReason};
 use debug_types::requests::{InitializeRequestArguments, LaunchRequestArguments, RequestCommand};
 use debug_types::responses::{
-    InitializeResponse, Response, ResponseBody, ScopesResponse, StackTraceResponse,
+    InitializeResponse, Response, ResponseBody, ScopesResponse, SourceResponse, StackTraceResponse,
     ThreadsResponse, VariablesResponse,
 };
 use debug_types::types::{
@@ -65,6 +65,10 @@ pub struct StoredScope {
     scope_id: u32,
 
     prog: Rc<SExp>,
+    env: Rc<SExp>,
+
+    step: RunStep,
+
     hash: Vec<u8>,
     name: String,
     arguments: Rc<SExp>,
@@ -160,16 +164,19 @@ impl RunningDebugger {
                 } else {
                     let frame_idx = self.run.running.len() - 1;
                     let frame = &self.run.running[frame_idx];
+                    let step = frame.run.current_step();
                     return self.real_step(
                         StoredScope {
-                            scope_id: frame_idx as u32,
+                            step: step.clone(),
                             prog: frame.prog.clone(),
+                            env: frame.env.clone(),
+                            scope_id: frame_idx as u32,
                             hash: frame.function_hash.clone(),
                             name: frame.function_name.clone(),
                             arguments: frame.function_arguments.clone(),
                             left_env: frame.function_left_env,
 
-                            source: frame.source.clone(),
+                            source: step.loc(),
                             named_args: frame.named_args.clone(),
                         },
                         info,
@@ -451,6 +458,26 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                         self.log.write("No program provided");
                     }
                 }
+                (State::Launched(r), RequestCommand::Source(s)) => {
+                    self.msg_seq += 1;
+                    self.state = State::Launched(r);
+
+                    return Ok(Some(vec![ProtocolMessage {
+                        seq: self.msg_seq,
+                        message: MessageKind::Response(Response {
+                            request_seq: pm.seq,
+                            success: false,
+                            message: None,
+                            body: None
+                            /*
+                            Some(ResponseBody::Source(SourceResponse {
+                                content: "( )".to_string(),
+                                mime_type: "text/plain"
+                            }))
+                            */
+                        })
+                    }]));
+                }
                 (State::Launched(r), RequestCommand::Threads) => {
                     self.msg_seq += 1;
                     self.state = State::Launched(r);
@@ -528,8 +555,8 @@ impl MessageHandler<ProtocolMessage> for Debugger {
 
                     let mut variables = Vec::new();
 
-                    = if let Some(scope) = s.get(0) {
-                        let function_args = scope.named_args
+                    if let Some(scope) = s.get(0) {
+                        let mut function_args = scope.named_args
                             .iter()
                             .map(|(k, v)| Variable {
                                 indexed_variables: None,
@@ -545,27 +572,29 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             .collect();
                         variables.append(&mut function_args);
                         variables.push(Variable {
-                            name: "program",
+                            name: "op".to_string(),
                             indexed_variables: None,
                             named_variables: None,
                             presentation_hint: None,
-                            value: scope.program.to_string(),
+                            value: scope.step.sexp().to_string(),
                             var_type: None,
                             variables_reference: -1,
                             memory_reference: None,
                             evaluate_name: None
                         });
-                        variables.push(Variable {
-                            name: "env",
-                            indexed_variables: None,
-                            named_variables: None,
-                            presentation_hint: None,
-                            value: scope.env.to_string(),
-                            var_type: None,
-                            variables_reference: -1,
-                            memory_reference: None,
-                            evaluate_name: None
-                        });
+                        if let Some(a) = scope.step.args() {
+                            variables.push(Variable {
+                                name: "op-args".to_string(),
+                                indexed_variables: None,
+                                named_variables: None,
+                                presentation_hint: None,
+                                value: a.to_string(),
+                                var_type: None,
+                                variables_reference: -1,
+                                memory_reference: None,
+                                evaluate_name: None
+                            });
+                        }
                     };
 
                     self.msg_seq += 1;
