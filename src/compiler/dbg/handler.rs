@@ -150,63 +150,65 @@ impl RunningDebugger {
     }
 
     fn step(&mut self) -> Option<BTreeMap<String, String>> {
-        if self.run.is_ended() {
-            return None;
-        }
+        loop {
+            if self.run.is_ended() {
+                return None;
+            }
 
-        match self.run.step() {
-            Ok(HierarchialStepResult::ShapeChange) => {
-                // Nothing.
-            }
-            Ok(HierarchialStepResult::Info(Some(info))) => {
-                if self.run.running.is_empty() {
-                    return None;
-                } else {
-                    let frame_idx = self.run.running.len() - 1;
-                    let frame = &self.run.running[frame_idx];
-                    let step = frame.run.current_step();
-                    return self.real_step(
-                        StoredScope {
-                            step: step.clone(),
-                            prog: frame.prog.clone(),
-                            env: frame.env.clone(),
-                            scope_id: frame_idx as u32,
-                            hash: frame.function_hash.clone(),
-                            name: frame.function_name.clone(),
-                            arguments: frame.function_arguments.clone(),
-                            left_env: frame.function_left_env,
-
-                            source: step.loc(),
-                            named_args: frame.named_args.clone(),
-                        },
-                        info,
-                    );
+            match self.run.step() {
+                Ok(HierarchialStepResult::ShapeChange) => {
+                    // Nothing.
                 }
-            }
-            Ok(HierarchialStepResult::Info(None)) => {
-                // Nothing
-            }
-            Ok(HierarchialStepResult::Done(Some(info))) => {
-                // I don't think anything is needed.
-                /*
-                let mut done_output = BTreeMap::new();
-                for (k,v) in info.iter() {
-                    done_output.insert(k.clone(), YamlElement::String(v.clone()));
+                Ok(HierarchialStepResult::Info(Some(info))) => {
+                    if self.run.running.is_empty() {
+                        return None;
+                    } else {
+                        let frame_idx = self.run.running.len() - 1;
+                        let frame = &self.run.running[frame_idx];
+                        let step = frame.run.current_step();
+                        return self.real_step(
+                            StoredScope {
+                                step: step.clone(),
+                                prog: frame.prog.clone(),
+                                env: frame.env.clone(),
+                                scope_id: frame_idx as u32,
+                                hash: frame.function_hash.clone(),
+                                name: frame.function_name.clone(),
+                                arguments: frame.function_arguments.clone(),
+                                left_env: frame.function_left_env,
+                                
+                                source: step.loc(),
+                                named_args: frame.named_args.clone(),
+                            },
+                            info,
+                        );
+                    }
                 }
-                let os_last = output_stack.len() - 1;
-                output_stack[os_last].push(done_output);
-                */
-            }
-            Ok(HierarchialStepResult::Done(None)) => {
-                // Nothing
-            }
-            Err(RunFailure::RunErr(l, e)) => {
-                println!("Runtime Error: {}: {}", l, e);
-                // Nothing
-            }
-            Err(RunFailure::RunExn(l, e)) => {
-                println!("Raised exception: {}: {}", l, e);
-                // Nothing
+                Ok(HierarchialStepResult::Info(None)) => {
+                    // Nothing
+                }
+                Ok(HierarchialStepResult::Done(Some(info))) => {
+                    // I don't think anything is needed.
+                    /*
+                    let mut done_output = BTreeMap::new();
+                    for (k,v) in info.iter() {
+                        done_output.insert(k.clone(), YamlElement::String(v.clone()));
+                    }
+                    let os_last = output_stack.len() - 1;
+                    output_stack[os_last].push(done_output);
+                     */
+                }
+                Ok(HierarchialStepResult::Done(None)) => {
+                    // Nothing
+                }
+                Err(RunFailure::RunErr(l, e)) => {
+                    println!("Runtime Error: {}: {}", l, e);
+                    // Nothing
+                }
+                Err(RunFailure::RunExn(l, e)) => {
+                    println!("Raised exception: {}: {}", l, e);
+                    // Nothing
+                }
             }
         }
 
@@ -393,7 +395,7 @@ impl Debugger {
                         reason: StoppedReason::Entry,
                         description: None,
                         thread_id: Some(1),
-                        preserve_focus_hint: Some(true),
+                        preserve_focus_hint: None, // Some(true),
                         text: None,
                         all_threads_stopped: Some(true),
                         hit_breakpoint_ids: None,
@@ -501,6 +503,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     let stack_frames = r
                         .output_stack
                         .iter()
+                        .rev()
                         .map(|s| {
                             let loc = s.source.clone();
                             let fn_borrowed: &String = loc.file.borrow();
@@ -667,7 +670,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                                 reason: StoppedReason::Pause,
                                 description: None,
                                 thread_id: Some(1),
-                                preserve_focus_hint: Some(true),
+                                preserve_focus_hint: None, // Some(true),
                                 text: None,
                                 all_threads_stopped: Some(true),
                                 hit_breakpoint_ids: None,
@@ -743,7 +746,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                                         .unwrap_or(StoppedReason::Step),
                                     description: None,
                                     thread_id: Some(1),
-                                    preserve_focus_hint: Some(true),
+                                    preserve_focus_hint: None, // Some(true),
                                     text: None,
                                     all_threads_stopped: Some(true),
                                     hit_breakpoint_ids: None,
