@@ -1,6 +1,3 @@
-use num_bigint::ToBigInt;
-use num_traits::ToPrimitive;
-
 use serde::Deserialize;
 
 use std::borrow::Borrow;
@@ -12,7 +9,7 @@ use std::rc::Rc;
 use debug_types::events::{ContinuedEvent, Event, EventBody, StoppedEvent, StoppedReason};
 use debug_types::requests::{InitializeRequestArguments, LaunchRequestArguments, RequestCommand};
 use debug_types::responses::{
-    InitializeResponse, Response, ResponseBody, ScopesResponse, SourceResponse, StackTraceResponse,
+    InitializeResponse, Response, ResponseBody, ScopesResponse, StackTraceResponse,
     ThreadsResponse, VariablesResponse,
 };
 use debug_types::types::{
@@ -22,13 +19,10 @@ use debug_types::{MessageKind, ProtocolMessage};
 
 use clvmr::allocator::Allocator;
 
-use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType};
-use crate::classic::clvm::casts::bigint_from_bytes;
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
 use crate::compiler::cldb_hierarchy::{
-    HierarchialRunner, HierarchialStepResult, RunPurpose, RunStepRelevantInfo,
+    HierarchialRunner, HierarchialStepResult, RunPurpose
 };
-use crate::compiler::clvm::{sha256tree, RunStep};
 use crate::compiler::compiler::{compile_file, DefaultCompilerOpts};
 use crate::compiler::comptypes::CompilerOpts;
 use crate::compiler::dbg::types::{IFileReader, ILogWriter, MessageHandler};
@@ -64,54 +58,26 @@ pub enum TargetDepth {
 pub struct StoredScope {
     scope_id: u32,
 
-    prog: Rc<SExp>,
-    env: Rc<SExp>,
-
-    step: RunStep,
-
-    hash: Vec<u8>,
     name: String,
-    arguments: Rc<SExp>,
-    left_env: bool,
     named_args: HashMap<String, Rc<SExp>>,
+
+    rundata: Option<BTreeMap<String, String>>,
 
     source: Srcloc,
 }
 
-#[derive(Clone, Debug)]
-pub struct StoredStep {
-    info: Option<RunStepRelevantInfo>,
-    prev_step: Rc<RunStep>,
-    prev_result: Option<BTreeMap<String, String>>,
-}
-
 pub struct RunningDebugger {
-    initialized: InitializeRequestArguments,
-    launch_info: LaunchRequestArguments,
+    pub initialized: InitializeRequestArguments,
+    pub launch_info: LaunchRequestArguments,
     target_depth: Option<TargetDepth>,
     stopped_reason: Option<StoppedReason>,
 
     running: bool,
     run: HierarchialRunner,
     output_stack: Vec<StoredScope>,
+    result: Option<String>,
 
     pub opts: Rc<dyn CompilerOpts>,
-}
-
-// Simple way of thinking about steps
-fn step_string(hash: &str, rs: &RunStep) -> String {
-    let sexp = rs.sexp();
-    let selector = match rs {
-        RunStep::Done(_, _) => "Done",
-        RunStep::OpResult(_, _, _) => "OpResult",
-        RunStep::Op(_, _, _, _, _) => "Op",
-        RunStep::Step(_, _, _) => "Step",
-    };
-    format!("{} - {}({})", hash, selector, sexp)
-}
-
-fn stop_step(step: &RunStep) -> bool {
-    matches!(step, RunStep::Step(_, _, _)) || matches!(step, RunStep::OpResult(_, _, _))
 }
 
 impl RunningDebugger {
@@ -138,7 +104,12 @@ impl RunningDebugger {
         }
 
         if running_frames < self.output_stack.len() {
-            self.output_stack.pop();
+            if let Some(popped) = self.output_stack.pop() {
+                if !self.output_stack.is_empty() {
+                    let last_idx = self.output_stack.len() - 1;
+                    self.output_stack[last_idx].rundata = popped.rundata;
+                }
+            }
         }
 
         if !self.output_stack.is_empty() {
@@ -162,41 +133,33 @@ impl RunningDebugger {
                 Ok(HierarchialStepResult::Info(Some(info))) => {
                     if self.run.running.is_empty() {
                         return None;
-                    } else {
-                        let frame_idx = self.run.running.len() - 1;
-                        let frame = &self.run.running[frame_idx];
-                        let step = frame.run.current_step();
-                        return self.real_step(
-                            StoredScope {
-                                step: step.clone(),
-                                prog: frame.prog.clone(),
-                                env: frame.env.clone(),
-                                scope_id: frame_idx as u32,
-                                hash: frame.function_hash.clone(),
-                                name: frame.function_name.clone(),
-                                arguments: frame.function_arguments.clone(),
-                                left_env: frame.function_left_env,
-                                
-                                source: step.loc(),
-                                named_args: frame.named_args.clone(),
-                            },
-                            info,
-                        );
                     }
+
+                    let frame_idx = self.run.running.len() - 1;
+                    let frame = &self.run.running[frame_idx];
+                    let step = frame.run.current_step();
+
+                    if let Some(result) = info.get("Value") {
+                        self.result = Some(result.clone());
+                    }
+
+                    return self.real_step(
+                        StoredScope {
+                            scope_id: (frame_idx + 1) as u32,
+                            name: frame.function_name.clone(),
+
+                            source: step.loc(),
+                            named_args: frame.named_args.clone(),
+                            rundata: Some(info.clone()),
+                        },
+                        info,
+                    );
                 }
                 Ok(HierarchialStepResult::Info(None)) => {
                     // Nothing
                 }
-                Ok(HierarchialStepResult::Done(Some(info))) => {
+                Ok(HierarchialStepResult::Done(Some(_))) => {
                     // I don't think anything is needed.
-                    /*
-                    let mut done_output = BTreeMap::new();
-                    for (k,v) in info.iter() {
-                        done_output.insert(k.clone(), YamlElement::String(v.clone()));
-                    }
-                    let os_last = output_stack.len() - 1;
-                    output_stack[os_last].push(done_output);
-                     */
                 }
                 Ok(HierarchialStepResult::Done(None)) => {
                     // Nothing
@@ -211,8 +174,6 @@ impl RunningDebugger {
                 }
             }
         }
-
-        None
     }
 }
 
@@ -372,6 +333,7 @@ impl Debugger {
             output_stack: Vec::new(),
             stopped_reason: None,
             target_depth: None,
+            result: None,
         });
 
         seq_nr += 1;
@@ -460,7 +422,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                         self.log.write("No program provided");
                     }
                 }
-                (State::Launched(r), RequestCommand::Source(s)) => {
+                (State::Launched(r), RequestCommand::Source(_s)) => {
                     self.msg_seq += 1;
                     self.state = State::Launched(r);
 
@@ -500,7 +462,7 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                     }]));
                 }
                 (State::Launched(r), RequestCommand::StackTrace(_)) => {
-                    let stack_frames = r
+                    let stack_frames: Vec<StackFrame> = r
                         .output_stack
                         .iter()
                         .rev()
@@ -574,24 +536,34 @@ impl MessageHandler<ProtocolMessage> for Debugger {
                             })
                             .collect();
                         variables.append(&mut function_args);
-                        variables.push(Variable {
-                            name: "op".to_string(),
-                            indexed_variables: None,
-                            named_variables: None,
-                            presentation_hint: None,
-                            value: scope.step.sexp().to_string(),
-                            var_type: None,
-                            variables_reference: -1,
-                            memory_reference: None,
-                            evaluate_name: None
-                        });
-                        if let Some(a) = scope.step.args() {
+                        let mut copy_info_member = |name, target: &str| {
+                            if let Some(v) = scope.rundata.as_ref().and_then(|info| {
+                                info.get(name)
+                            }) {
+                                variables.push(Variable {
+                                    name: target.to_owned(),
+                                    indexed_variables: None,
+                                    named_variables: None,
+                                    presentation_hint: None,
+                                    value: v.to_string(),
+                                    var_type: None,
+                                    variables_reference: -1,
+                                    memory_reference: None,
+                                    evaluate_name: None
+                                });
+                            }
+                        };
+
+                        copy_info_member("Function", "_op");
+                        copy_info_member("Arguments", "_args");
+
+                        if let Some(result) = r.result.as_ref() {
                             variables.push(Variable {
-                                name: "op-args".to_string(),
+                                name: "_result".to_owned(),
                                 indexed_variables: None,
                                 named_variables: None,
                                 presentation_hint: None,
-                                value: a.to_string(),
+                                value: result.clone(),
                                 var_type: None,
                                 variables_reference: -1,
                                 memory_reference: None,

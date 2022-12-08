@@ -52,7 +52,7 @@ use crate::compiler::debug::build_symbol_table_mut;
 use crate::compiler::prims;
 use crate::compiler::runtypes::RunFailure;
 use crate::compiler::sexp;
-use crate::compiler::sexp::{decode_string, parse_sexp};
+use crate::compiler::sexp::parse_sexp;
 use crate::compiler::srcloc::Srcloc;
 use crate::util::collapse;
 
@@ -285,11 +285,6 @@ where
         })
         .collect();
     Yaml::Array(result_array)
-}
-
-fn do_indent(n: usize) -> String {
-    let spaces: Vec<u8> = (0..n).map(|_| b' ').collect();
-    decode_string(&spaces)
 }
 
 fn yamlette_string(to_print: &[BTreeMap<String, YamlElement>]) -> String {
