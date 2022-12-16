@@ -61,7 +61,7 @@ lazy_static! {
             "}
         .to_string()
     };
-    pub static ref STRICT_CONTENT: String = { "( (defconstant *strict* true) )".to_string() };
+    pub static ref STRICT_CONTENT: String = "( (defconstant *strict* true) )".to_string();
 }
 
 #[derive(Clone, Debug)]
