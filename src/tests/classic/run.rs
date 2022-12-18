@@ -298,6 +298,7 @@ fn test_compile_file_1() {
         .trim()
         .to_string();
     assert_eq!(run_result, "(+ 2 (q . 19))");
+    fs::remove_file("*command*_foo.sym").expect("file should have been dropped from compile process");
 }
 
 #[test]
@@ -480,6 +481,7 @@ fn test_get_dependencies_2() {
     expect_set.insert("resources/tests/secret_number.cl".to_owned());
     expect_set.insert("resources/tests/test_sub_include.cl".to_owned());
     assert_eq!(dep_set, expect_set);
+    fs::remove_file("test_treehash_constant.cl_secret-number.sym").expect("should have been dropped");
 }
 
 #[test]
@@ -518,6 +520,7 @@ fn test_treehash_constant_2() {
         result_hash,
         "0xe2954b5f459d1cffff293498f8263c961890a06fe28d6be1a0f08412164ced80"
     );
+    fs::remove_file("test_treehash_constant_2.cl_secret-number.sym").expect("should have been dropped");
 }
 
 #[test]
