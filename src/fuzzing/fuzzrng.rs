@@ -26,17 +26,17 @@ impl<'slice> FuzzPseudoRng<'slice> {
         let lfsr = LFSRGaloisBuilder::new()
             .set_initial_payload(InitRegisterPayload::Meander)
             .build();
-        return FuzzPseudoRng {
-            lfsr: lfsr,
-            slice: slice,
+        FuzzPseudoRng {
+            lfsr,
+            slice,
 
             lfsr_scramble: false,
             progress: 0,
-        };
+        }
     }
 
     fn next_u8_untreated(&mut self) -> u8 {
-        if self.slice.len() == 0 {
+        if self.slice.is_empty() {
             self.lfsr_scramble = true;
             return 0;
         }
@@ -86,13 +86,13 @@ impl<'slice> RngCore for FuzzPseudoRng<'slice> {
     #[inline(always)]
     fn fill_bytes(&mut self, dest: &mut [u8]) {
         if self.lfsr_scramble {
-            for i in 0..dest.len() {
+            for item in dest.iter_mut() {
                 let lfsr8: u8 = self.lfsr.next();
-                dest[i] = self.next_u8_untreated() ^ lfsr8
+                *item = self.next_u8_untreated() ^ lfsr8
             }
         } else {
-            for i in 0..dest.len() {
-                dest[i] = self.next_u8_untreated()
+            for item in dest.iter_mut() {
+                *item = self.next_u8_untreated()
             }
         }
     }
