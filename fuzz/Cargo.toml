@@ -1,0 +1,31 @@
+[package]
+name = "clvm_tools_rs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rand = "0.8.5"
+rand_chacha = "0.3.1"
+clvmr = "0.1.21"
+
+[dependencies.clvm_tools_rs]
+path = ".."
+features = ["fuzzer"]
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "programs"
+path = "fuzz_targets/programs.rs"
+test = false
+doc = false

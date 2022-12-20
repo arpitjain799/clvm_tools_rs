@@ -1,0 +1,182 @@
+#![no_main]
+
+use rand::prelude::*;
+
+use std::borrow::Borrow;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use libfuzzer_sys::fuzz_target;
+
+use clvmr::allocator::Allocator;
+
+use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
+use clvm_tools_rs::classic::clvm_tools::stages::stage_0::TRunProgram;
+use clvm_tools_rs::compiler::clvm;
+use clvm_tools_rs::compiler::compiler::{
+    DefaultCompilerOpts,
+    compile_file,
+    run_failure_to_compile_err
+};
+use clvm_tools_rs::compiler::comptypes::CompileErr;
+use clvm_tools_rs::compiler::fuzzer::{FuzzOldProgram, FuzzProgram};
+use clvm_tools_rs::compiler::sexp::SExp;
+use clvm_tools_rs::fuzzing::fuzzrng::FuzzPseudoRng;
+use clvm_tools_rs::classic::clvm_tools::clvmc::compile_clvm_text;
+use clvm_tools_rs::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
+
+use clvm_tools_rs::compiler::prims;
+
+fuzz_target!(|data: &[u8]| {
+    let mut rng = FuzzPseudoRng::new(data);
+    let opts = Rc::new(DefaultCompilerOpts::new(&"*prog*".to_string()));
+    let runner = Rc::new(DefaultProgramRunner::new());
+    let prim_map = prims::prim_map();
+    let mut old = false;
+
+    let mut allocator = Allocator::new();
+
+    old = !old;
+
+    let prog: FuzzProgram =
+        if old {
+            let old_program: FuzzOldProgram = rng.gen();
+            old_program.program
+        } else {
+            rng.gen()
+        };
+
+    println!("prog: {}", prog.to_sexp().to_string());
+
+    let args = prog.random_args(&mut rng);
+    println!("args: {}", args.to_string());
+
+    let interpret_result = prog.interpret(args.clone());
+
+    match &interpret_result {
+        Ok(res) => {
+            println!("interpreted: {}", res);
+        }
+        Err(e) => {
+            println!("interpreted: {}", e);
+        }
+    }
+
+    let run_result = compile_file(
+        &mut allocator,
+        runner.clone(),
+        opts.clone(),
+        &prog.to_sexp().to_string(),
+        &mut HashMap::new()
+    ).and_then(|compiled| {
+        println!("running: {}", compiled);
+        clvm::run(
+            &mut allocator,
+            runner.clone(),
+            prim_map.clone(),
+            Rc::new(compiled),
+            Rc::new(args.clone())
+        ).map_err(run_failure_to_compile_err)
+    });
+
+    match &run_result {
+        Ok(res) => {
+            println!("compiled-run: {}", res);
+        }
+        Err(e) => {
+            println!("compiled-run: {}: {}", e.0, e.1);
+        }
+    }
+
+    let prog_sexp = prog.to_sexp();
+    let prog_loc = prog_sexp.loc();
+    let old_result: Option<Result<Rc<SExp>, CompileErr>> =
+        if old {
+            let compiled = compile_clvm_text(
+                &mut allocator,
+                &[],
+                &mut HashMap::new(),
+                &prog_sexp.to_string(),
+                "*old-test*"
+            ).map_err(|e| {
+                CompileErr(prog_loc.clone(), e.1.clone())
+            });
+
+            let new_program = compiled.clone().and_then(|runnable| {
+                clvm::convert_from_clvm_rs(
+                    &mut allocator, prog_loc.clone(), runnable
+                ).map_err(run_failure_to_compile_err)
+            });
+
+            let new_run = new_program.clone().and_then(|new_program| {
+                clvm::run(
+                    &mut allocator,
+                    runner.clone(),
+                    prim_map.clone(),
+                    new_program,
+                    Rc::new(args.clone())
+                ).map_err(run_failure_to_compile_err)
+            });
+
+            let old_args = clvm::convert_to_clvm_rs(
+                &mut allocator, Rc::new(args.clone())
+            ).expect("should convert args (old)");
+
+            let old_run = compiled.and_then(|runnable| {
+                runner.run_program(
+                    &mut allocator,
+                    runnable,
+                    old_args,
+                    None
+                ).map_err(|e| CompileErr(prog_loc.clone(), e.1.clone()))
+            });
+
+            if old_run.is_err() != new_run.is_err() {
+                panic!("old and new run disagree on error");
+            }
+
+            if let (Ok(old), Ok(new)) = (&old_run, &new_run) {
+                println!("old-run: {}", disassemble(&mut allocator, old.1));
+                let new_version_of_old_run_output =
+                    clvm::convert_from_clvm_rs(
+                        &mut allocator,
+                        prog_loc.clone(),
+                        old.1
+                    ).expect("should convert old run output");
+                if new_version_of_old_run_output != *new {
+                    panic!("old and new run values disagree");
+                }
+
+                let modern_to_old = clvm::convert_to_clvm_rs(
+                    &mut allocator,
+                    new.clone()
+                ).expect("should convert new to old");
+
+                if disassemble(&mut allocator, old.1) != disassemble(&mut allocator, modern_to_old) {
+                    panic!("results disagree on old conversion of value");
+                }
+            }
+
+            Some(new_run)
+        } else {
+            None
+        };
+
+    if interpret_result.is_err() != run_result.is_err() {
+        panic!("error results disagree on error");
+    }
+
+    // If we generated an old result, check here.
+    if old_result.as_ref().map(|or| {
+        interpret_result.is_err() != or.is_err()
+    }).unwrap_or(false) {
+        panic!("old run and new run disagree on error");
+    }
+
+    if let (Ok(interp), Ok(compiled)) = (interpret_result, run_result) {
+        let compiled_borrowed: &SExp = compiled.borrow();
+        if &interp != compiled_borrowed {
+            panic!("results disagree on value");
+        }
+    }
+});
