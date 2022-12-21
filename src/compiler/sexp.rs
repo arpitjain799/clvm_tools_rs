@@ -40,7 +40,7 @@ pub fn random_atom_name<R: Rng + ?Sized>(rng: &mut R, min_size: usize) -> Vec<u8
         let mut n: u8 = rng.gen();
         n %= 40;
         len += 1;
-        if n < 26 || len < min_size {
+        if (n < 26 || len < min_size) && len < 33 {
             bytevec.push((n % 26) + 97); // lowercase a
         } else {
             break;
