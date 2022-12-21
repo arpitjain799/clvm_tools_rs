@@ -27,7 +27,12 @@ use clvm_tools_rs::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
 
 use clvm_tools_rs::compiler::prims;
 
+use log::debug;
+use env_logger;
+
 fuzz_target!(|data: &[u8]| {
+    env_logger::init();
+
     let mut rng = FuzzPseudoRng::new(data);
     let opts = Rc::new(DefaultCompilerOpts::new(&"*prog*".to_string()));
     let runner = Rc::new(DefaultProgramRunner::new());
@@ -46,19 +51,19 @@ fuzz_target!(|data: &[u8]| {
             rng.gen()
         };
 
-    println!("prog: {}", prog.to_sexp().to_string());
+    debug!("prog: {}", prog.to_sexp().to_string());
 
     let args = prog.random_args(&mut rng);
-    println!("args: {}", args.to_string());
+    debug!("args: {}", args.to_string());
 
     let interpret_result = prog.interpret(args.clone());
 
     match &interpret_result {
         Ok(res) => {
-            println!("interpreted: {}", res);
+            debug!("interpreted: {}", res);
         }
         Err(e) => {
-            println!("interpreted: {}", e);
+            debug!("interpreted: {}", e);
         }
     }
 
@@ -69,7 +74,7 @@ fuzz_target!(|data: &[u8]| {
         &prog.to_sexp().to_string(),
         &mut HashMap::new()
     ).and_then(|compiled| {
-        println!("running: {}", compiled);
+        debug!("running: {}", compiled);
         clvm::run(
             &mut allocator,
             runner.clone(),
@@ -81,10 +86,10 @@ fuzz_target!(|data: &[u8]| {
 
     match &run_result {
         Ok(res) => {
-            println!("compiled-run: {}", res);
+            debug!("compiled-run: {}", res);
         }
         Err(e) => {
-            println!("compiled-run: {}: {}", e.0, e.1);
+            debug!("compiled-run: {}: {}", e.0, e.1);
         }
     }
 
@@ -136,7 +141,7 @@ fuzz_target!(|data: &[u8]| {
             }
 
             if let (Ok(old), Ok(new)) = (&old_run, &new_run) {
-                println!("old-run: {}", disassemble(&mut allocator, old.1));
+                debug!("old-run: {}", disassemble(&mut allocator, old.1));
                 let new_version_of_old_run_output =
                     clvm::convert_from_clvm_rs(
                         &mut allocator,
