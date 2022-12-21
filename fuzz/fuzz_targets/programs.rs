@@ -30,8 +30,19 @@ use clvm_tools_rs::compiler::prims;
 use log::debug;
 use env_logger;
 
+// Logger setup.
+use std::sync::Once;
+
+static INIT: Once = Once::new();
+
+/// Setup function that is only run once, even if called multiple times.
+fn logger_setup() {
+    INIT.call_once(|| {
+        env_logger::init();
+    });
+}
 fuzz_target!(|data: &[u8]| {
-    env_logger::init();
+    logger_setup();
 
     let mut rng = FuzzPseudoRng::new(data);
     let opts = Rc::new(DefaultCompilerOpts::new(&"*prog*".to_string()));
