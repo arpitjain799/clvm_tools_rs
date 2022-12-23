@@ -35,12 +35,13 @@ use std::sync::Once;
 
 static INIT: Once = Once::new();
 
-/// Setup function that is only run once, even if called multiple times.
+// Setup function that is only run once, even if called multiple times.
 fn logger_setup() {
     INIT.call_once(|| {
         env_logger::init();
     });
 }
+
 fuzz_target!(|data: &[u8]| {
     logger_setup();
 

@@ -42,31 +42,51 @@ impl AllocatorRefOrTreeHash {
     }
 }
 
-pub struct CompilerOperators {
+pub struct CompilerOperatorsInternal {
     base_dialect: Rc<dyn Dialect>,
     source_file: String,
     search_paths: Vec<String>,
     symbols_extra_info: bool,
     compile_outcomes: RefCell<HashMap<String, String>>,
-    dialect: RefCell<Rc<dyn Dialect>>,
     runner: RefCell<Rc<dyn TRunProgram>>,
     opt_memo: RefCell<HashMap<AllocatorRefOrTreeHash, NodePtr>>,
 }
 
+pub struct CompilerOperators {
+    parent: Rc<CompilerOperatorsInternal>
+}
+
+impl Drop for CompilerOperators {
+    fn drop(&mut self) {
+        self.parent.neutralize();
+    }
+}
+
 impl CompilerOperators {
+    pub fn new(source_file: &str, search_paths: Vec<String>, symbols_extra_info: bool) -> Self {
+        CompilerOperators {
+            parent: Rc::new(CompilerOperatorsInternal::new(source_file, search_paths, symbols_extra_info))
+        }
+    }
+}
+
+impl CompilerOperatorsInternal {
     pub fn new(source_file: &str, search_paths: Vec<String>, symbols_extra_info: bool) -> Self {
         let base_dialect = Rc::new(ChiaDialect::new(NO_NEG_DIV | NO_UNKNOWN_OPS));
         let base_runner = Rc::new(DefaultProgramRunner::new());
-        CompilerOperators {
+        CompilerOperatorsInternal {
             base_dialect: base_dialect.clone(),
             source_file: source_file.to_owned(),
             search_paths,
             symbols_extra_info,
             compile_outcomes: RefCell::new(HashMap::new()),
-            dialect: RefCell::new(base_dialect),
             runner: RefCell::new(base_runner),
             opt_memo: RefCell::new(HashMap::new()),
         }
+    }
+
+    pub fn neutralize(&self) {
+        self.set_runner(Rc::new(DefaultProgramRunner::new()));
     }
 
     fn symbols_extra_info(&self, allocator: &mut Allocator) -> Response {
@@ -79,10 +99,6 @@ impl CompilerOperators {
 
     fn set_runner(&self, runner: Rc<dyn TRunProgram>) {
         self.runner.replace(runner);
-    }
-
-    fn set_dialect(&self, dialect: Rc<dyn Dialect>) {
-        self.dialect.replace(dialect);
     }
 
     fn get_runner(&self) -> Rc<dyn TRunProgram> {
@@ -211,7 +227,7 @@ impl CompilerOperators {
     }
 }
 
-impl Dialect for CompilerOperators {
+impl Dialect for CompilerOperatorsInternal {
     fn val_stack_limit(&self) -> usize {
         10000000
     }
@@ -256,13 +272,19 @@ impl Dialect for CompilerOperators {
     }
 }
 
-impl CompilerOperators {
+impl CompilerOperatorsInternal {
     pub fn get_compiles(&self) -> HashMap<String, String> {
-        return self.compile_outcomes.borrow().clone();
+        self.compile_outcomes.borrow().clone()
     }
 }
 
-impl TRunProgram for CompilerOperators {
+impl CompilerOperators {
+    pub fn get_compiles(&self) -> HashMap<String, String> {
+        self.parent.get_compiles()
+    }
+}
+
+impl TRunProgram for CompilerOperatorsInternal {
     fn run_program(
         &self,
         allocator: &mut Allocator,
@@ -282,6 +304,18 @@ impl TRunProgram for CompilerOperators {
     }
 }
 
+impl TRunProgram for CompilerOperators {
+    fn run_program(
+        &self,
+        allocator: &mut Allocator,
+        program: NodePtr,
+        args: NodePtr,
+        option: Option<RunProgramOption>,
+    ) -> Response {
+        self.parent.run_program(allocator, program, args, option)
+    }
+}
+
 pub fn run_program_for_search_paths(
     source_file: &str,
     search_paths: &[String],
@@ -292,7 +326,6 @@ pub fn run_program_for_search_paths(
         search_paths.to_vec(),
         symbols_extra_info,
     ));
-    ops.set_dialect(ops.clone());
-    ops.set_runner(ops.clone());
+    ops.parent.set_runner(ops.parent.clone());
     ops
 }
