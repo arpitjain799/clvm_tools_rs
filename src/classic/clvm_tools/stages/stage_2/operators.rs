@@ -56,12 +56,12 @@ pub struct CompilerOperators {
     parent: Rc<CompilerOperatorsInternal>,
 }
 
-impl Drop for CompilerOperators {
-    fn drop(&mut self) {
-        self.parent.neutralize();
-    }
-}
-
+// This wrapper object is here to hold a drop trait that untangles CompilerOperatorsInternal.
+// The design of this code requires the lifetime of the compiler object (via Rc<dyn TRunProgram>)
+// to be uncertain from rust's perspective (i'm not given a lifetime parameter for the runnable
+// passed to clvmr, so I chose this way to mitigate the lack of specifiable lifetime as passing
+// down a reference became very hairy.  The downside is that a few objects had become fixed in
+// an Rc cycle.  The drop trait below corrects that.
 impl CompilerOperators {
     pub fn new(source_file: &str, search_paths: Vec<String>, symbols_extra_info: bool) -> Self {
         CompilerOperators {
@@ -71,6 +71,12 @@ impl CompilerOperators {
                 symbols_extra_info,
             )),
         }
+    }
+}
+
+impl Drop for CompilerOperators {
+    fn drop(&mut self) {
+        self.parent.neutralize();
     }
 }
 
