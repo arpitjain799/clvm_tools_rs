@@ -75,7 +75,7 @@ impl CompilerOperatorsInternal {
         let base_dialect = Rc::new(ChiaDialect::new(NO_NEG_DIV | NO_UNKNOWN_OPS));
         let base_runner = Rc::new(DefaultProgramRunner::new());
         CompilerOperatorsInternal {
-            base_dialect: base_dialect.clone(),
+            base_dialect,
             source_file: source_file.to_owned(),
             search_paths,
             symbols_extra_info,
@@ -327,5 +327,5 @@ pub fn run_program_for_search_paths(
         symbols_extra_info,
     ));
     ops.parent.set_runner(ops.parent.clone());
-    ops
-}
+    ops}
+
