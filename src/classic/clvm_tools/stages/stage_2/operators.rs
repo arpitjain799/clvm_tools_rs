@@ -53,7 +53,7 @@ pub struct CompilerOperatorsInternal {
 }
 
 pub struct CompilerOperators {
-    parent: Rc<CompilerOperatorsInternal>
+    parent: Rc<CompilerOperatorsInternal>,
 }
 
 impl Drop for CompilerOperators {
@@ -65,7 +65,11 @@ impl Drop for CompilerOperators {
 impl CompilerOperators {
     pub fn new(source_file: &str, search_paths: Vec<String>, symbols_extra_info: bool) -> Self {
         CompilerOperators {
-            parent: Rc::new(CompilerOperatorsInternal::new(source_file, search_paths, symbols_extra_info))
+            parent: Rc::new(CompilerOperatorsInternal::new(
+                source_file,
+                search_paths,
+                symbols_extra_info,
+            )),
         }
     }
 }
@@ -327,5 +331,5 @@ pub fn run_program_for_search_paths(
         symbols_extra_info,
     ));
     ops.parent.set_runner(ops.parent.clone());
-    ops}
-
+    ops
+}
