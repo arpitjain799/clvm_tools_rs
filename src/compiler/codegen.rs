@@ -428,6 +428,10 @@ fn compile_call(
                             l.clone(),
                             Rc::new(SExp::Integer(l.clone(), i.clone())),
                         )),
+                        BodyForm::Quoted(SExp::Integer(l, i)) => Ok(CompiledCode(
+                            l.clone(),
+                            Rc::new(SExp::Integer(l.clone(), i.clone())),
+                        )),
                         _ => Err(CompileErr(
                             al.clone(),
                             "@ form only accepts integers at present".to_string(),
