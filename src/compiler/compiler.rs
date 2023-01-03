@@ -94,28 +94,31 @@ fn fe_opt(
     opts: Rc<dyn CompilerOpts>,
     compileform: CompileForm,
 ) -> Result<CompileForm, CompileErr> {
+    eprintln!("fe_opt defun {} {}", opts.in_defun(), compileform.to_sexp());
     let mut compiler_helpers = compileform.helpers.clone();
+    let mut optimized_helpers: Vec<HelperForm> = Vec::new();
     let mut used_names = HashSet::new();
 
-    if !opts.in_defun() {
-        for c in compileform.helpers.iter() {
-            used_names.insert(c.name().clone());
-        }
+    for c in compileform.helpers.iter() {
+        used_names.insert(c.name().clone());
+    }
 
-        for helper in (opts
-            .compiler()
-            .map(|c| c.orig_help)
-            .unwrap_or_else(Vec::new))
+    if opts.in_defun() {
+        return Ok(compileform);
+    }
+
+    for helper in (opts
+                   .compiler()
+                   .map(|c| c.orig_help)
+                   .unwrap_or_else(Vec::new))
         .iter()
-        {
-            if !used_names.contains(helper.name()) {
-                compiler_helpers.push(helper.clone());
-            }
+    {
+        if !used_names.contains(helper.name()) {
+            compiler_helpers.push(helper.clone());
         }
     }
 
     let evaluator = Evaluator::new(opts.clone(), runner.clone(), compiler_helpers.clone());
-    let mut optimized_helpers: Vec<HelperForm> = Vec::new();
     for h in compiler_helpers.iter() {
         match h {
             HelperForm::Defun(inline, defun) => {
@@ -146,6 +149,9 @@ fn fe_opt(
             }
         }
     }
+
+    eprintln!("optimized helpers: {}", optimized_helpers.len());
+
     let new_evaluator = Evaluator::new(opts.clone(), runner.clone(), optimized_helpers.clone());
 
     let shrunk = new_evaluator.shrink_bodyform(

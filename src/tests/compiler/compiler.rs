@@ -57,7 +57,10 @@ fn run_string_maybe_opt(
 }
 
 fn run_string(content: &String, args: &String) -> Result<Rc<SExp>, CompileErr> {
-    run_string_maybe_opt(content, args, false)
+    let unopt = run_string_maybe_opt(content, args, false)?;
+    let opt = run_string_maybe_opt(content, args, true)?;
+    assert_eq!(unopt, opt);
+    Ok(opt)
 }
 
 /* // Upcoming support for extra optimization (WIP)

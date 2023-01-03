@@ -17,7 +17,7 @@ use crate::compiler::comptypes::{
 };
 use crate::compiler::frontend::frontend;
 use crate::compiler::runtypes::RunFailure;
-use crate::compiler::sexp::SExp;
+use crate::compiler::sexp::{decode_string, SExp};
 use crate::compiler::srcloc::Srcloc;
 use crate::util::{number_from_u8, u8_from_number, Number};
 
@@ -115,6 +115,7 @@ fn create_argument_captures(
     formed_arguments: &ArgInputs,
     function_arg_spec: Rc<SExp>,
 ) -> Result<(), CompileErr> {
+    eprintln!("create_argument_captures {:?} {}", formed_arguments, function_arg_spec);
     match (formed_arguments, function_arg_spec.borrow()) {
         (_, SExp::Nil(_)) => Ok(()),
         (ArgInputs::Whole(bf), SExp::Cons(l, f, r)) => {
@@ -181,10 +182,12 @@ fn create_argument_captures(
             }
         }
         (ArgInputs::Whole(x), SExp::Atom(_, name)) => {
+            eprintln!("single capture Whole? {}", decode_string(name));
             argument_captures.insert(name.clone(), x.clone());
             Ok(())
         }
         (ArgInputs::Pair(_, _), SExp::Atom(l, name)) => {
+            eprintln!("single capture Pair? {}", decode_string(name));
             argument_captures.insert(
                 name.clone(),
                 get_bodyform_from_arginput(l, formed_arguments),
@@ -225,6 +228,10 @@ fn build_argument_captures(
 
     let mut argument_captures = HashMap::new();
     create_argument_captures(&mut argument_captures, &formed_arguments, args)?;
+
+    eprintln!("argument captures");
+    show_env(&argument_captures);
+
     Ok(argument_captures)
 }
 
@@ -270,18 +277,16 @@ pub fn dequote(l: Srcloc, exp: Rc<BodyForm>) -> Result<Rc<SExp>, CompileErr> {
     }
 }
 
-/*
 fn show_env(env: &HashMap<Vec<u8>, Rc<BodyForm>>) {
     let loc = Srcloc::start(&"*env*".to_string());
     for kv in env.iter() {
-        println!(
+        eprintln!(
             " - {}: {}",
             SExp::Atom(loc.clone(), kv.0.clone()).to_string(),
             kv.1.to_sexp().to_string()
         );
     }
 }
-*/
 
 pub fn first_of_alist(lst: Rc<SExp>) -> Result<Rc<SExp>, CompileErr> {
     match lst.borrow() {
@@ -628,11 +633,23 @@ impl Evaluator {
 
         if call_name == "@".as_bytes() {
             // Synthesize the environment for this function
-            Ok(Rc::new(BodyForm::Quoted(SExp::Cons(
-                l.clone(),
-                Rc::new(SExp::Nil(l)),
-                prog_args,
-            ))))
+            if parts.is_empty() {
+                Err(CompileErr(l.clone(), "@ callable not given a constant".to_string()))
+            } else {
+                let path_sexp =
+                    match parts[1].borrow() {
+                        BodyForm::Value(val) => Ok(val),
+                        BodyForm::Quoted(val) => Ok(val),
+                        _ => Err(CompileErr(l.clone(), "Not a supported argument for @ call".to_string()))
+                    }?;
+                let path =
+                    if let Some(bigint) = path_sexp.to_bigint() {
+                        Ok(bigint)
+                    } else {
+                        Err(CompileErr(l.clone(), "Not a number in @ call".to_string()))
+                    }?;
+                Ok(choose_from_env_by_path(path, Rc::new(BodyForm::Value(SExp::Atom(l.clone(), vec![b'@'])))))
+            }
         } else if call_name == "com".as_bytes() {
             let mut end_of_list = Rc::new(SExp::Cons(
                 l.clone(),
@@ -847,6 +864,10 @@ impl Evaluator {
         only_inline: bool,
     ) -> Result<Rc<BodyForm>, CompileErr> {
         let helper = select_helper(&self.helpers, call_name);
+        eprintln!("call {}", decode_string(&call_name));
+        for h in self.helpers.iter() {
+            eprintln!("- {}", decode_string(h.name()));
+        }
         match helper {
             Some(HelperForm::Defmacro(mac)) => self.invoke_macro_expansion(
                 allocator,
@@ -863,8 +884,13 @@ impl Evaluator {
                     return Ok(body);
                 }
 
+                eprintln!("invoke {} {}", defun.args, defun.body.to_sexp());
+
                 let argument_captures_untranslated =
                     build_argument_captures(&call_loc, arguments_to_convert, defun.args.clone())?;
+
+                eprintln!("argument_captures_untranslated");
+                show_env(&argument_captures_untranslated);
 
                 let mut argument_captures = HashMap::new();
                 // Do this to protect against misalignment
@@ -891,20 +917,22 @@ impl Evaluator {
                     only_inline,
                 )
             }
-            _ => self
-                .invoke_primitive(
-                    allocator,
-                    visited,
-                    l,
-                    call_name,
-                    parts,
-                    body,
-                    prog_args,
-                    arguments_to_convert,
-                    env,
-                    only_inline,
-                )
-                .and_then(|res| self.chase_apply(allocator, visited, res)),
+            _ => {
+                self
+                    .invoke_primitive(
+                        allocator,
+                        visited,
+                        l,
+                        call_name,
+                        parts,
+                        body,
+                        prog_args,
+                        arguments_to_convert,
+                        env,
+                        only_inline,
+                    )
+                    .and_then(|res| self.chase_apply(allocator, visited, res))
+            }
         }
     }
 
@@ -968,15 +996,23 @@ impl Evaluator {
             BodyForm::Quoted(_) => Ok(body.clone()),
             BodyForm::Value(SExp::Atom(l, name)) => {
                 if name == &"@".as_bytes().to_vec() {
-                    let literal_args = synthesize_args(prog_args.clone(), env)?;
-                    self.shrink_bodyform_visited(
-                        allocator,
-                        visited,
-                        prog_args,
-                        env,
-                        literal_args,
-                        only_inline,
-                    )
+                    if env.is_empty() {
+                        eprintln!("(@ 1) for missing env");
+                        Ok(Rc::new(BodyForm::Call(l.clone(), vec![
+                            Rc::new(BodyForm::Value(SExp::Atom(l.clone(), name.clone()))),
+                            Rc::new(BodyForm::Quoted(SExp::Integer(l.clone(), bi_one())))
+                        ])))
+                    } else {
+                        let literal_args = synthesize_args(prog_args.clone(), env)?;
+                        self.shrink_bodyform_visited(
+                            allocator,
+                            visited,
+                            prog_args,
+                            env,
+                            literal_args,
+                            only_inline,
+                        )
+                    }
                 } else {
                     env.get(name)
                         .map(|x| {
@@ -1084,6 +1120,9 @@ impl Evaluator {
         body: Rc<BodyForm>,
         only_inline: bool,
     ) -> Result<Rc<BodyForm>, CompileErr> {
+        eprintln!("shrink bodyform {} {}", prog_args, body.to_sexp());
+        show_env(env);
+        eprintln!("^^");
         self.shrink_bodyform_visited(
             allocator, // Support random prims via clvm_rs
             &mut HashMap::new(),
