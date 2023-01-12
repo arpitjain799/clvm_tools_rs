@@ -398,8 +398,9 @@ fn compile_call(
                 runner.clone(),
                 opts.clone(),
                 compiler,
-                l,
+                l.clone(),
                 &inline,
+                l,
                 &tl,
             ),
 
@@ -1138,6 +1139,7 @@ fn finalize_env_(
                             c,
                             l.clone(),
                             res,
+                            res.args.loc(),
                             &synthesize_args(res.args.clone()),
                         )
                         .map(|x| x.1),
