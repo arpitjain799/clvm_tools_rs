@@ -444,18 +444,17 @@ pub fn fe_opt(
     allocator: &mut Allocator,
     runner: Rc<dyn TRunProgram>,
     opts: Rc<dyn CompilerOpts>,
-    orig_compileform: CompileForm,
+    mut compileform: CompileForm,
 ) -> Result<CompileForm, CompileErr> {
-    // Test binary size exchanging inlines for non-inlines.
-    let compileform = try_shrink_with_deinline(
+    let mut compiler_helpers = compileform.helpers.clone();
+    let mut used_names = HashSet::new();
+
+    compileform = try_shrink_with_deinline(
         allocator,
         runner.clone(),
         opts.clone(),
-        orig_compileform
+        compileform
     )?;
-
-    let mut compiler_helpers = compileform.helpers.clone();
-    let mut used_names = HashSet::new();
 
     if !opts.in_defun() {
         for c in compileform.helpers.iter() {
