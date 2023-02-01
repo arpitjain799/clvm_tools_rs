@@ -989,10 +989,7 @@ fn start_codegen(
                         Some(CONST_EVAL_LIMIT),
                     )
                     .map_err(|r| {
-                        CompileErr(
-                            defc.loc.clone(),
-                            format!("Error evaluating constant: {}", r),
-                        )
+                        CompileErr(defc.loc.clone(), format!("Error evaluating constant: {r}"))
                     })
                     .and_then(|res| {
                         fail_if_present(defc.loc.clone(), &use_compiler.constants, &defc.name, res)

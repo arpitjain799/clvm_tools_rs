@@ -45,7 +45,7 @@ pub fn read_file(
     let full_path = full_path_for_filename(parent_sexp, filename, &search_paths)?;
 
     fs::read(full_path.clone())
-        .map_err(|x| EvalErr(parent_sexp, format!("error reading {}: {:?}", full_path, x)))
+        .map_err(|x| EvalErr(parent_sexp, format!("error reading {full_path}: {x:?}")))
         .map(|data| PresentFile {
             data,
             full_path,

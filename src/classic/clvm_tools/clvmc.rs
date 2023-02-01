@@ -54,7 +54,7 @@ pub fn write_sym_output(
         });
 
         fs::write(path, output).map_err(|_| {
-            format!("failed to write {}", path)
+            format!("failed to write {path}")
         }).map(|_| ())
     }
 }

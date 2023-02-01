@@ -831,7 +831,7 @@ fn make_symbols_name(current_filename: &str, name: &str) -> String {
     let take_start = get_last_path_component(current_filename);
     let take_end = get_last_path_component(name);
 
-    format!("{}_{}.sym", take_start, take_end)
+    format!("{take_start}_{take_end}.sym")
 }
 
 pub fn compile_file(

@@ -66,14 +66,11 @@ fn process_embed(
     let run_to_compile_err = |e| match e {
         RunFailure::RunExn(l, x) => CompileErr(
             l,
-            format!(
-                "failed to convert compiled clvm to expression: throw ({})",
-                x
-            ),
+            format!("failed to convert compiled clvm to expression: throw ({x})"),
         ),
         RunFailure::RunErr(l, e) => CompileErr(
             l,
-            format!("failed to convert compiled clvm to expression: {}", e),
+            format!("failed to convert compiled clvm to expression: {e}"),
         ),
     };
 
@@ -91,7 +88,7 @@ fn process_embed(
             let parsed = parse_sexp(Srcloc::start(&full_name), content.iter().copied())
                 .map_err(|e| CompileErr(e.0, e.1))?;
             if parsed.len() != 1 {
-                return Err(CompileErr(loc, format!("More than one form in {}", fname)));
+                return Err(CompileErr(loc, format!("More than one form in {fname}")));
             }
 
             parsed[0].clone()
@@ -228,7 +225,7 @@ fn process_pp_form(
                         } else {
                             return Err(CompileErr(
                                 body.loc(),
-                                format!("bad include kind in embed-file {}", body)
+                                format!("bad include kind in embed-file {body}")
                             ));
                         }
                     }
