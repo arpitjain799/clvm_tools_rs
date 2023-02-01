@@ -73,7 +73,7 @@ pub fn write_sym_output(
         });
 
         fs::write(path, output).map_err(|_| {
-            format!("failed to write {}", path)
+            format!("failed to write {path}")
         }).map(|_| ())
     }
 }
@@ -210,7 +210,7 @@ pub fn compile_clvm(
 
     if compile {
         let text = fs::read_to_string(input_path)
-            .map_err(|x| format!("error reading {}: {:?}", input_path, x))?;
+            .map_err(|x| format!("error reading {input_path}: {x:?}"))?;
 
         compile_clvm_inner(
             &mut allocator,
@@ -243,10 +243,7 @@ pub fn compile_clvm(
         // Make the contents appear atomically so that other test processes
         // won't mistake an empty file for intended output.
         let mut temp_output_file = NamedTempFile::new_in(output_dir).map_err(|e| {
-            format!(
-                "error creating temporary compiler output for {}: {:?}",
-                input_path, e
-            )
+            format!("error creating temporary compiler output for {input_path}: {e:?}")
         })?;
 
         temp_output_file
@@ -254,10 +251,7 @@ pub fn compile_clvm(
             .map_err(|_| format!("failed to write to {:?}", temp_output_file.path()))?;
 
         temp_output_file.persist(output_path).map_err(|e| {
-            format!(
-                "error persisting temporary compiler output {}: {:?}",
-                output_path, e
-            )
+            format!("error persisting temporary compiler output {output_path}: {e:?}")
         })?;
     }
 
