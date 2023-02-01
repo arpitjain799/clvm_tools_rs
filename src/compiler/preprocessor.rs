@@ -244,7 +244,7 @@ fn process_pp_form(
                         if inc == b"include" {
                             return Err(CompileErr(
                                 body.loc(),
-                                format!("bad tail in include {}", body),
+                                format!("bad tail in include {body}"),
                             ));
                         }
                     }

@@ -18,7 +18,7 @@ use crate::compiler::comptypes::{
     InlineFunction, LetData, LetFormKind, PrimaryCodegen,
 };
 use crate::compiler::debug::{build_swap_table_mut, relabel};
-use crate::compiler::evaluate::Evaluator;
+use crate::compiler::evaluate::{Evaluator, EVAL_STACK_LIMIT};
 use crate::compiler::frontend::compile_bodyform;
 use crate::compiler::gensym::gensym;
 use crate::compiler::inline::{replace_in_inline, synthesize_args};
@@ -28,6 +28,9 @@ use crate::compiler::runtypes::RunFailure;
 use crate::compiler::sexp::{decode_string, SExp};
 use crate::compiler::srcloc::Srcloc;
 use crate::util::u8_from_number;
+
+const MACRO_TIME_LIMIT: usize = 1000000;
+const CONST_EVAL_LIMIT: usize = 1000000;
 
 /* As in the python code, produce a pair whose (thanks richard)
  *
@@ -245,10 +248,7 @@ pub fn get_callable(
             }
         }
         SExp::Integer(_, v) => Ok(Callable::CallPrim(l.clone(), SExp::Integer(l, v.clone()))),
-        _ => Err(CompileErr(
-            atom.loc(),
-            format!("can't call object {}", atom),
-        )),
+        _ => Err(CompileErr(atom.loc(), format!("can't call object {atom}"))),
     }
 }
 
@@ -272,10 +272,11 @@ pub fn process_macro_call(
         opts.prim_map(),
         code,
         Rc::new(args_to_macro),
+        Some(MACRO_TIME_LIMIT),
     )
     .map_err(|e| match e {
-        RunFailure::RunExn(ml, x) => CompileErr(l, format!("macro aborted at {} with {}", ml, x)),
-        RunFailure::RunErr(rl, e) => CompileErr(l, format!("error executing macro: {} {}", rl, e)),
+        RunFailure::RunExn(ml, x) => CompileErr(l, format!("macro aborted at {ml} with {x}")),
+        RunFailure::RunErr(rl, e) => CompileErr(l, format!("error executing macro: {rl} {e}")),
     })
     .and_then(|v| {
         let relabeled_expr = relabel(&swap_table, &v);
@@ -985,6 +986,7 @@ fn start_codegen(
                         opts.prim_map(),
                         Rc::new(code),
                         Rc::new(SExp::Nil(defc.loc.clone())),
+                        Some(CONST_EVAL_LIMIT),
                     )
                     .map_err(|r| {
                         CompileErr(
@@ -1009,6 +1011,7 @@ fn start_codegen(
                         &HashMap::new(),
                         defc.body.clone(),
                         false,
+                        Some(EVAL_STACK_LIMIT),
                     )?;
                     if let BodyForm::Quoted(q) = constant_result.borrow() {
                         use_compiler.add_constant(
