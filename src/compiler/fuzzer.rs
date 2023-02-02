@@ -620,3 +620,157 @@ impl Distribution<CollectProgramStructure> for Standard {
         cps
     }
 }
+
+pub enum SexpContent<T> {
+    SExpTypeAtom(Vec<u8>)
+    SexpTypeCons(T, T)
+}
+
+pub trait SexpBuilder<T> {
+    fn destructure(&mut self, value: T) -> SexpContent<T>;
+    fn make_cons(&mut self, some: T, other: T) -> T;
+    fn make_nil(&mut self) -> T;
+    fn make_atom(&mut self, bytes: &[u8]) -> T;
+}
+
+// Produce arguments for an arbitrary function given its argument form.
+// Build values until a 0 word, then use a selector for each atom argument.
+#[derive(Default)]
+pub struct CollectArgumentStructure<T> {
+    choices: Vec<u16>,
+    atoms: Vec<u16>,
+    conses: Vec<u16>,
+    lists: Vec<u16>,
+    choice: usize
+}
+
+enum AtomPath {
+    Nil,
+    AndByte(u8, usize)
+}
+
+enum ConsContent {
+    WithAtom(usize),
+    WithCons(usize)
+}
+
+enum ConsPath {
+    Nil,
+    Consed(ConsContent, ConsContent)
+}
+
+enum ListContent {
+    WithAtom(usize),
+    WithCons(usize),
+    WithList(usize)
+}
+
+enum ListPath {
+    Nil,
+    Enlisted(ListContent, ListContent)
+}
+
+enum RevisitStack {
+    RevisitForList(T, u16),
+    RevisitForCons(T, u16),
+    RevisitForAtom(Vec<AtomPath>)
+}
+
+impl<T> CollectArgumentStructure<T> {
+    fn get_choice(&mut self) -> Option<u16> {
+        if self.choices.is_empty() {
+            return None;
+        }
+
+        let this_choice = self.choices;
+        self.choices += 1;
+        Some(
+    }
+
+    pub fn to_sexp(&mut self, builder: &mut dyn SexpBuilder<T>, prototype: T) -> T {
+        // Make atoms.
+        let mut atoms = vec![AtomPath::Nil]; // Start with a nil atom.
+        for a in self.atoms.iter() {
+            let this_byte = (a & 0xff) as u8;
+            let choice = self.get_choice(&atoms).unwrap_or(0);
+            atoms.push(AtomPath::AndByte(this_byte, choice));
+        }
+
+        // Make conses.
+        let mut conses = vec![ConsPath::Nil]; // Start with a nil.
+        let choose_cons_input = |choice| {
+            let choice_type = choice & 3;
+            if choice_type == 3 {
+                ConsContent::WithCons((choice >> 2) % conses.len())
+            } else {
+                ConsContent::WithAtom((choice >> 2) % atoms.len())
+            };
+        };
+        for first in self.conses.iter() {
+            let first_item = choose_cons_input(first);
+            let second_item = choose_cons_input(self.get_choice());
+            conses.push(ConsPath::Consed(first_item, second_item));
+        }
+
+        let choose_list_input = |choice| {
+            let choice_type = choice & 3;
+            if choice_type == 3 {
+                ListContent::WithList((choice >> 2) % lists.len())
+            } else if choice_type == 2 {
+                ListContent::WithCons((choice >> 2) % conses.len())
+            } else {
+                ListContent::WithAtom((choice >> 2) % atoms.len())
+            }
+        };
+        let mut lists = vec![ListPath::Nil]; // Start with an empty list
+        for item in self.lists.iter() {
+            let head = choose_list_input(self.get_choice());
+            let tail = choose_list_input(self.get_choice());
+            lists.push(ListPath::Enlisted(head, tail));
+        }
+
+        let mut do_stack = vec![prototype];
+        loop {
+            
+        }
+    }
+}
+
+// CollectArgumentStructure becomes populated by a constrained set of bits.
+// Use to_program to generate a CompileForm.
+impl<T,B,R> CollectArgumentStructure<T,B,R> {
+    fn random<R: Rng + ?Sized>(&self, rng: &mut R, builder: B) -> CollectProgramStructure<T> where B: SexpBuilder<T> {
+        let mut iters = 0;
+        let mut cas: CollectArgumentStructure = Default::default();
+        loop {
+            let input_32: u32 = rng.gen();
+
+            // Stop if zero.
+            if input_32 == 0 {
+                break;
+            }
+
+            iters += 1;
+            if iters > MAX_FORMS_CPS {
+                break;
+            }
+
+            let inputs = [(input_32 >> 16) as u16, ((input_32) & 0xffff) as u16];
+            for input in inputs.iter() {
+                let kind = input & 3;
+                let value = input >> 2;
+                if kind == 0 {
+                    choices.push(value);
+                } else if kind == 1{
+                    atoms.push(value);
+                } else if kind == 2 {
+                    lists.push(value);
+                } else {
+                    conses.push(value);
+                }
+            }
+        }
+
+        cas
+    }
+}
