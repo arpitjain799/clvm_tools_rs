@@ -283,8 +283,7 @@ pub fn do_strict_checks(
     undefined_variable: bool,
 ) -> Result<(bool, String), CompileErr> {
     let mut output: Stream = Stream::new(None);
-    let pre_forms = parse_sexp(Srcloc::start(&opts.filename()), input_program.bytes())
-        .map_err(|e| CompileErr(e.0, e.1))?;
+    let pre_forms = parse_sexp(Srcloc::start(&opts.filename()), input_program.bytes())?;
     let g = frontend(opts.clone(), &pre_forms)?;
 
     if unused_variable {

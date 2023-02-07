@@ -10,7 +10,7 @@ use rand::Rng;
 use rand_chacha::ChaChaRng;
 
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -21,8 +21,10 @@ use crate::classic::clvm::__type_compatibility__::{bi_one, bi_zero, Stream};
 use crate::classic::clvm_tools::binutils::disassemble;
 use crate::classic::clvm_tools::cmds::launch_tool;
 use crate::classic::clvm_tools::node_path::NodePath;
+
 use crate::compiler::clvm::convert_to_clvm_rs;
 use crate::compiler::sexp;
+use crate::compiler::sexp::decode_string;
 use crate::util::{number_from_u8, Number};
 
 const NUM_GEN_ATOMS: usize = 16;
@@ -279,6 +281,257 @@ fn test_forms_of_destructuring_allowed_by_classic_1() {
         .trim(),
         "(i 2 (q . 2) (q . 3))"
     );
+}
+
+fn run_dependencies(filename: &str) -> HashSet<String> {
+    let result_text = do_basic_run(&vec![
+        "run".to_string(),
+        "-i".to_string(),
+        "resources/tests".to_string(),
+        "-M".to_string(),
+        filename.to_owned(),
+    ])
+    .trim()
+    .to_string();
+
+    eprintln!("run_dependencies:\n{}", result_text);
+
+    let mut dep_set = HashSet::new();
+    for l in result_text.lines() {
+        if let Some(suffix_start) = l.find("resources/tests") {
+            let copied_suffix: Vec<u8> = l.as_bytes().iter().skip(suffix_start).copied().collect();
+            dep_set.insert(decode_string(&copied_suffix));
+        } else {
+            panic!("file {} isn't expected", l);
+        }
+    }
+
+    dep_set
+}
+
+#[test]
+fn test_get_dependencies_1() {
+    let dep_set = run_dependencies("resources/tests/singleton_top_layer.clvm");
+
+    eprintln!("dep_set {dep_set:?}");
+
+    let mut expect_set = HashSet::new();
+    expect_set.insert("resources/tests/condition_codes.clvm".to_owned());
+    expect_set.insert("resources/tests/curry-and-treehash.clinc".to_owned());
+    expect_set.insert("resources/tests/singleton_truths.clib".to_owned());
+
+    assert_eq!(dep_set, expect_set);
+}
+
+#[test]
+fn test_treehash_constant_embedded_classic() {
+    let result_text = do_basic_run(&vec![
+        "run".to_string(),
+        "-i".to_string(),
+        "resources/tests".to_string(),
+        indoc! {"
+            (mod ()
+              (include sha256tree.clib)
+              (defconst H (+ G (sha256tree (q 2 3 4))))
+              (defconst G 1)
+              H
+              )
+        "}
+        .to_string(),
+    ])
+    .trim()
+    .to_string();
+    assert_eq!(
+        result_text,
+        "(q . 0x6fcb06b1fe29d132bb37f3a21b86d7cf03d636bf6230aa206486bef5e68f9874)"
+    );
+    let result_hash = do_basic_brun(&vec!["brun".to_string(), result_text, "()".to_string()])
+        .trim()
+        .to_string();
+    assert_eq!(
+        result_hash,
+        "0x6fcb06b1fe29d132bb37f3a21b86d7cf03d636bf6230aa206486bef5e68f9874"
+    );
+}
+
+#[test]
+fn test_treehash_constant_embedded_fancy_order() {
+    let result_text = do_basic_run(&vec![
+        "run".to_string(),
+        "-i".to_string(),
+        "resources/tests".to_string(),
+        indoc! {"
+            (mod ()
+              (include sha256tree.clib)
+              (defconst C 18)
+              (defconst H (+ C G (sha256tree (q 2 3 4))))
+              (defconst G (+ B A))
+              (defconst A 9)
+              (defconst B (* A A))
+              H
+              )
+        "}
+        .to_string(),
+    ])
+    .trim()
+    .to_string();
+    assert_eq!(
+        result_text,
+        "(q . 0x6fcb06b1fe29d132bb37f3a21b86d7cf03d636bf6230aa206486bef5e68f98df)"
+    );
+    let result_hash = do_basic_brun(&vec!["brun".to_string(), result_text, "()".to_string()])
+        .trim()
+        .to_string();
+    assert_eq!(
+        result_hash,
+        "0x6fcb06b1fe29d132bb37f3a21b86d7cf03d636bf6230aa206486bef5e68f98df"
+    );
+}
+
+#[test]
+fn test_treehash_constant_embedded_fancy_order_from_fun() {
+    let result_text = do_basic_run(&vec![
+        "run".to_string(),
+        "-i".to_string(),
+        "resources/tests".to_string(),
+        indoc! {"
+            (mod ()
+              (include sha256tree.clib)
+              (defconst C 18)
+              (defconst H (+ C G (sha256tree (q 2 3 4))))
+              (defconst G (+ B A))
+              (defconst A 9)
+              (defconst B (* A A))
+              (defun F (X) (+ X H))
+              (F 1)
+              )
+        "}
+        .to_string(),
+    ])
+    .trim()
+    .to_string();
+    assert_eq!(
+        result_text,
+        "(q . 0x6fcb06b1fe29d132bb37f3a21b86d7cf03d636bf6230aa206486bef5e68f98e0)"
+    );
+    let result_hash = do_basic_brun(&vec!["brun".to_string(), result_text, "()".to_string()])
+        .trim()
+        .to_string();
+    assert_eq!(
+        result_hash,
+        "0x6fcb06b1fe29d132bb37f3a21b86d7cf03d636bf6230aa206486bef5e68f98e0"
+    );
+}
+
+#[test]
+fn test_treehash_constant_embedded_classic_loop() {
+    let result_text = do_basic_run(&vec![
+        "run".to_string(),
+        "-i".to_string(),
+        "resources/tests".to_string(),
+        indoc! {"
+            (mod ()
+              (include sha256tree.clib)
+              (defconst H (+ G (sha256tree (q 2 3 4))))
+              (defconst G (logand H 1))
+              H
+              )
+        "}
+        .to_string(),
+    ])
+    .trim()
+    .to_string();
+    assert!(result_text.starts_with("FAIL"));
+    assert!(result_text.contains("got stuck untangling defconst dependencies"));
+}
+
+#[test]
+fn test_treehash_constant_embedded_modern() {
+    let result_text = do_basic_run(&vec![
+        "run".to_string(),
+        "-i".to_string(),
+        "resources/tests".to_string(),
+        indoc! {"
+            (mod ()
+              (include *standard-cl-21*)
+              (include sha256tree.clib)
+              (defconst H (+ G (sha256tree (q 2 3 4))))
+              (defconst G 1)
+              H
+              )
+        "}
+        .to_string(),
+    ])
+    .trim()
+    .to_string();
+    assert_eq!(
+        result_text,
+        "(2 (1 1 . 50565442356047746631413349885570059132562040184787699607120092457326103992436) (4 (1 2 (1 2 (3 (7 5) (1 2 (1 11 (1 . 2) (2 2 (4 2 (4 (5 5) ()))) (2 2 (4 2 (4 (6 5) ())))) 1) (1 2 (1 11 (1 . 1) 5) 1)) 1) 1) 1))"
+    );
+    let result_hash = do_basic_brun(&vec!["brun".to_string(), result_text, "()".to_string()])
+        .trim()
+        .to_string();
+    assert_eq!(
+        result_hash,
+        "0x6fcb06b1fe29d132bb37f3a21b86d7cf03d636bf6230aa206486bef5e68f9874"
+    );
+}
+
+#[test]
+fn test_treehash_constant_embedded_modern_fun() {
+    let result_text = do_basic_run(&vec![
+        "run".to_string(),
+        "-i".to_string(),
+        "resources/tests".to_string(),
+        indoc! {"
+            (mod ()
+              (include *standard-cl-21*)
+              (include sha256tree.clib)
+              (defconst H (+ G (sha256tree (q 2 3 4))))
+              (defconst G 1)
+              (defun F (X) (+ X H))
+              (F 1)
+              )
+        "}
+        .to_string(),
+    ])
+    .trim()
+    .to_string();
+    assert_eq!(
+        result_text,
+        "(2 (1 2 6 (4 2 (4 (1 . 1) ()))) (4 (1 (2 (1 2 (3 (7 5) (1 2 (1 11 (1 . 2) (2 4 (4 2 (4 (5 5) ()))) (2 4 (4 2 (4 (6 5) ())))) 1) (1 2 (1 11 (1 . 1) 5) 1)) 1) 1) 2 (1 16 5 (1 . 50565442356047746631413349885570059132562040184787699607120092457326103992436)) 1) 1))".to_string()
+    );
+    let result_hash = do_basic_brun(&vec!["brun".to_string(), result_text, "()".to_string()])
+        .trim()
+        .to_string();
+    assert_eq!(
+        result_hash,
+        "0x6fcb06b1fe29d132bb37f3a21b86d7cf03d636bf6230aa206486bef5e68f9875"
+    );
+}
+
+#[test]
+fn test_treehash_constant_embedded_modern_loop() {
+    let result_text = do_basic_run(&vec![
+        "run".to_string(),
+        "-i".to_string(),
+        "resources/tests".to_string(),
+        indoc! {"
+            (mod ()
+              (include *standard-cl-21*)
+              (include sha256tree.clib)
+              (defconst H (+ G (sha256tree (q 2 3 4))))
+              (defconst G (logand H 1))
+              H
+              )
+        "}
+        .to_string(),
+    ])
+    .trim()
+    .to_string();
+    eprintln!("{result_text}");
+    assert!(result_text.starts_with("*command*"));
+    assert!(result_text.contains("stack limit exceeded"));
 }
 
 #[test]
