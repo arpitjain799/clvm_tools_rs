@@ -1,12 +1,24 @@
-use crate::compiler::comptypes::CompileForm;
-use crate::compiler::fuzzer::CollectProgramStructure;
-use crate::fuzzing::fuzzrng::FuzzPseudoRng;
 use rand::prelude::*;
+use std::rc::Rc;
+
+use crate::compiler::comptypes::{CompileErr, CompileForm};
+use crate::compiler::fuzzer::{CollectArgumentStructure, CollectProgramStructure, ModernSexpBuilder};
+use crate::compiler::sexp::{parse_sexp, SExp};
+use crate::compiler::srcloc::Srcloc;
+use crate::fuzzing::fuzzrng::FuzzPseudoRng;
 
 fn produce_fuzz_program(b: &[u8]) -> CompileForm {
     let mut rng = FuzzPseudoRng::new(b);
     let mut cps: CollectProgramStructure = rng.gen();
     cps.to_program()
+}
+
+fn produce_fuzz_args(b: &[u8], prototype: Rc<SExp>) -> Result<Rc<SExp>,CompileErr> {
+    let mut rng = FuzzPseudoRng::new(b);
+    let mut sexp_builder: ModernSexpBuilder = Default::default();
+    let mut cps: CollectArgumentStructure = rng.gen();
+    eprintln!("cps {cps:?}");
+    cps.to_sexp(&mut sexp_builder, prototype)
 }
 
 #[test]
@@ -43,4 +55,27 @@ fn test_simple_fuzzer_output_3() {
     ];
     let cf = produce_fuzz_program(input);
     assert_eq!(cf.to_sexp().to_string(), "(A (18 (let ((B A) (D A)) A) A))");
+}
+
+#[test]
+fn test_argument_structure_builder_smoke() {
+    let input: &[u8] = &[];
+    let parsed = parse_sexp(Srcloc::start("*args*"), "A".bytes()).expect("should parse");
+    assert_eq!(
+        produce_fuzz_args(input, parsed[0].clone()).expect("should work").to_string(),
+        "()"
+    );
+}
+
+#[test]
+fn test_argument_structure_builder_single_atom() {
+    let input: &[u8] = &[0x85,0x01,0x04];
+    let parsed = parse_sexp(Srcloc::start("*args*"), "A".bytes()).expect("should parse");
+    let res = produce_fuzz_args(input, parsed[0].clone()).expect("should work").to_string();
+
+    todo!();
+    assert_eq!(
+        res,
+        "()"
+    );
 }

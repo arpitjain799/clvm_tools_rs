@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use crate::classic::clvm::__type_compatibility__::bi_one;
 use crate::compiler::comptypes::{
-    Binding, BodyForm, CompileForm, DefconstData, DefmacData, DefunData, HelperForm, LetData,
+    Binding, BodyForm, CompileErr, CompileForm, ConstantKind, DefconstData, DefmacData, DefunData, HelperForm, LetData,
     LetFormKind,
 };
 use crate::compiler::sexp::SExp;
@@ -456,6 +456,7 @@ impl CollectProgramStructure {
                 loc: loc.clone(),
                 name: helper_name,
                 kw: None,
+                kind: ConstantKind::Simple,
                 nl: loc.clone(),
                 body: body,
             }),
@@ -621,22 +622,63 @@ impl Distribution<CollectProgramStructure> for Standard {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum SexpContent<T> {
-    SExpTypeAtom(Vec<u8>)
+    SexpTypeAtom(Vec<u8>),
     SexpTypeCons(T, T)
 }
 
-pub trait SexpBuilder<T> {
-    fn destructure(&mut self, value: T) -> SexpContent<T>;
-    fn make_cons(&mut self, some: T, other: T) -> T;
+pub trait SexpBuilder<T,E> {
+    fn destructure(&mut self, value: T) -> Result<SexpContent<T>, E>;
+    fn make_cons(&mut self, some: T, other: T) -> Result<T, E>;
     fn make_nil(&mut self) -> T;
-    fn make_atom(&mut self, bytes: &[u8]) -> T;
+    fn make_atom(&mut self, bytes: &[u8]) -> Result<T, E>;
+}
+
+pub struct ModernSexpBuilder {
+    loc: Srcloc,
+    nil: Rc<SExp>
+}
+
+impl Default for ModernSexpBuilder {
+    fn default() -> Self {
+        let loc = Srcloc::start("*generator*");
+        ModernSexpBuilder {
+            loc: loc.clone(),
+            nil: Rc::new(SExp::Nil(loc))
+        }
+    }
+}
+
+impl SexpBuilder<Rc<SExp>, CompileErr> for ModernSexpBuilder {
+    fn destructure(&mut self, value: Rc<SExp>) -> Result<SexpContent<Rc<SExp>>, CompileErr> {
+        match value.borrow() {
+            SExp::Cons(_,a,b) => {
+                Ok(SexpContent::SexpTypeCons(a.clone(), b.clone()))
+            }
+            SExp::Atom(_,n) => {
+                Ok(SexpContent::SexpTypeAtom(n.to_vec()))
+            }
+            _ => {
+                Ok(SexpContent::SexpTypeAtom(vec![]))
+            }
+        }
+    }
+    fn make_cons(&mut self, some: Rc<SExp>, other: Rc<SExp>) -> Result<Rc<SExp>, CompileErr> {
+        Ok(Rc::new(SExp::Cons(self.loc.clone(), some, other)))
+    }
+    fn make_nil(&mut self) -> Rc<SExp> {
+        self.nil.clone()
+    }
+    fn make_atom(&mut self, data: &[u8]) -> Result<Rc<SExp>, CompileErr> {
+        Ok(Rc::new(SExp::Atom(self.loc.clone(), data.to_vec())))
+    }
 }
 
 // Produce arguments for an arbitrary function given its argument form.
 // Build values until a 0 word, then use a selector for each atom argument.
-#[derive(Default)]
-pub struct CollectArgumentStructure<T> {
+#[derive(Debug, Default, Clone)]
+pub struct CollectArgumentStructure {
     choices: Vec<u16>,
     atoms: Vec<u16>,
     conses: Vec<u16>,
@@ -644,104 +686,246 @@ pub struct CollectArgumentStructure<T> {
     choice: usize
 }
 
+#[derive(Default, Clone)]
 enum AtomPath {
+    #[default]
     Nil,
     AndByte(u8, usize)
 }
 
+#[derive(Debug, Clone)]
 enum ConsContent {
-    WithAtom(usize),
-    WithCons(usize)
-}
-
-enum ConsPath {
-    Nil,
-    Consed(ConsContent, ConsContent)
-}
-
-enum ListContent {
     WithAtom(usize),
     WithCons(usize),
     WithList(usize)
 }
 
-enum ListPath {
+#[derive(Default, Debug, Clone)]
+enum ConsPath {
+    #[default]
     Nil,
-    Enlisted(ListContent, ListContent)
+    Consed(ConsContent, ConsContent)
 }
 
-enum RevisitStack {
-    RevisitForList(T, u16),
-    RevisitForCons(T, u16),
-    RevisitForAtom(Vec<AtomPath>)
+#[derive(Default, Debug, Clone)]
+enum ListPath {
+    #[default]
+    Nil,
+    Enlisted(ConsContent, u16)
 }
 
-impl<T> CollectArgumentStructure<T> {
+#[derive(Debug, Clone)]
+enum RevisitStack<T> {
+    GenerateFor(Option<T>),
+    GeneratePair,
+    Choice(ConsContent),
+}
+
+impl CollectArgumentStructure {
+    fn choose_with_default<T>(&self, lst: &[T], choice: u16, default: T) -> T
+    where
+        T: Clone,
+    {
+        if lst.is_empty() {
+            return default;
+        }
+
+        lst[(choice as usize) % lst.len()].clone()
+    }
+
     fn get_choice(&mut self) -> Option<u16> {
         if self.choices.is_empty() {
             return None;
         }
 
-        let this_choice = self.choices;
-        self.choices += 1;
-        Some(
+        let this_choice = self.choices[self.choice % self.choices.len()];
+        self.choice += 1;
+        Some(this_choice)
     }
 
-    pub fn to_sexp(&mut self, builder: &mut dyn SexpBuilder<T>, prototype: T) -> T {
+    fn make_choice<T, E>(
+        &mut self,
+        do_stack: &mut Vec<RevisitStack<T>>,
+        done: &mut Vec<T>,
+        builder: &mut dyn SexpBuilder<T,E>,
+        lists: &[ListPath],
+        conses: &[ConsPath],
+        atoms: &[AtomPath],
+        raw_choice: u16,
+        level: u16
+    ) -> Result<(),E> {
+        let kind = raw_choice & 3;
+        let choice = raw_choice >> 2;
+        if kind > 2 && level >= kind {
+            let mut use_list = choice >> 2;
+            done.push(builder.make_nil());
+            while let ListPath::Enlisted(a,b) =
+                self.choose_with_default(&lists, use_list, ListPath::Nil)
+            {
+                use_list = b;
+                do_stack.push(RevisitStack::GeneratePair);
+                do_stack.push(RevisitStack::Choice(a));
+            }
+        } else if kind > 1 && level >= kind {
+            if let ConsPath::Consed(a,b) =
+                self.choose_with_default(&conses, choice, ConsPath::Nil)
+            {
+                do_stack.push(RevisitStack::GeneratePair);
+                do_stack.push(RevisitStack::Choice(a));
+                do_stack.push(RevisitStack::Choice(b));
+            } else {
+                done.push(builder.make_nil());
+            }
+        } else {
+            let mut atom_bytes = Vec::new();
+            let mut use_atom = (choice >> 2) as u16;
+            while let AtomPath::AndByte(b, next) =
+                self.choose_with_default(&atoms, use_atom, AtomPath::Nil)
+            {
+                use_atom = next as u16;
+                atom_bytes.push(b);
+            }
+            done.push(builder.make_atom(&atom_bytes)?);
+        }
+        Ok(())
+    }
+
+    pub fn to_sexp<T,E>(&mut self, builder: &mut dyn SexpBuilder<T,E>, prototype: T) -> Result<T,E> {
         // Make atoms.
         let mut atoms = vec![AtomPath::Nil]; // Start with a nil atom.
+        let mut conses = vec![ConsPath::Nil]; // Start with a nil.
+        let mut lists = vec![ListPath::Nil]; // Start with an empty list
+
+        let choose_agg_input = |choice_u16: u16, level: usize| {
+            let choice = choice_u16 as usize;
+            let choice_type = choice & 3;
+            let choice_value = choice >> 2;
+            if level == 3 && choice_type == 3 {
+                ConsContent::WithList(choice_value)
+            } else if level > 1 && choice_type > 1 {
+                ConsContent::WithCons(choice_value)
+            } else {
+                ConsContent::WithAtom(choice_value)
+            }
+        };
+
         for a in self.atoms.iter() {
             let this_byte = (a & 0xff) as u8;
-            let choice = self.get_choice(&atoms).unwrap_or(0);
-            atoms.push(AtomPath::AndByte(this_byte, choice));
+            atoms.push(AtomPath::AndByte(this_byte, (a >> 8) as usize));
         }
 
         // Make conses.
-        let mut conses = vec![ConsPath::Nil]; // Start with a nil.
-        let choose_cons_input = |choice| {
-            let choice_type = choice & 3;
-            if choice_type == 3 {
-                ConsContent::WithCons((choice >> 2) % conses.len())
-            } else {
-                ConsContent::WithAtom((choice >> 2) % atoms.len())
-            };
-        };
-        for first in self.conses.iter() {
-            let first_item = choose_cons_input(first);
-            let second_item = choose_cons_input(self.get_choice());
+        for first in self.conses.clone().iter() {
+            let first_item = choose_agg_input(*first, 2);
+            let second_item = choose_agg_input(self.get_choice().unwrap_or(0), 2);
             conses.push(ConsPath::Consed(first_item, second_item));
         }
 
-        let choose_list_input = |choice| {
-            let choice_type = choice & 3;
-            if choice_type == 3 {
-                ListContent::WithList((choice >> 2) % lists.len())
-            } else if choice_type == 2 {
-                ListContent::WithCons((choice >> 2) % conses.len())
-            } else {
-                ListContent::WithAtom((choice >> 2) % atoms.len())
-            }
-        };
-        let mut lists = vec![ListPath::Nil]; // Start with an empty list
-        for item in self.lists.iter() {
-            let head = choose_list_input(self.get_choice());
-            let tail = choose_list_input(self.get_choice());
-            lists.push(ListPath::Enlisted(head, tail));
+        for item in self.lists.clone().iter() {
+            let head = choose_agg_input(self.get_choice().unwrap_or(0), 3);
+            lists.push(ListPath::Enlisted(head, *item));
         }
 
-        let mut do_stack = vec![prototype];
-        loop {
-            
+        let mut done = vec![];
+        let mut do_stack = vec![RevisitStack::GenerateFor(Some(prototype))];
+
+        while let Some(perform) = do_stack.pop() {
+            match perform {
+                RevisitStack::GenerateFor(None) => {
+                    let choice = self.get_choice().unwrap_or(0);
+                    self.make_choice(
+                        &mut do_stack,
+                        &mut done,
+                        builder,
+                        &lists,
+                        &conses,
+                        &atoms,
+                        choice,
+                        3
+                    )?;
+                }
+                RevisitStack::GenerateFor(Some(v)) => {
+                    match builder.destructure(v)? {
+                        SexpContent::SexpTypeAtom(a) => {
+                            if a.is_empty() {
+                                done.push(builder.make_nil());
+                                continue;
+                            }
+
+                            let choice = self.get_choice().unwrap_or(0);
+                            self.make_choice(
+                                &mut do_stack,
+                                &mut done,
+                                builder,
+                                &lists,
+                                &conses,
+                                &atoms,
+                                choice,
+                                3
+                            )?;
+                        }
+                        SexpContent::SexpTypeCons(a,b) => {
+                            do_stack.push(RevisitStack::GeneratePair);
+                            do_stack.push(RevisitStack::GenerateFor(Some(b)));
+                            do_stack.push(RevisitStack::GenerateFor(Some(a)));
+                        }
+                    }
+                }
+                RevisitStack::GeneratePair => {
+                    let a = done.pop().unwrap_or_else(|| builder.make_nil());
+                    let b = done.pop().unwrap_or_else(|| builder.make_nil());
+                    done.push(builder.make_cons(a,b)?);
+                }
+                RevisitStack::Choice(ConsContent::WithAtom(c)) => {
+                    self.make_choice(
+                        &mut do_stack,
+                        &mut done,
+                        builder,
+                        &lists,
+                        &conses,
+                        &atoms,
+                        c as u16,
+                        1
+                    )?;
+                }
+                RevisitStack::Choice(ConsContent::WithCons(c)) => {
+                    self.make_choice(
+                        &mut do_stack,
+                        &mut done,
+                        builder,
+                        &lists,
+                        &conses,
+                        &atoms,
+                        c as u16,
+                        2
+                    )?;
+                }
+                RevisitStack::Choice(ConsContent::WithList(c)) => {
+                    self.make_choice(
+                        &mut do_stack,
+                        &mut done,
+                        builder,
+                        &lists,
+                        &conses,
+                        &atoms,
+                        c as u16,
+                        3
+                    )?;
+                }
+            }
         }
+
+        Ok(done.pop().unwrap_or_else(|| builder.make_nil()))
     }
 }
 
 // CollectArgumentStructure becomes populated by a constrained set of bits.
 // Use to_program to generate a CompileForm.
-impl<T,B,R> CollectArgumentStructure<T,B,R> {
-    fn random<R: Rng + ?Sized>(&self, rng: &mut R, builder: B) -> CollectProgramStructure<T> where B: SexpBuilder<T> {
+impl Distribution<CollectArgumentStructure> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> CollectArgumentStructure {
         let mut iters = 0;
         let mut cas: CollectArgumentStructure = Default::default();
+
         loop {
             let input_32: u32 = rng.gen();
 
@@ -759,14 +943,15 @@ impl<T,B,R> CollectArgumentStructure<T,B,R> {
             for input in inputs.iter() {
                 let kind = input & 3;
                 let value = input >> 2;
+                eprintln!("kind {kind} value {value}");
                 if kind == 0 {
-                    choices.push(value);
+                    cas.choices.push(value);
                 } else if kind == 1{
-                    atoms.push(value);
+                    cas.atoms.push(value);
                 } else if kind == 2 {
-                    lists.push(value);
+                    cas.lists.push(value);
                 } else {
-                    conses.push(value);
+                    cas.conses.push(value);
                 }
             }
         }
