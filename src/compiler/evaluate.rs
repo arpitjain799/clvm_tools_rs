@@ -517,6 +517,14 @@ fn is_cons_atom(h: Rc<SExp>) -> bool {
     match_atom_to_prim(vec![b'c'], 4, h)
 }
 
+pub fn is_first_atom(h: Rc<SExp>) -> bool {
+    match_atom_to_prim(vec![b'f'], 5, h)
+}
+
+pub fn is_rest_atom(h: Rc<SExp>) -> bool {
+    match_atom_to_prim(vec![b'r'], 6, h)
+}
+
 fn match_cons(args: Rc<BodyForm>) -> Option<(Rc<BodyForm>, Rc<BodyForm>)> {
     if let BodyForm::Call(_, v) = args.borrow() {
         if v.len() < 3 {

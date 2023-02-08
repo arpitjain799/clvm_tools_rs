@@ -19,7 +19,7 @@ use crate::compiler::comptypes::{
 };
 use crate::compiler::debug::{build_swap_table_mut, relabel};
 use crate::compiler::evaluate::{Evaluator, ExpandMode, EVAL_STACK_LIMIT};
-use crate::compiler::frontend::compile_bodyform;
+use crate::compiler::frontend::{collect_used_names_bodyform, compile_bodyform};
 use crate::compiler::gensym::gensym;
 use crate::compiler::inline::{replace_in_inline, synthesize_args};
 use crate::compiler::lambda::compose_constant_function_env;
@@ -1049,7 +1049,7 @@ fn collect_names_for_strict_body(pc: &mut PrimaryCodegen, b: &BodyForm) {
     match b {
         BodyForm::Value(v) => {
             if let SExp::Atom(_, name) = v.borrow() {
-                if !name.is_empty() && printable(name) {
+                if !name.is_empty() && printable(name, false) {
                     pc.mentioned_variable_names.push(Rc::new(v.clone()));
                 }
             }
@@ -1356,6 +1356,23 @@ fn finalize_env(
     }
 }
 
+fn constant_used_in_functions(
+    compiler: &PrimaryCodegen,
+    name: &Vec<u8>
+) -> bool {
+    for h in compiler.to_process.iter() {
+        if let HelperForm::Defun(_, defundata) = &h {
+            let used_names = collect_used_names_bodyform(defundata.body.borrow());
+            if used_names.contains(name) {
+                return true;
+            }
+        }
+    }
+
+    let used_names = collect_used_names_bodyform(compiler.final_expr.borrow());
+    used_names.contains(name)
+}
+
 fn dummy_functions(compiler: &PrimaryCodegen) -> Result<PrimaryCodegen, CompileErr> {
     fold_m(
         &|compiler: &PrimaryCodegen, form: &HelperForm| match form {
@@ -1382,7 +1399,7 @@ fn dummy_functions(compiler: &PrimaryCodegen) -> Result<PrimaryCodegen, CompileE
                     )
                 }),
             HelperForm::Defconstant(cdata) => {
-                if cdata.tabled {
+                if cdata.tabled && constant_used_in_functions(compiler, &cdata.name) {
                     let mut c_copy = compiler.clone();
                     c_copy.parentfns.insert(cdata.name.clone());
                     Ok(c_copy)

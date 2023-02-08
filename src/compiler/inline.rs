@@ -13,6 +13,7 @@ use crate::compiler::compiler::is_at_capture;
 use crate::compiler::comptypes::{
     BodyForm, Callable, CompileErr, CompiledCode, CompilerOpts, InlineFunction, PrimaryCodegen,
 };
+use crate::compiler::optimize::brief_path_selection;
 use crate::compiler::sexp::{decode_string, SExp};
 use crate::compiler::srcloc::Srcloc;
 
@@ -267,7 +268,12 @@ fn replace_inline_body(
         BodyForm::Value(SExp::Atom(_, a)) => {
             let alookup = arg_lookup(callsite, inline.args.clone(), 0, args, a.clone())?
                 .unwrap_or_else(|| expr.clone());
-            Ok(alookup)
+            if opts.optimize() || opts.frontend_opt() {
+                let (_, optimized) = brief_path_selection(alookup);
+                Ok(optimized)
+            } else {
+                Ok(alookup)
+            }
         }
         _ => Ok(expr.clone()),
     }

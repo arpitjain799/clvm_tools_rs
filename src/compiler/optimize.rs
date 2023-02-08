@@ -1,4 +1,3 @@
-#[cfg(test)]
 use num_bigint::ToBigInt;
 
 use std::borrow::Borrow;
@@ -7,18 +6,20 @@ use std::rc::Rc;
 
 use clvm_rs::allocator::Allocator;
 
-#[cfg(test)]
-use crate::classic::clvm::__type_compatibility__::bi_one;
-use crate::classic::clvm::__type_compatibility__::bi_zero;
-
+use crate::classic::clvm::__type_compatibility__::{bi_one, bi_zero};
+use crate::classic::clvm_tools::node_path::compose_paths;
 use crate::classic::clvm_tools::stages::stage_0::TRunProgram;
 
 use crate::compiler::clvm::run;
 use crate::compiler::codegen::{codegen, get_callable};
+#[cfg(test)]
+use crate::compiler::compiler::DefaultCompilerOpts;
 use crate::compiler::comptypes::{
-    BodyForm, Callable, CompileErr, CompileForm, CompilerOpts, HelperForm, PrimaryCodegen,
+    Binding, BodyForm, Callable, CompileErr, CompileForm, CompilerOpts, HelperForm, LetData, PrimaryCodegen,
 };
-use crate::compiler::evaluate::{build_reflex_captures, Evaluator, ExpandMode, EVAL_STACK_LIMIT};
+use crate::compiler::evaluate::{build_reflex_captures, Evaluator, ExpandMode, EVAL_STACK_LIMIT, is_first_atom, is_rest_atom};
+#[cfg(test)]
+use crate::compiler::frontend::compile_bodyform;
 #[cfg(test)]
 use crate::compiler::sexp::parse_sexp;
 use crate::compiler::sexp::SExp;
@@ -61,6 +62,173 @@ fn test_sexp_scale_increases_with_atom_size() {
         sexp_scale(&SExp::Integer(l.clone(), bi_one()))
             < sexp_scale(&SExp::Integer(l, 1000000_u32.to_bigint().unwrap()))
     );
+}
+
+// Collapse sequences of (f (r (f ... X))) representing (a P1 X)
+// into (a P1 X) if X is not a path
+// or P1 || X    if X is a path
+fn brief_path_selection_single(mut body: Rc<BodyForm>) -> (bool, Rc<BodyForm>) {
+    let orig_body = body.clone();
+    let mut found_stack = 0;
+    let mut target_path = bi_one();
+
+    while let BodyForm::Call(_, forms) = body.borrow() {
+        if forms.len() != 2 {
+            break;
+        }
+
+        if let BodyForm::Value(name) = forms[0].borrow() {
+            let is_first = is_first_atom(Rc::new(name.clone()));
+            if is_first || is_rest_atom(Rc::new(name.clone())) {
+                found_stack += 1;
+                target_path *= 2_u32.to_bigint().unwrap();
+                if !is_first {
+                    target_path += bi_one();
+                }
+                body = forms[1].clone();
+                continue;
+            }
+        }
+
+        break;
+    }
+
+    if found_stack > 0 {
+        let intval =
+            if let BodyForm::Value(SExp::Integer(_l,i)) = body.borrow() {
+                Some(i.clone())
+            } else if let BodyForm::Value(SExp::Atom(_l,at)) = body.borrow() {
+                if at == b"@" {
+                    Some(bi_one())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+        if let Some(i) = intval {
+            // The number to the left is "closer to the root".
+            // These bits are selected first.
+            let final_path = compose_paths(&i, &target_path);
+            let at_atom = Rc::new(BodyForm::Value(SExp::Atom(body.loc(), vec![b'@'])));
+            return (true, Rc::new(BodyForm::Call(
+                body.loc(),
+                vec![
+                    at_atom,
+                    Rc::new(BodyForm::Value(SExp::Integer(body.loc(), final_path)))
+                ]
+            )));
+        }
+
+        if found_stack > 2 {
+            let apply_atom = Rc::new(BodyForm::Value(SExp::Atom(body.loc(), vec![2])));
+            let at_atom = Rc::new(BodyForm::Value(SExp::Atom(body.loc(), vec![b'@'])));
+
+            return (true, Rc::new(BodyForm::Call(
+                body.loc(),
+                vec![
+                    apply_atom.clone(),
+                    Rc::new(BodyForm::Call(
+                        body.loc(),
+                        vec![
+                            at_atom.clone(),
+                            Rc::new(BodyForm::Value(SExp::Integer(body.loc(), target_path))),
+                        ]
+                    )),
+                    Rc::new(BodyForm::Call(
+                        body.loc(),
+                        vec![
+                            apply_atom,
+                            body,
+                            at_atom.clone()
+                        ]
+                    ))
+                ]
+            )));
+        }
+    }
+
+    (false, orig_body)
+}
+
+pub fn brief_path_selection(body: Rc<BodyForm>) -> (bool, Rc<BodyForm>) {
+    eprintln!("b {}", body.to_sexp());
+    let (changed, new_body) = brief_path_selection_single(body.clone());
+    if changed {
+        eprintln!("b> {}", new_body.to_sexp());
+        return (true, new_body);
+    }
+
+    match body.borrow() {
+        BodyForm::Call(l,args) => {
+            let new_args: Vec<(bool, Rc<BodyForm>)> = args.iter().cloned().map(brief_path_selection).collect();
+            let changed_notifications: Vec<bool> = new_args.iter().map(|(changed,_)| *changed).collect();
+            if changed_notifications.iter().copied().filter(|x| *x).count() > 0 {
+                return (true, Rc::new(BodyForm::Call(l.clone(), new_args.iter().cloned().map(|(_,body)| body).collect())));
+            }
+        }
+        BodyForm::Let(kind, letdata) => {
+            let new_bindings_coll: Vec<(bool, Binding)> = letdata.bindings.iter().map(|b| {
+                let borrowed_binding: &Binding = b.borrow();
+                let mut new_binding = borrowed_binding.clone();
+                let (updated, new_body) = brief_path_selection(b.body.clone());
+                new_binding.body = new_body;
+                (updated, new_binding)
+            }).collect();
+            let changed_notifications: Vec<bool> = new_bindings_coll.iter().map(|(changed,_)| *changed).collect();
+            let (changed_body, body) = brief_path_selection(letdata.body.clone());
+            if changed_body || changed_notifications.iter().copied().filter(|x| *x).count() > 0 {
+                let bindings: Vec<Rc<Binding>> = new_bindings_coll.into_iter().map(|(_,body)| Rc::new(body)).collect();
+                return (true, Rc::new(BodyForm::Let(kind.clone(), LetData {
+                    body, bindings, .. letdata.clone()
+                })));
+            }
+        }
+        _ => { }
+    }
+
+    (false, body)
+}
+
+#[test]
+fn test_brief_path_selection_none() {
+    let filename = "*test*";
+    let loc = Srcloc::start(filename);
+    let opts = Rc::new(DefaultCompilerOpts::new(filename));
+    let parsed = parse_sexp(loc.clone(), "(2 (1 (1) (1) (1)) (3))".bytes()).expect("should parse");
+    let fe = compile_bodyform(opts, parsed[0].clone()).expect("should be a bodyform");
+    let (did_work, optimized) = brief_path_selection(Rc::new(fe));
+    assert!(!did_work);
+    assert_eq!(optimized.to_sexp().to_string(), "(2 (q (1) (1) (1)) (3))");
+}
+
+#[test]
+fn test_brief_path_selection_one_first_unknown_body() {
+    let filename = "*test*";
+    let loc = Srcloc::start(filename);
+    let opts = Rc::new(DefaultCompilerOpts::new(filename));
+    let parsed = parse_sexp(loc.clone(), "(f (f (f (+ 3 2))))".bytes()).expect("should parse");
+    let fe = compile_bodyform(opts, parsed[0].clone()).expect("should be a bodyform");
+    let (did_work, optimized) = brief_path_selection(Rc::new(fe));
+    assert!(did_work);
+    assert_eq!(optimized.to_sexp().to_string(), "(2 (@ 8) (2 (+ 3 2) @))");
+}
+
+
+#[test]
+fn test_brief_path_selection_one_first_path_body_1() {
+    let filename = "*test*";
+    let loc = Srcloc::start(filename);
+    let opts = Rc::new(DefaultCompilerOpts::new(filename));
+    let parsed = parse_sexp(loc.clone(), "(f (f (r (f 11))))".bytes()).expect("should parse");
+    let fe = compile_bodyform(opts, parsed[0].clone()).expect("should be a bodyform");
+    let (did_work, optimized) = brief_path_selection(Rc::new(fe));
+    assert!(did_work);
+    // f f r f -> path 18 (0100[1])
+    // 11      ->         (110[1])
+    // Joined so that 11's path occupies the inner (low) bits: 1100100[1]
+    assert_eq!(optimized.to_sexp().to_string(), "(@ 147)");
 }
 
 pub fn optimize_expr(
