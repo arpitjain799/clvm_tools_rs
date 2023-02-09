@@ -381,17 +381,12 @@ fn rename_args_helperform(h: &HelperForm) -> HelperForm {
             HelperForm::Defun(
                 *inline,
                 DefunData {
-                    loc: defun.loc.clone(),
-                    nl: defun.nl.clone(),
-                    kw: defun.kw.clone(),
-                    name: defun.name.clone(),
                     args: local_renamed_arg,
                     body: Rc::new(rename_in_bodyform(
                         &local_namemap,
                         Rc::new(local_renamed_body),
                     )),
-                    ty: defun.ty.clone(),
-                    synthetic: defun.synthetic,
+                    .. defun.clone()
                 },
             )
         }

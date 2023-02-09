@@ -153,10 +153,8 @@ fn brief_path_selection_single(mut body: Rc<BodyForm>) -> (bool, Rc<BodyForm>) {
 }
 
 pub fn brief_path_selection(body: Rc<BodyForm>) -> (bool, Rc<BodyForm>) {
-    eprintln!("b {}", body.to_sexp());
     let (changed, new_body) = brief_path_selection_single(body.clone());
     if changed {
-        eprintln!("b> {}", new_body.to_sexp());
         return (true, new_body);
     }
 

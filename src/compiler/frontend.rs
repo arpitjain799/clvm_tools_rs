@@ -351,13 +351,9 @@ fn handle_assign_form(
     for spec in sorted_spec.iter() {
         let mut new_needs = spec.needs.difference(&current_provides).cloned();
         if new_needs.next().is_some() {
-            eprintln!("bindings");
             // Roll over the set we're accumulating to the finished version.
             let mut empty_tmp: Vec<Rc<Binding>> = Vec::new();
             swap(&mut empty_tmp, &mut this_round_bindings);
-            for e in empty_tmp.iter() {
-                eprintln!("push bindings {}", e.to_sexp());
-            }
             binding_lists.push(empty_tmp);
             for provided in new_provides.iter() {
                 current_provides.insert(provided.clone());
@@ -409,7 +405,6 @@ fn handle_assign_form(
         )
     }
 
-    eprintln!("output let from assign {}", output_let.to_sexp());
     Ok(output_let)
 }
 
@@ -1449,6 +1444,14 @@ fn frontend_start(
     }
 }
 
+pub fn is_synthetic_defun(h: &HelperForm) -> bool {
+    if let HelperForm::Defun(_, defdata) = h {
+        return defdata.synthetic;
+    }
+
+    false
+}
+
 pub fn frontend(
     opts: Rc<dyn CompilerOpts>,
     pre_forms: &[Rc<SExp>],
@@ -1489,7 +1492,9 @@ pub fn frontend(
 
     let mut live_helpers = Vec::new();
     for h in our_mod.helpers {
-        if matches!(h, HelperForm::Deftype(_)) || helper_names.contains(h.name()) {
+        if matches!(h, HelperForm::Deftype(_))
+            || helper_names.contains(h.name())
+            || is_synthetic_defun(&h) {
             live_helpers.push(h);
         }
     }

@@ -17,7 +17,6 @@ use crate::compiler::comptypes::{
 };
 use crate::compiler::frontend::frontend;
 use crate::compiler::runtypes::RunFailure;
-use crate::compiler::sexp::decode_string;
 use crate::compiler::sexp::SExp;
 use crate::compiler::srcloc::Srcloc;
 use crate::compiler::stackvisit::{HasDepthLimit, VisitedMarker};
@@ -74,11 +73,6 @@ impl<'info> VisitedInfoAccess for VisitedMarker<'info, VisitedInfo> {
 
     fn insert_function(&mut self, name: Vec<u8>, body: Rc<BodyForm>) {
         if let Some(ref mut info) = self.info {
-            eprintln!(
-                "insert function {} {}",
-                decode_string(&name),
-                body.to_sexp()
-            );
             info.functions.insert(name, body);
         }
     }

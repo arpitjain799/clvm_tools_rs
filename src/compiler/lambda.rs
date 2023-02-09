@@ -129,6 +129,7 @@ pub fn handle_lambda(opts: Rc<dyn CompilerOpts>, v: &[SExp]) -> Result<BodyForm,
             2_u32.to_bigint().unwrap(),
         ))),
     ));
+
     // Code to retrieve and quote the captures.
     let quote_atom = BodyForm::Value(SExp::Atom(v[0].loc(), vec![1]));
     let apply_atom = BodyForm::Value(SExp::Atom(v[0].loc(), vec![2]));
