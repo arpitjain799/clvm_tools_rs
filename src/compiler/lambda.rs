@@ -4,9 +4,9 @@ use std::rc::Rc;
 use num_bigint::ToBigInt;
 
 use crate::compiler::clvm::truthy;
-use crate::compiler::comptypes::{BodyForm, CompileErr, CompilerOpts, PrimaryCodegen};
+use crate::compiler::comptypes::{BodyForm, CompileErr, CompilerOpts, LambdaData, PrimaryCodegen};
 use crate::compiler::evaluate::{make_operator1, make_operator2};
-use crate::compiler::frontend::{compile_bodyform, frontend};
+use crate::compiler::frontend::compile_bodyform;
 use crate::compiler::sexp::{enlist, SExp};
 use crate::compiler::srcloc::Srcloc;
 
@@ -32,38 +32,34 @@ fn make_captures(opts: Rc<dyn CompilerOpts>, sexp: Rc<SExp>) -> Result<Rc<BodyFo
     }
 }
 
+struct FoundLambdaCaptures {
+    args: Rc<SExp>,
+    capture_args: Rc<SExp>,
+    captures: Rc<BodyForm>,
+}
+
 fn find_and_compose_captures(
     opts: Rc<dyn CompilerOpts>,
     sexp: &SExp,
-) -> Result<(Rc<SExp>, Rc<BodyForm>), CompileErr> {
-    let mut args = Rc::new(sexp.clone());
-    let mut capture_args = Rc::new(SExp::Nil(sexp.loc()));
-    let mut captures = Rc::new(BodyForm::Quoted(SExp::Nil(sexp.loc())));
+) -> Result<FoundLambdaCaptures, CompileErr> {
+    let mut found = FoundLambdaCaptures {
+        args: Rc::new(sexp.clone()),
+        capture_args: Rc::new(SExp::Nil(sexp.loc())),
+        captures: Rc::new(BodyForm::Quoted(SExp::Nil(sexp.loc()))),
+    };
     if let SExp::Cons(_, l, r) = sexp {
         if let SExp::Cons(_, head, rest) = l.borrow() {
             if let SExp::Atom(_, name) = head.borrow() {
                 if name == b"&" {
-                    args = r.clone();
-                    capture_args = rest.clone();
-                    captures = make_captures(opts, rest.clone())?;
+                    found.args = r.clone();
+                    found.capture_args = rest.clone();
+                    found.captures = make_captures(opts, rest.clone())?;
                 }
             }
         }
     }
 
-    Ok((
-        Rc::new(SExp::Cons(sexp.loc(), capture_args, args)),
-        captures,
-    ))
-}
-
-fn make_call(loc: Srcloc, head: &str, args: &[BodyForm]) -> BodyForm {
-    let mut use_vec: Vec<Rc<BodyForm>> = args.iter().cloned().map(Rc::new).collect();
-    use_vec.insert(
-        0,
-        Rc::new(BodyForm::Value(SExp::atom_from_string(loc.clone(), head))),
-    );
-    BodyForm::Call(loc, use_vec)
+    Ok(found)
 }
 
 fn make_operator(loc: Srcloc, op: u8, arg1: Rc<BodyForm>, arg2: Rc<BodyForm>) -> BodyForm {
@@ -81,10 +77,22 @@ fn make_cons(loc: Srcloc, arg1: Rc<BodyForm>, arg2: Rc<BodyForm>) -> BodyForm {
     make_operator(loc, 4, arg1, arg2)
 }
 
+fn make_list(loc: Srcloc, args: &[BodyForm]) -> BodyForm {
+    let mut res = BodyForm::Quoted(SExp::Nil(loc.clone()));
+    let cons_atom = BodyForm::Value(SExp::Atom(loc.clone(), vec![4]));
+    for a in args.iter().rev() {
+        res = BodyForm::Call(
+            loc.clone(),
+            vec![Rc::new(cons_atom.clone()), Rc::new(a.clone()), Rc::new(res)],
+        );
+    }
+    res
+}
+
 //
 // Lambda
 //
-// (lambda ((= captures) arguments)
+// (lambda ((& captures) arguments)
 //   (body)
 //   )
 //
@@ -96,7 +104,57 @@ fn make_cons(loc: Srcloc, arg1: Rc<BodyForm>, arg2: Rc<BodyForm>) -> BodyForm {
 //    (list 4 (c 1 (@ 2)) (list 4 (c 1 compose_captures) @))
 //    )
 //
-pub fn handle_lambda(opts: Rc<dyn CompilerOpts>, v: &[SExp]) -> Result<BodyForm, CompileErr> {
+pub fn lambda_codegen(ldata: &LambdaData) -> Result<BodyForm, CompileErr> {
+    // Requires captures
+    // Code to retrieve the left env.
+    let retrieve_left_env = Rc::new(make_operator1(
+        &ldata.loc,
+        "@".to_string(),
+        Rc::new(BodyForm::Value(SExp::Integer(
+            ldata.loc.clone(),
+            2_u32.to_bigint().unwrap(),
+        ))),
+    ));
+    // Code to retrieve and quote the captures.
+    let quote_atom = BodyForm::Value(SExp::Atom(ldata.loc.clone(), vec![1]));
+    let apply_atom = BodyForm::Value(SExp::Atom(ldata.loc.clone(), vec![2]));
+    let cons_atom = BodyForm::Value(SExp::Atom(ldata.loc.clone(), vec![4]));
+    let whole_env = quote_atom.clone();
+
+    let compose_captures = make_cons(
+        ldata.loc.clone(),
+        Rc::new(quote_atom.clone()),
+        ldata.captures.clone(),
+    );
+    let quoted_code = make_cons(
+        ldata.loc.clone(),
+        Rc::new(quote_atom.clone()),
+        ldata.body.clone(),
+    );
+
+    let lambda_output = make_list(
+        ldata.loc.clone(),
+        &[
+            apply_atom,
+            quoted_code,
+            make_list(
+                ldata.loc.clone(),
+                &[
+                    cons_atom.clone(),
+                    make_cons(ldata.loc.clone(), Rc::new(quote_atom), retrieve_left_env),
+                    make_list(ldata.loc.clone(), &[cons_atom, compose_captures, whole_env]),
+                ],
+            ),
+        ],
+    );
+    Ok(lambda_output)
+}
+
+pub fn handle_lambda(
+    opts: Rc<dyn CompilerOpts>,
+    kw_loc: Option<Srcloc>,
+    v: &[SExp],
+) -> Result<BodyForm, CompileErr> {
     if v.len() < 2 {
         return Err(CompileErr(
             v[0].loc(),
@@ -104,7 +162,12 @@ pub fn handle_lambda(opts: Rc<dyn CompilerOpts>, v: &[SExp]) -> Result<BodyForm,
         ));
     }
 
-    let (args, captures) = find_and_compose_captures(opts.clone(), &v[0])?;
+    let found = find_and_compose_captures(opts.clone(), &v[0])?;
+    let combined_captures_and_args = Rc::new(SExp::Cons(
+        found.args.loc(),
+        found.capture_args.clone(),
+        found.args.clone(),
+    ));
 
     let rolled_elements_vec: Vec<Rc<SExp>> = v.iter().skip(1).map(|x| Rc::new(x.clone())).collect();
     let body_list = enlist(v[0].loc(), &rolled_elements_vec);
@@ -113,51 +176,21 @@ pub fn handle_lambda(opts: Rc<dyn CompilerOpts>, v: &[SExp]) -> Result<BodyForm,
     let mod_form_data = Rc::new(SExp::Cons(
         v[0].loc(),
         Rc::new(SExp::atom_from_string(v[0].loc(), "mod+")),
-        Rc::new(SExp::Cons(args.loc(), args.clone(), Rc::new(body_list))),
+        Rc::new(SExp::Cons(
+            found.args.loc(),
+            combined_captures_and_args,
+            Rc::new(body_list),
+        )),
     ));
 
     // Requires captures
-    let subparse = frontend(opts, &[mod_form_data])?;
-    let module = BodyForm::Mod(v[0].loc(), true, subparse);
-
-    // Code to retrieve the left env.
-    let retrieve_left_env = Rc::new(make_operator1(
-        &v[0].loc(),
-        "@".to_string(),
-        Rc::new(BodyForm::Value(SExp::Integer(
-            v[0].loc(),
-            2_u32.to_bigint().unwrap(),
-        ))),
-    ));
-    // Code to retrieve and quote the captures.
-    let quote_atom = BodyForm::Value(SExp::Atom(v[0].loc(), vec![1]));
-    let apply_atom = BodyForm::Value(SExp::Atom(v[0].loc(), vec![2]));
-    let cons_atom = BodyForm::Value(SExp::Atom(v[0].loc(), vec![4]));
-    let whole_env = quote_atom.clone();
-
-    let compose_captures = make_cons(v[0].loc(), Rc::new(quote_atom.clone()), captures);
-    let quoted_code = make_cons(v[0].loc(), Rc::new(quote_atom.clone()), Rc::new(module));
-
-    let lambda_output = make_call(
-        v[0].loc(),
-        "list",
-        &[
-            apply_atom,
-            quoted_code,
-            make_call(
-                v[0].loc(),
-                "list",
-                &[
-                    cons_atom.clone(),
-                    make_cons(v[0].loc(), Rc::new(quote_atom), retrieve_left_env),
-                    make_call(
-                        v[0].loc(),
-                        "list",
-                        &[cons_atom, compose_captures, whole_env],
-                    ),
-                ],
-            ),
-        ],
-    );
-    Ok(lambda_output)
+    let subparse = compile_bodyform(opts, mod_form_data)?;
+    Ok(BodyForm::Lambda(LambdaData {
+        loc: v[0].loc(),
+        kw: kw_loc,
+        args: found.args.clone(),
+        capture_args: found.capture_args.clone(),
+        captures: found.captures,
+        body: Rc::new(subparse),
+    }))
 }
