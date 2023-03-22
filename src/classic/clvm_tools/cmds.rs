@@ -192,7 +192,7 @@ pub fn call_tool(
                 let text = conv_result.rest();
                 if args.contains_key(&"script_hash".to_string()) {
                     let data: Vec<u8> =
-                        format!("{}", sha256tree(allocator, sexp)).bytes().collect();
+                        sha256tree(allocator, sexp).hex().bytes().collect();
                     stream.write(Bytes::new(Some(BytesFromType::Raw(data))));
                 } else if !text.is_empty() {
                     let data: Vec<u8> = text.to_string().bytes().collect();
@@ -217,6 +217,7 @@ impl TConversion for OpcConversion {
         hex_text: &str,
     ) -> Result<Tuple<NodePtr, String>, String> {
         read_ir(hex_text)
+            .map_err(|e| e.to_string()) // SyntaxErr -> String
             .and_then(|ir_sexp| assemble_from_ir(allocator, Rc::new(ir_sexp)).map_err(|e| e.1))
             .map(|sexp| t(sexp, sexp_as_bin(allocator, sexp).hex()))
     }

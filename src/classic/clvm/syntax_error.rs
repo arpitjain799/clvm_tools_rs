@@ -1,9 +1,20 @@
 use std::io;
 use std::{error::Error, fmt};
 
+use clvmr::allocator::NodePtr;
+use clvmr::reduction::EvalErr;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyntaxErr {
     pub msg: String,
+}
+
+impl SyntaxErr {
+    pub fn new(s: String) -> Self { SyntaxErr { msg: s } }
+
+    pub fn to_eval_err(&self, n: NodePtr) -> EvalErr {
+        EvalErr(n, self.msg.clone())
+    }
 }
 
 impl Error for SyntaxErr {}

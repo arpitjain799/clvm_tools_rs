@@ -28,7 +28,7 @@ impl IRReader {
         }
     }
 
-    pub fn read_expr(&mut self) -> Result<IRRepr, String> {
+    pub fn read_expr(&mut self) -> Result<IRRepr, SyntaxErr> {
         consume_object(self)
     }
 
@@ -80,7 +80,7 @@ pub fn consume_whitespace(s: &mut IRReader) {
     s.backup(1);
 }
 
-pub fn consume_quoted(s: &mut IRReader, q: char) -> Result<IRRepr, String> {
+pub fn consume_quoted(s: &mut IRReader, q: char) -> Result<IRRepr, SyntaxErr> {
     let starting_at = s.stream.get_seek() - 1;
     let mut bs = false;
     let mut qchars = vec![];
@@ -88,11 +88,11 @@ pub fn consume_quoted(s: &mut IRReader, q: char) -> Result<IRRepr, String> {
     loop {
         let b = s.read(1);
         if b.length() == 0 {
-            return Err(format!(
+            return Err(SyntaxErr::new(format!(
                 "unterminated string starting at {}, {}",
                 starting_at,
                 Bytes::new(Some(BytesFromType::Raw(qchars))).decode()
-            ));
+            )));
         }
 
         if bs {
@@ -204,7 +204,7 @@ fn enlist_ir(vec: &mut Vec<IRRepr>, tail: IRRepr) -> IRRepr {
     result
 }
 
-pub fn consume_cons_body(s: &mut IRReader) -> Result<IRRepr, String> {
+pub fn consume_cons_body(s: &mut IRReader) -> Result<IRRepr, SyntaxErr> {
     let mut result = vec![];
 
     loop {
@@ -212,7 +212,7 @@ pub fn consume_cons_body(s: &mut IRReader) -> Result<IRRepr, String> {
 
         let b = s.read(1);
         if b.length() == 0 {
-            return Err("missing )".to_string());
+            return Err(SyntaxErr::new("missing )".to_string()));
         }
 
         if b.at(0) == b')' {
@@ -233,20 +233,13 @@ pub fn consume_cons_body(s: &mut IRReader) -> Result<IRRepr, String> {
 
         if b.at(0) == b'.' {
             consume_whitespace(s);
-            let tail_obj = consume_object(s);
-            match tail_obj {
-                Err(e) => {
-                    return Err(e);
-                }
-                Ok(v) => {
-                    consume_whitespace(s);
-                    let b = s.read(1);
-                    if b.length() == 0 || b.at(0) != b')' {
-                        return Err("missing )".to_string());
-                    }
-                    return Ok(enlist_ir(&mut result, v));
-                }
+            let v = consume_object(s)?;
+            consume_whitespace(s);
+            let b = s.read(1);
+            if b.length() == 0 || b.at(0) != b')' {
+                return Err(SyntaxErr::new("missing )".to_string()));
             }
+            return Ok(enlist_ir(&mut result, v));
         }
 
         if b.at(0) == b'\"' || b.at(0) == b'\'' {
@@ -260,20 +253,17 @@ pub fn consume_cons_body(s: &mut IRReader) -> Result<IRRepr, String> {
                 }
             }
         } else {
-            match consume_atom(s, &b) {
-                Ok(Some(f)) => {
-                    result.push(f);
-                    continue;
-                }
-                _ => {
-                    return Err("missing )".to_string());
-                }
+            if let Some(f) = consume_atom(s, &b)? {
+                result.push(f);
+                continue;
+            } else {
+                return Err(SyntaxErr::new("missing )".to_string()));
             }
         }
     }
 }
 
-pub fn consume_object(s: &mut IRReader) -> Result<IRRepr, String> {
+pub fn consume_object(s: &mut IRReader) -> Result<IRRepr, SyntaxErr> {
     consume_whitespace(s);
     let b = s.read(1);
 
@@ -284,15 +274,15 @@ pub fn consume_object(s: &mut IRReader) -> Result<IRRepr, String> {
     } else if b.at(0) == b'\"' || b.at(0) == b'\'' {
         consume_quoted(s, b.at(0) as char)
     } else {
-        match consume_atom(s, &b) {
-            Ok(None) => Err("empty stream".to_string()),
-            Ok(Some(ir)) => Ok(ir),
-            Err(e) => Err(e.to_string()),
+        if let Some(ir) = consume_atom(s, &b)? {
+            Ok(ir)
+        } else {
+            Err(SyntaxErr::new("empty stream".to_string()))
         }
     }
 }
 
-pub fn read_ir(s: &str) -> Result<IRRepr, String> {
+pub fn read_ir(s: &str) -> Result<IRRepr, SyntaxErr> {
     let bytes_of_string = Bytes::new(Some(BytesFromType::Raw(s.as_bytes().to_vec())));
     let stream = Stream::new(Some(bytes_of_string));
     let mut reader = IRReader::new(stream);
