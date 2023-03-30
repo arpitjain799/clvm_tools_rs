@@ -205,12 +205,13 @@ impl CldbSingleBespokeOverride for CldbSinglePythonOverride {
     }
 }
 
-#[pyfunction(arg4 = "None")]
+#[pyfunction(arg4 = "None", arg5 = "None")]
 fn start_clvm_program(
     hex_prog: String,
     hex_args: String,
     symbol_table: Option<HashMap<String, String>>,
     overrides: Option<HashMap<String, Py<PyAny>>>,
+    show_values_arg: Option<bool>,
 ) -> PyResult<PythonRunStep> {
     let (command_tx, command_rx) = mpsc::channel();
     let (result_tx, result_rx) = mpsc::channel();
@@ -253,10 +254,13 @@ fn start_clvm_program(
             }
         }
         let override_runnable = CldbOverrideBespokeCode::new(use_symbol_table, overrides_table);
+        let show_values = show_values_arg.unwrap_or(true);
 
         let step = start_step(program, args);
-        let cldbenv = CldbRunEnv::new(None, vec![], Box::new(override_runnable));
+        let cldbenv = CldbRunEnv::new(None, vec![], show_values, Box::new(override_runnable));
         let mut cldbrun = CldbRun::new(runner, Rc::new(prim_map), Box::new(cldbenv), step);
+        cldbrun.set_values_enabled(show_values);
+
         loop {
             match cmd_input.recv() {
                 Ok(end_run) => {

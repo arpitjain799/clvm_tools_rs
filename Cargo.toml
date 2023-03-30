@@ -40,6 +40,9 @@ yaml-rust = "0.4"
 linked-hash-map = "0.5.6"
 serde = { version = "1.0", features = ["derive", "rc"] }
 
+[profile.release]
+debug = true
+
 [dev-dependencies]
 rand = "0.8.5"
 rand_chacha = "0.3.1"

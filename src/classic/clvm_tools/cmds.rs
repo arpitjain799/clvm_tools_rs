@@ -483,9 +483,11 @@ pub fn cldb(out: &mut dyn std::io::Write, args: &[String]) {
     let cldbenv = CldbRunEnv::new(
         input_file,
         program_lines,
+        !only_print,
         Box::new(CldbNoOverride::new_symbols(use_symbol_table)),
     );
     let mut cldbrun = CldbRun::new(runner, Rc::new(prim_map), Box::new(cldbenv), step);
+    cldbrun.set_values_enabled(!only_print);
 
     loop {
         if cldbrun.is_ended() {
