@@ -6,7 +6,7 @@ use clvm_rs::reduction::EvalErr;
 
 use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, Stream};
 use crate::classic::clvm::serialize::sexp_to_stream;
-use crate::classic::clvm::sexp::{enlist, proper_list, rest};
+use crate::classic::clvm::sexp::{enlist, First, proper_list, rest, SelectNode, ThisNode};
 
 use crate::classic::clvm_tools::binutils::disassemble;
 use crate::classic::clvm_tools::sha256tree::sha256tree;
@@ -331,4 +331,35 @@ pub fn do_strict_checks(
     }
 
     Ok((true, output.get_value().decode()))
+}
+
+pub fn program_hash_from_program_env_cons(
+    allocator: &mut Allocator,
+    prog_pair: NodePtr
+) -> Result<Bytes, EvalErr> {
+    let First::Here(program) = First::Here(ThisNode::Here)
+        .select_nodes(allocator, prog_pair)?;
+    Ok(sha256tree(allocator, program))
+}
+
+pub fn start_log_after(
+    allocator: &mut Allocator,
+    maybe_program_hash: Option<Bytes>,
+    log: Vec<NodePtr>
+) -> Vec<NodePtr> {
+    if let Some(hash) = maybe_program_hash {
+        log.into_iter().skip_while(|e| {
+            if let Ok(program_hash) = program_hash_from_program_env_cons(
+                allocator,
+                *e
+            ) {
+                // Skip while we haven't found the hash we want.
+                program_hash.data() != hash.data()
+            } else {
+                true
+            }
+        }).collect()
+    } else {
+        log
+    }
 }

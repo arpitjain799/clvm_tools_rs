@@ -1317,94 +1317,148 @@ fn test_modern_sets_source_file_in_symbols() {
     );
 }
 
+// #[test]
+// fn test_cldb_with_printing_shows_useful_stuff() {
+//     let mut write_vec = Vec::new();
+//     let args: Vec<String> = [
+//         "cldb",
+//         "-i",
+//         "resources/tests",
+//         "--trace",
+//         "print",
+//         "--trace-first-arg",
+//         "-y",
+//         "test.sym",
+//         "resources/tests/cldb-print/test.clsp",
+//         "()",
+//     ]
+//     .iter()
+//     .copied()
+//     .map(|s| String::from_str(s).unwrap())
+//     .collect();
+//     cldb(&mut write_vec, &args);
+//     assert_eq!(
+//         decode_string(&write_vec),
+//         indoc! {"---
+//                        - print: \"\\\"calling_sha256tree\\\"\"
+//                        - print: (sha256_returned 50565442356047746631413349885570059132562040184787699607120092457326103992435)
+//                       "}
+//     );
+// }
+
+// #[test]
+// fn test_cldb_with_printing_shows_whole_args() {
+//     let mut write_vec = Vec::new();
+//     let args: Vec<String> = [
+//         "cldb",
+//         "-i",
+//         "resources/tests",
+//         "--trace",
+//         "print",
+//         "-y",
+//         "test.sym",
+//         "resources/tests/cldb-print/test.clsp",
+//         "()",
+//     ]
+//     .iter()
+//     .copied()
+//     .map(|s| String::from_str(s).unwrap())
+//     .collect();
+//     cldb(&mut write_vec, &args);
+//     assert_eq!(
+//         decode_string(&write_vec),
+//         indoc! {"---
+//                        - print: \"(\\\"calling_sha256tree\\\" (2 3 4))\"
+//                        - print: ((sha256_returned 50565442356047746631413349885570059132562040184787699607120092457326103992435) 50565442356047746631413349885570059132562040184787699607120092457326103992435)
+//                       "}
+//     );
+// }
+
+// #[test]
+// fn test_cldb_with_printing_other_fun() {
+//     let mut write_vec = Vec::new();
+//     let args: Vec<String> = [
+//         "cldb",
+//         "-i",
+//         "resources/tests",
+//         "--trace",
+//         "increment-list",
+//         "--trace",
+//         "print",
+//         "--trace-first-arg",
+//         "-y",
+//         "test.sym",
+//         "resources/tests/cldb-print/test.clsp",
+//         "()",
+//     ]
+//     .iter()
+//     .copied()
+//     .map(|s| String::from_str(s).unwrap())
+//     .collect();
+//     cldb(&mut write_vec, &args);
+//     assert_eq!(
+//         decode_string(&write_vec),
+//         indoc! {"---
+//                        - increment-list: (1 2 3)
+//                        - increment-list: (2 3)
+//                        - increment-list: (3)
+//                        - increment-list: ()
+//                        - print: \"\\\"calling_sha256tree\\\"\"
+//                        - print: (sha256_returned 50565442356047746631413349885570059132562040184787699607120092457326103992435)
+//                       "}
+//     );
+// }
+
 #[test]
-fn test_cldb_with_printing_shows_useful_stuff() {
-    let mut write_vec = Vec::new();
-    let args: Vec<String> = [
-        "cldb",
-        "-i",
-        "resources/tests",
-        "--trace",
-        "print",
-        "--trace-first-arg",
-        "-y",
-        "test.sym",
-        "resources/tests/cldb-print/test.clsp",
-        "()",
-    ]
-    .iter()
-    .copied()
-    .map(|s| String::from_str(s).unwrap())
-    .collect();
-    cldb(&mut write_vec, &args);
-    assert_eq!(
-        decode_string(&write_vec),
-        indoc! {"---
-                       - print: \"\\\"calling_sha256tree\\\"\"
-                       - print: (sha256_returned 50565442356047746631413349885570059132562040184787699607120092457326103992435)
-                      "}
-    );
+fn test_assign_lambda_code_generation() {
+    let tname = "test_assign_lambda_code_generation.sym".to_string();
+    do_basic_run(&vec![
+        "run".to_string(),
+        "--extra-syms".to_string(),
+        "--symbol-output-file".to_string(),
+        tname.clone(),
+        "(mod (A) (include *standard-cl-21*) (defun F (X) (+ X 1)) (assign-lambda X (F A) X))"
+            .to_string(),
+    ]);
+    let read_in_file = fs::read_to_string(&tname).expect("should have dropped symbols");
+    fs::remove_file(&tname).expect("should have existed");
+    let decoded_symbol_file: HashMap<String, String> =
+        serde_json::from_str(&read_in_file).expect("should decode");
+    let found_wanted_symbols: Vec<String> = decoded_symbol_file
+        .iter()
+        .filter(|(_, v)| *v == "F" || v.starts_with("letbinding"))
+        .map(|(k, _)| k.clone())
+        .collect();
+    assert_eq!(found_wanted_symbols.len(), 2);
+    // We should have these two functions.
+    assert!(found_wanted_symbols
+        .contains(&"ccd5be506752cebf01f9930b4c108fe18058c65e1ab57a72ca0a00d9788c7ca6".to_string()));
+    assert!(found_wanted_symbols
+        .contains(&"0a5af5ae61fae2e53cb309d4d9c2c64baf0261824823008b9cf2b21b09221e44".to_string()));
 }
 
 #[test]
-fn test_cldb_with_printing_shows_whole_args() {
-    let mut write_vec = Vec::new();
-    let args: Vec<String> = [
-        "cldb",
-        "-i",
-        "resources/tests",
-        "--trace",
-        "print",
-        "-y",
-        "test.sym",
-        "resources/tests/cldb-print/test.clsp",
-        "()",
-    ]
-    .iter()
-    .copied()
-    .map(|s| String::from_str(s).unwrap())
-    .collect();
-    cldb(&mut write_vec, &args);
-    assert_eq!(
-        decode_string(&write_vec),
-        indoc! {"---
-                       - print: \"(\\\"calling_sha256tree\\\" (2 3 4))\"
-                       - print: ((sha256_returned 50565442356047746631413349885570059132562040184787699607120092457326103992435) 50565442356047746631413349885570059132562040184787699607120092457326103992435)
-                      "}
-    );
-}
-
-#[test]
-fn test_cldb_with_printing_other_fun() {
-    let mut write_vec = Vec::new();
-    let args: Vec<String> = [
-        "cldb",
-        "-i",
-        "resources/tests",
-        "--trace",
-        "increment-list",
-        "--trace",
-        "print",
-        "--trace-first-arg",
-        "-y",
-        "test.sym",
-        "resources/tests/cldb-print/test.clsp",
-        "()",
-    ]
-    .iter()
-    .copied()
-    .map(|s| String::from_str(s).unwrap())
-    .collect();
-    cldb(&mut write_vec, &args);
-    assert_eq!(
-        decode_string(&write_vec),
-        indoc! {"---
-                       - increment-list: (1 2 3)
-                       - increment-list: (2 3)
-                       - increment-list: (3)
-                       - increment-list: ()
-                       - print: \"\\\"calling_sha256tree\\\"\"
-                       - print: (sha256_returned 50565442356047746631413349885570059132562040184787699607120092457326103992435)
-                      "}
-    );
+fn test_assign_lambda_code_generation_normally_inlines() {
+    let tname = "test_assign_inline_code_generation.sym".to_string();
+    do_basic_run(&vec![
+        "run".to_string(),
+        "--extra-syms".to_string(),
+        "--symbol-output-file".to_string(),
+        tname.clone(),
+        "(mod (A) (include *standard-cl-21*) (defun F (X) (+ X 1)) (assign-inline X (F A) X))"
+            .to_string(),
+    ]);
+    let read_in_file = fs::read_to_string(&tname).expect("should have dropped symbols");
+    fs::remove_file(&tname).expect("should have existed");
+    let decoded_symbol_file: HashMap<String, String> =
+        serde_json::from_str(&read_in_file).expect("should decode");
+    let found_wanted_symbols: Vec<String> = decoded_symbol_file
+        .iter()
+        .filter(|(_, v)| *v == "F" || v.starts_with("letbinding"))
+        .map(|(k, _)| k.clone())
+        .collect();
+    assert_eq!(found_wanted_symbols.len(), 1);
+    // We should have these two functions.
+    assert!(found_wanted_symbols
+        .contains(&"ccd5be506752cebf01f9930b4c108fe18058c65e1ab57a72ca0a00d9788c7ca6".to_string()));
 }

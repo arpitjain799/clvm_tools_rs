@@ -360,7 +360,7 @@ pub fn decode_string(v: &[u8]) -> String {
 pub fn printable(a: &[u8], quoted: bool) -> bool {
     for ch in a.iter() {
         let chchar = *ch as char;
-        if chchar.is_control() || !chchar.is_ascii() || (!quoted && "() ".contains(chchar)) {
+        if chchar.is_control() || !chchar.is_ascii() || (!quoted && "() \"'\n\r\t".contains(chchar)) {
             return false;
         }
     }
@@ -526,13 +526,13 @@ impl SExp {
         }
     }
 
-    pub fn get_number(&self) -> Result<Number, (Srcloc, String)> {
+    pub fn get_number(&self) -> Result<Number, &str> {
         match self {
             SExp::Integer(_, i) => Ok(i.clone()),
             SExp::Atom(_, v) => Ok(number_from_u8(v)),
             SExp::QuotedString(_, _, v) => Ok(number_from_u8(v)),
             SExp::Nil(_) => Ok(bi_zero()),
-            _ => Err((self.loc(), format!("wanted atom got cons cell {self}"))),
+            _ => Err("wanted atom got cons cell"),
         }
     }
 }

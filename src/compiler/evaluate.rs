@@ -12,7 +12,7 @@ use crate::compiler::clvm::run;
 use crate::compiler::codegen::codegen;
 use crate::compiler::compiler::is_at_capture;
 use crate::compiler::comptypes::{
-    Binding, BindingPattern, BodyForm, CompileErr, CompileForm, CompilerOpts, DefunData, HelperForm, LetData, LetFormKind,
+    Binding, BindingPattern, BodyForm, CompileErr, CompileForm, CompilerOpts, DefunData, HelperForm, LetData, LetFormKind, LetFormInlineHint
 };
 use crate::compiler::frontend::frontend;
 use crate::compiler::runtypes::RunFailure;
@@ -703,6 +703,10 @@ fn flatten_expression_to_names(expr: Rc<SExp>) -> Rc<BodyForm> {
     Rc::new(BodyForm::Call(expr.loc(), call_vec))
 }
 
+pub fn eval_dont_expand_let(inline_hint: &Option<LetFormInlineHint>) -> bool {
+    matches!(inline_hint, Some(LetFormInlineHint::NonInline(_)))
+}
+
 impl<'info> Evaluator {
     pub fn new(
         opts: Rc<dyn CompilerOpts>,
@@ -1221,7 +1225,7 @@ impl<'info> Evaluator {
         let mut visited = VisitedMarker::again(body.loc(), visited_)?;
         match body.borrow() {
             BodyForm::Let(LetFormKind::Parallel, letdata) => {
-                if !expand.lets {
+                if eval_dont_expand_let(&letdata.inline_hint) || !expand.lets {
                     return Ok(body.clone());
                 }
 
@@ -1236,7 +1240,7 @@ impl<'info> Evaluator {
                 )
             }
             BodyForm::Let(LetFormKind::Sequential, letdata) => {
-                if !expand.lets {
+                if eval_dont_expand_let(&letdata.inline_hint) || !expand.lets {
                     return Ok(body.clone());
                 }
 
@@ -1263,12 +1267,10 @@ impl<'info> Evaluator {
                         &updated_bindings,
                         Rc::new(BodyForm::Let(
                             LetFormKind::Sequential,
-                            LetData {
-                                loc: letdata.loc.clone(),
-                                kw: letdata.kw.clone(),
+                            Box::new(LetData {
                                 bindings: rest_of_bindings,
-                                body: letdata.body.clone(),
-                            },
+                                ..*letdata.clone()
+                            }),
                         )),
                         expand,
                     )

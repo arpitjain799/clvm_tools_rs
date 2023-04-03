@@ -50,21 +50,21 @@ fn test_sexp_parse_1() {
 #[test]
 fn test_sexp_parse_2() {
     let loc = Srcloc::start(&"*test*".to_string());
-    let res = parse_sexp(loc, "55".bytes()).and_then(|x| x[0].get_number());
+    let res = parse_sexp(loc.clone(), "55".bytes()).and_then(|x| x[0].get_number().map_err(|e| (loc, e.to_string())));
     assert_eq!(res, Ok(55_i32.to_bigint().unwrap()));
 }
 
 #[test]
 fn test_sexp_parse_3() {
     let loc = Srcloc::start(&"*test*".to_string());
-    let res = parse_sexp(loc, "hello".bytes()).and_then(|x| x[0].get_number());
+    let res = parse_sexp(loc.clone(), "hello".bytes()).and_then(|x| x[0].get_number().map_err(|e| (loc, e.to_string())));
     assert_eq!(res, Ok(448378203247_i64.to_bigint().unwrap()));
 }
 
 #[test]
 fn test_sexp_parse_4() {
     let loc = Srcloc::start(&"*test*".to_string());
-    let res = parse_sexp(loc, "\"hello\"".bytes()).and_then(|x| x[0].get_number());
+    let res = parse_sexp(loc.clone(), "\"hello\"".bytes()).and_then(|x| x[0].get_number().map_err(|e| (loc, e.to_string())));
     assert_eq!(res, Ok(448378203247_i64.to_bigint().unwrap()));
 }
 

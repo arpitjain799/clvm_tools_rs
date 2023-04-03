@@ -78,7 +78,9 @@ fn make_operator(loc: Srcloc, op: u8, arg1: Rc<BodyForm>, arg2: Rc<BodyForm>) ->
 }
 
 fn make_cons(loc: Srcloc, arg1: Rc<BodyForm>, arg2: Rc<BodyForm>) -> BodyForm {
-    make_operator(loc, 4, arg1, arg2)
+    let res = make_operator(loc, 4, arg1, arg2);
+    eprintln!("make_cons {}", res.to_sexp());
+    res
 }
 
 //
@@ -159,5 +161,6 @@ pub fn handle_lambda(opts: Rc<dyn CompilerOpts>, v: &[SExp]) -> Result<BodyForm,
             ),
         ],
     );
+    eprintln!("lambda_output {}", lambda_output.to_sexp());
     Ok(lambda_output)
 }

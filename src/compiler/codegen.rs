@@ -15,7 +15,7 @@ use crate::compiler::compiler::{is_at_capture, run_optimizer};
 use crate::compiler::comptypes::{
     fold_m, join_vecs_to_string, list_to_cons, Binding, BindingPattern, BodyForm, Callable,
     CompileErr, CompileForm, CompiledCode, CompilerOpts, ConstantKind, DefunCall, DefunData,
-    HelperForm, InlineFunction, LetData, LetFormKind, PrimaryCodegen,
+    HelperForm, InlineFunction, LetData, LetFormInlineHint, LetFormKind, PrimaryCodegen,
 };
 use crate::compiler::debug::{build_swap_table_mut, relabel};
 use crate::compiler::evaluate::{Evaluator, ExpandMode, EVAL_STACK_LIMIT};
@@ -893,12 +893,18 @@ pub fn empty_compiler(prim_map: Rc<HashMap<Vec<u8>, Rc<SExp>>>, l: Srcloc) -> Pr
     }
 }
 
+pub fn should_inline_let(inline_hint: &Option<LetFormInlineHint>) -> bool {
+    matches!(inline_hint, None | Some(LetFormInlineHint::Inline(_)))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn generate_let_defun(
     opts: Rc<dyn CompilerOpts>,
     l: Srcloc,
     kwl: Option<Srcloc>,
     name: &[u8],
     args: Rc<SExp>,
+    inline_hint: &Option<LetFormInlineHint>,
     bindings: Vec<Rc<Binding>>,
     body: Rc<BodyForm>,
 ) -> HelperForm {
@@ -925,7 +931,16 @@ fn generate_let_defun(
         })
         .sum();
 
-    let inline = !opts.frontend_opt() || deinline_score > 0;
+    let inline =
+        inline_hint.as_ref().and_then(|h| {
+            match h {
+                LetFormInlineHint::NoChoice => None,
+                LetFormInlineHint::Inline(_) => Some(true),
+                LetFormInlineHint::NonInline(_) => Some(false)
+            }
+        }).unwrap_or_else(|| {
+            !opts.frontend_opt() || deinline_score > 0
+        });
     HelperForm::Defun(
         inline,
         DefunData {
@@ -968,12 +983,10 @@ fn hoist_body_let_binding(
                 let sub_bindings = letdata.bindings.iter().skip(1).cloned().collect();
                 Rc::new(BodyForm::Let(
                     LetFormKind::Sequential,
-                    LetData {
-                        loc: letdata.loc.clone(),
-                        kw: letdata.kw.clone(),
+                    Box::new(LetData {
                         bindings: sub_bindings,
-                        body: letdata.body.clone(),
-                    },
+                        ..*letdata.clone()
+                    }),
                 ))
             };
 
@@ -983,12 +996,11 @@ fn hoist_body_let_binding(
                 args,
                 Rc::new(BodyForm::Let(
                     LetFormKind::Parallel,
-                    LetData {
-                        loc: letdata.loc.clone(),
-                        kw: letdata.kw.clone(),
+                    Box::new(LetData {
                         bindings: vec![letdata.bindings[0].clone()],
                         body: new_sub_expr,
-                    },
+                        ..*letdata.clone()
+                    }),
                 )),
             )
         }
@@ -1018,6 +1030,7 @@ fn hoist_body_let_binding(
                 None,
                 &defun_name,
                 args,
+                &letdata.inline_hint,
                 revised_bindings.to_vec(),
                 letdata.body.clone(),
             );
@@ -1333,7 +1346,7 @@ fn final_codegen(
         compiler.final_expr.clone()
     };
 
-    generate_expr_code(allocator, runner, opts.clone(), compiler, opt_final_expr).map(|code| {
+    generate_expr_code(allocator, runner, opts.clone(), compiler, opt_final_expr.clone()).map(|code| {
         let mut final_comp = compiler.clone();
         let finished_code =
         if opts.frontend_opt() {
@@ -1341,7 +1354,8 @@ fn final_codegen(
         } else {
             code.1.clone()
         };
-        final_comp.final_code = Some(CompiledCode(code.0, finished_code));
+        final_comp.final_code = Some(CompiledCode(code.0, finished_code.clone()));
+        eprintln!("final codegen {} => {}", opt_final_expr.to_sexp(), finished_code);
         final_comp
     })
 }

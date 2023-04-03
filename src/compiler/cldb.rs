@@ -100,6 +100,7 @@ pub struct CldbRun {
     step: RunStep,
 
     ended: bool,
+    show_values: bool,
     final_result: Option<Rc<SExp>>,
     to_print: BTreeMap<String, String>,
     in_expr: bool,
@@ -155,12 +156,17 @@ impl CldbRun {
             env,
             step,
             ended: false,
+            show_values: true,
             final_result: None,
             to_print: BTreeMap::new(),
             in_expr: false,
             row: 0,
             outputs_to_step: HashMap::<Number, PriorResult>::new(),
         }
+    }
+
+    pub fn set_values_enabled(&mut self, enabled: bool) {
+        self.show_values = enabled;
     }
 
     pub fn is_ended(&self) -> bool {
@@ -191,7 +197,9 @@ impl CldbRun {
                 if self.in_expr {
                     self.to_print
                         .insert("Result-Location".to_string(), l.to_string());
-                    self.to_print.insert("Value".to_string(), x.to_string());
+                    if self.show_values {
+                        self.to_print.insert("Value".to_string(), x.to_string());
+                    }
                     self.to_print
                         .insert("Row".to_string(), self.row.to_string());
                     if let Ok(n) = x.get_number() {
@@ -222,8 +230,10 @@ impl CldbRun {
             Ok(RunStep::Op(sexp, c, a, None, _p)) => {
                 self.to_print
                     .insert("Operator-Location".to_string(), a.loc().to_string());
-                self.to_print
-                    .insert("Operator".to_string(), sexp.to_string());
+                if self.show_values {
+                    self.to_print
+                        .insert("Operator".to_string(), sexp.to_string());
+                }
                 if let Ok(v) = sexp.get_number() {
                     if v == 11_u32.to_bigint().unwrap() {
                         // Build source tree for hashes.
@@ -398,6 +408,7 @@ impl CldbRunnable for CldbOverrideBespokeCode {
 pub struct CldbRunEnv {
     input_file: Option<String>,
     program_lines: Vec<String>,
+    show_values: bool,
     overrides: Box<dyn CldbRunnable>,
 }
 
@@ -407,11 +418,13 @@ impl CldbRunEnv {
     pub fn new(
         input_file: Option<String>,
         program_lines: Vec<String>,
+        show_values: bool,
         runnable: Box<dyn CldbRunnable>,
     ) -> Self {
         CldbRunEnv {
             input_file,
             program_lines,
+            show_values,
             overrides: runnable,
         }
     }
@@ -474,16 +487,18 @@ impl CldbEnvironment for CldbRunEnv {
         self.whether_is_apply(
             s,
             context_result,
-            &|context_result| match c {
-                SExp::Cons(_, a, b) => {
-                    context_result.insert("Env".to_string(), a.to_string());
-                    context_result.insert("Env-Args".to_string(), b.to_string());
-                }
-                _ => {
-                    context_result.insert("Function-Context".to_string(), c.to_string());
+            &|context_result| if self.show_values {
+                match c {
+                    SExp::Cons(_, a, b) => {
+                        context_result.insert("Env".to_string(), a.to_string());
+                        context_result.insert("Env-Args".to_string(), b.to_string());
+                    }
+                    _ => {
+                        context_result.insert("Function-Context".to_string(), c.to_string());
+                    }
                 }
             },
-            &|context_result| {
+            &|context_result| if self.show_values {
                 if let Some(a) = &args {
                     context_result.insert("Arguments".to_string(), a.to_string());
                 }
