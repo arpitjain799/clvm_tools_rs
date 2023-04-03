@@ -1355,7 +1355,6 @@ fn final_codegen(
             code.1.clone()
         };
         final_comp.final_code = Some(CompiledCode(code.0, finished_code.clone()));
-        eprintln!("final codegen {} => {}", opt_final_expr.to_sexp(), finished_code);
         final_comp
     })
 }
