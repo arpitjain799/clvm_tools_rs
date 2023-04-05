@@ -45,7 +45,7 @@ pub fn is_space(chval: u8) -> bool {
     chval == b' ' || chval == b'\t' || is_eol(chval)
 }
 
-pub fn consume_whitespace(s: &mut IRReader) {
+pub fn consume_whitespace(s: &mut IRReader) -> Result<(), SyntaxErr> {
     let mut in_comment = false;
 
     // This also deals with comments
@@ -53,7 +53,7 @@ pub fn consume_whitespace(s: &mut IRReader) {
     loop {
         let b = s.read(1);
         if b.length() == 0 {
-            return;
+            return Err(SyntaxErr::new("unexpected end of stream".to_string()));
         }
 
         let ch = b.at(0);
@@ -78,6 +78,7 @@ pub fn consume_whitespace(s: &mut IRReader) {
     }
 
     s.backup(1);
+    Ok(())
 }
 
 pub fn consume_quoted(s: &mut IRReader, q: u8) -> Result<IRRepr, SyntaxErr> {
@@ -200,7 +201,7 @@ pub fn consume_cons_body(s: &mut IRReader) -> Result<IRRepr, SyntaxErr> {
     let mut result = vec![];
 
     loop {
-        consume_whitespace(s);
+        consume_whitespace(s)?;
 
         let b = s.read(1);
         if b.length() == 0 {
@@ -218,9 +219,9 @@ pub fn consume_cons_body(s: &mut IRReader) -> Result<IRRepr, SyntaxErr> {
         }
 
         if b.at(0) == b'.' {
-            consume_whitespace(s);
+            consume_whitespace(s)?;
             let v = consume_object(s)?;
-            consume_whitespace(s);
+            consume_whitespace(s)?;
             let b = s.read(1);
             if b.length() == 0 || b.at(0) != b')' {
                 return Err(SyntaxErr::new("missing )".to_string()));
@@ -242,7 +243,7 @@ pub fn consume_cons_body(s: &mut IRReader) -> Result<IRRepr, SyntaxErr> {
 }
 
 pub fn consume_object(s: &mut IRReader) -> Result<IRRepr, SyntaxErr> {
-    consume_whitespace(s);
+    consume_whitespace(s)?;
     let b = s.read(1);
 
     if b.length() == 0 {

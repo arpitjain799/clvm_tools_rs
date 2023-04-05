@@ -24,6 +24,7 @@ use crate::classic::clvm::__type_compatibility__::{
     t, Bytes, BytesFromType, Stream, Tuple, UnvalidatedBytesFromType,
 };
 use crate::classic::clvm::keyword_from_atom;
+use crate::classic::clvm::syntax_error::SyntaxErr;
 use crate::classic::clvm::serialize::{sexp_from_stream, sexp_to_stream, SimpleCreateCLVMObject};
 use crate::classic::clvm::sexp::{enlist, proper_list, sexp_as_bin};
 use crate::classic::clvm_tools::binutils::{assemble_from_ir, disassemble, disassemble_with_kw};
@@ -184,7 +185,10 @@ pub fn call_tool(
         _ => vec![],
     };
 
+    let mut separate = "";
     for program in args_path_or_code {
+        stream.write(Bytes::new(Some(BytesFromType::Raw(separate.as_bytes().to_vec()))));
+
         match program {
             ArgumentValue::ArgString(_, s) => {
                 if s == "-" {
@@ -206,6 +210,8 @@ pub fn call_tool(
                 return Err("inappropriate argument conversion".to_string());
             }
         }
+
+        separate = "\n";
     }
 
     Ok(())
@@ -1066,22 +1072,33 @@ pub fn launch_tool(stdout: &mut Stream, args: &[String], tool_name: &str, defaul
                 }
             }));
 
-            let input_prog_sexp = sexp_from_stream(
+            let input_prog_sexp = match sexp_from_stream(
                 &mut allocator,
                 &mut prog_stream,
                 Box::new(SimpleCreateCLVMObject {}),
             )
-            .map(|x| Some(x.1))
-            .unwrap();
+            .map(|x| Some(x.1)) {
+                Ok(x) => x,
+                Err(e) => {
+                    stdout.write_str(&format!("FAIL: {}\n", e.1));
+                    return;
+                }
+            };
 
             let mut arg_stream = Stream::new(Some(ee));
-            let input_arg_sexp = sexp_from_stream(
+            let input_arg_sexp = match sexp_from_stream(
                 &mut allocator,
                 &mut arg_stream,
                 Box::new(SimpleCreateCLVMObject {}),
             )
-            .map(|x| Some(x.1))
-            .unwrap();
+            .map(|x| Some(x.1)) {
+                Ok(x) => x,
+                Err(e) => {
+                    stdout.write_str(&format!("FAIL: {}\n", e.1));
+                    return;
+                }
+            };
+
             if let (Some(ip), Some(ia)) = (input_prog_sexp, input_arg_sexp) {
                 input_sexp = allocator.new_pair(ip, ia).ok();
             }
@@ -1109,11 +1126,20 @@ pub fn launch_tool(stdout: &mut Stream, args: &[String], tool_name: &str, defaul
             let mut parsed_args_result = "()".to_string();
 
             if let Some(ArgumentValue::ArgString(_f, s)) = parsed_args.get("env") {
-                parsed_args_result = s.to_string();
+                if !s.is_empty() {
+                    parsed_args_result = s.to_string();
+                }
             }
 
-            let env_ir = read_ir(&parsed_args_result).unwrap();
-            let env = assemble_from_ir(&mut allocator, Rc::new(env_ir)).unwrap();
+            let env = match read_ir(&parsed_args_result).and_then(|env_ir| {
+                assemble_from_ir(&mut allocator, Rc::new(env_ir)).map_err(|e| SyntaxErr::new(e.1))
+            }) {
+                Ok(v) => v,
+                Err(e) => {
+                    stdout.write_str(&format!("FAIL: {e}\n"));
+                    return;
+                }
+            };
             time_assemble = SystemTime::now();
 
             input_sexp = allocator.new_pair(assembled_sexp, env).ok();
@@ -1366,7 +1392,7 @@ pub fn launch_tool(stdout: &mut Stream, args: &[String], tool_name: &str, defaul
     // Here, if we're in that mode, we'll produce the hash of the input program so
     // that we can recognize it and start the output for the table trace.
     let maybe_program_hash = parsed_args
-        .get("table")
+        .get("table").map(Some).unwrap_or_else(|| parsed_args.get("verbose"))
         .and_then(|_| program_hash_from_program_env_cons(&mut allocator, input_sexp.unwrap()).ok());
 
     let time_parse_input = SystemTime::now();

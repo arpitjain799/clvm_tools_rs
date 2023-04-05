@@ -770,3 +770,45 @@ fn test_bytes_to_pybytes_repr_0() {
         "b'\\x11\\x01abc\\r\\ntest\\ttest\\r\\n'"
     );
 }
+
+// Fuzz: output should be "FAIL: unexpected end of stream"
+#[test]
+fn test_brun_unexpected_end_of_stream() {
+    let mut s = Stream::new(None);
+    launch_tool(
+        &mut s,
+        &vec!["brun".to_string(), "".to_string()],
+        &"brun".to_string(),
+        0,
+    );
+    let result = s.get_value().decode().trim().to_string();
+    assert_eq!(result, "FAIL: unexpected end of stream");
+}
+
+// Ensure the same thing is ok for the second arg.
+#[test]
+fn test_brun_unexpected_end_of_stream_not_reported_for_second_arg() {
+    let mut s = Stream::new(None);
+    launch_tool(
+        &mut s,
+        &vec!["brun".to_string(), "12345".to_string(), "".to_string()],
+        &"brun".to_string(),
+        0,
+    );
+    let result = s.get_value().decode().trim().to_string();
+    assert_eq!(result, "FAIL: path into atom ()");
+}
+
+// Ensure run and brun only show the frames we want in weird scenarios.
+#[test]
+fn test_run_doesnt_show_start_of_compilation_with_verbose() {
+    let mut s = Stream::new(None);
+    launch_tool(
+        &mut s,
+        &vec!["run".to_string(), "--verbose".to_string(), "(q - Y L resources/tests/assert.clvm if q r F)".to_string()],
+        &"run".to_string(),
+        2,
+    );
+    let result = s.get_value().decode().trim().to_string();
+    assert_eq!(result, "(- 89 76 \"resources/tests/assert.clvm\" 26982 1 6 70)\n\n(q 17 89 76 \"resources/tests/assert.clvm\" 26982 1 6 70) [()] => (- 89 76 \"resources/tests/assert.clvm\" 26982 1 6 70)");
+}
