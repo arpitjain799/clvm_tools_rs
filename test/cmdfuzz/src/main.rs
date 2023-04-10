@@ -1,4 +1,5 @@
 use std::io;
+use std::process;
 use subprocess::Exec;
 use shlex::split;
 
@@ -14,7 +15,8 @@ fn main() {
         let exec_result = Exec::shell(&input_line).capture();
         if let Ok(result) = exec_result {
             let python_got_back = result.stdout_str();
-            let args = split(&python_got_back).unwrap();
+            let args = split(&input_line).unwrap();
+            eprintln!("args {args:?}");
             if args.is_empty() {
                 continue;
             }
@@ -42,7 +44,8 @@ fn main() {
             }
 
             if stdout_result != python_got_back {
-                panic!("mismatched output\n rust  {}\nvs\npython {}", stdout_result, python_got_back);
+                eprintln!("mismatched output\n rust  {}\nvs\npython {}", stdout_result, python_got_back);
+                process::abort();
             }
         } else {
             eprintln!("python failed");
