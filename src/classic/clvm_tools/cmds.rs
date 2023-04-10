@@ -1403,7 +1403,6 @@ pub fn launch_tool(stdout: &mut Stream, args: &[String], tool_name: &str, defaul
     let maybe_program_hash = parsed_args
         .get("table").map(Some).unwrap_or_else(|| parsed_args.get("verbose").filter(|_| tool_name == "brun"))
         .and_then(|_| program_hash_from_program_env_cons(&mut allocator, input_sexp.unwrap()).ok());
-    eprintln!("{tool_name} maybe_program_hash {maybe_program_hash:?}");
 
     let time_parse_input = SystemTime::now();
     let run_options = RunProgramOption {
