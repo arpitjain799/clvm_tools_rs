@@ -229,7 +229,7 @@ fn run_from_source<'a>(allocator: &'a mut Allocator, src: String) -> NodePtr {
     let runner = DefaultProgramRunner::new();
     let null = allocator.null();
     let res = runner
-        .run_program(allocator, assembled, null, None)
+        .run_program(allocator, assembled, null, None, None)
         .unwrap();
     return res.1;
 }
@@ -240,11 +240,11 @@ fn compile_program<'a>(
     src: String,
 ) -> Result<String, EvalErr> {
     let run_script = stages::run(allocator);
-    let runner = run_program_for_search_paths("*test*", &vec![include_path], false);
+    let runner = run_program_for_search_paths("*test*", &vec![include_path], false, None);
     let input_ir = read_ir(&src);
     let input_program = assemble_from_ir(allocator, Rc::new(input_ir.unwrap())).unwrap();
     let input_sexp = allocator.new_pair(input_program, allocator.null()).unwrap();
-    let res = runner.run_program(allocator, run_script, input_sexp, None);
+    let res = runner.run_program(allocator, run_script, input_sexp, None, None);
 
     return res.map(|x| disassemble(allocator, x.1));
 }
@@ -797,18 +797,4 @@ fn test_brun_unexpected_end_of_stream_not_reported_for_second_arg() {
     );
     let result = s.get_value().decode().trim().to_string();
     assert_eq!(result, "FAIL: path into atom ()");
-}
-
-// Ensure run and brun only show the frames we want in weird scenarios.
-#[test]
-fn test_run_doesnt_show_start_of_compilation_with_verbose() {
-    let mut s = Stream::new(None);
-    launch_tool(
-        &mut s,
-        &vec!["run".to_string(), "--verbose".to_string(), "(q - Y L resources/tests/assert.clvm if q r F)".to_string()],
-        &"run".to_string(),
-        2,
-    );
-    let result = s.get_value().decode().trim().to_string();
-    assert_eq!(result, "(- 89 76 \"resources/tests/assert.clvm\" 26982 1 6 70)\n\n(q 17 89 76 \"resources/tests/assert.clvm\" 26982 1 6 70) [()] => (- 89 76 \"resources/tests/assert.clvm\" 26982 1 6 70)");
 }

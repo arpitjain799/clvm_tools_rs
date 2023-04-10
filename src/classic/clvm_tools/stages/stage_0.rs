@@ -5,9 +5,9 @@ use clvm_rs::reduction::Response;
 
 use clvm_rs::run_program::{run_program, PreEval};
 
+#[derive(Debug,Clone)]
 pub struct RunProgramOption {
     pub max_cost: Option<Cost>,
-    pub pre_eval_f: Option<PreEval>,
     pub strict: bool,
 }
 
@@ -17,6 +17,7 @@ pub trait TRunProgram {
         allocator: &mut Allocator,
         program: NodePtr,
         args: NodePtr,
+        pre_eval_f: Option<PreEval>,
         option: Option<RunProgramOption>,
     ) -> Response;
 }
@@ -41,6 +42,7 @@ impl TRunProgram for DefaultProgramRunner {
         allocator: &mut Allocator,
         program: NodePtr,
         args: NodePtr,
+        pre_eval_f: Option<PreEval>,
         option: Option<RunProgramOption>,
     ) -> Response {
         let max_cost = option.as_ref().and_then(|o| o.max_cost).unwrap_or(0);
@@ -51,7 +53,7 @@ impl TRunProgram for DefaultProgramRunner {
             program,
             args,
             max_cost,
-            option.and_then(|o| o.pre_eval_f),
+            pre_eval_f,
         )
     }
 }

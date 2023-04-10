@@ -117,6 +117,7 @@ pub fn constant_optimizer(
                 allocator,
                 r,
                 allocator.null(),
+                None,
                 None
             );
             let r1 = res.1;

@@ -102,7 +102,7 @@ pub fn build_symbol_dump(
     let mut map_result: Vec<NodePtr> = Vec::new();
 
     for (k, v) in constants_lookup.iter() {
-        let run_result = run_program.run_program(allocator, *v, allocator.null(), None)?;
+        let run_result = run_program.run_program(allocator, *v, allocator.null(), None, None)?;
 
         let sha256 = sha256tree(allocator, run_result.1).hex();
         let sha_atom = allocator.new_atom(sha256.as_bytes())?;

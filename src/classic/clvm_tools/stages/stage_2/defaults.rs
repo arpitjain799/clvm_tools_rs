@@ -112,7 +112,7 @@ fn build_default_macro_lookup(
         let env = allocator
             .new_pair(macro_sexp, default_macro_lookup)
             .unwrap();
-        let new_macro = eval_f.run_program(allocator, run, env, None).unwrap().1;
+        let new_macro = eval_f.run_program(allocator, run, env, None, None).unwrap().1;
         default_macro_lookup = allocator.new_pair(new_macro, default_macro_lookup).unwrap();
     }
     default_macro_lookup

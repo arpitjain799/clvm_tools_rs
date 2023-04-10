@@ -764,7 +764,7 @@ pub fn get_search_paths(
 ) -> Result<Vec<String>, EvalErr> {
     let search_paths_prog = assemble(allocator, "(_get_include_paths)")?;
     let search_path_result =
-        runner.run_program(allocator, search_paths_prog, allocator.null(), None)?;
+        runner.run_program(allocator, search_paths_prog, allocator.null(), None, None)?;
 
     let mut res = Vec::new();
     if let Some(l) = proper_list(allocator, search_path_result.1, true) {

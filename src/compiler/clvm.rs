@@ -308,7 +308,7 @@ fn apply_op(
     let converted_args = convert_to_clvm_rs(allocator, wrapped_args.clone())?;
 
     runner
-        .run_program(allocator, converted_app, converted_args, None)
+        .run_program(allocator, converted_app, converted_args, None, None)
         .map_err(|e| {
             RunFailure::RunErr(
                 head.loc(),

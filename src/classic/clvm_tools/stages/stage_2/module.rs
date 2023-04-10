@@ -192,6 +192,7 @@ fn parse_include(
             allocator,
             prog,
             name,
+            None,
             None
         );
         match proper_list(allocator, assembled_sexp.1, true) {
@@ -489,6 +490,7 @@ fn compile_mod_stage_1(
                                 allocator,
                                 compiled,
                                 allocator.null(),
+                                None,
                                 None
                             )?;
 
@@ -497,6 +499,7 @@ fn compile_mod_stage_1(
                                 allocator,
                                 compilation_result.1,
                                 allocator.null(),
+                                None,
                                 None
                             )?;
 
@@ -803,7 +806,7 @@ fn finish_compile_from_collection(
             },
         )?;
 
-        run_program.run_program(allocator, to_run, symbols, None)?;
+        run_program.run_program(allocator, to_run, symbols, None, None)?;
 
         Ok(opt_list)
     } else {
@@ -829,6 +832,7 @@ pub fn compile_mod(
         allocator,
         produce_extra_info_prog,
         produce_extra_info_null,
+        None,
         None,
     )?;
     let produce_extra_info = non_nil(allocator, extra_info_res.1);

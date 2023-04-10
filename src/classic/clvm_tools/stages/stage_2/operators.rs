@@ -9,7 +9,7 @@ use clvm_rs::chia_dialect::{ChiaDialect, NO_NEG_DIV, NO_UNKNOWN_OPS};
 use clvm_rs::cost::Cost;
 use clvm_rs::dialect::Dialect;
 use clvm_rs::reduction::{EvalErr, Reduction, Response};
-use clvm_rs::run_program::run_program;
+use clvm_rs::run_program::{PreEval, run_program};
 
 use crate::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, Stream};
 
@@ -94,12 +94,13 @@ pub struct CompilerOperators {
 // down a reference became very hairy.  The downside is that a few objects had become fixed in
 // an Rc cycle.  The drop trait below corrects that.
 impl CompilerOperators {
-    pub fn new(source_file: &str, search_paths: Vec<String>, symbols_extra_info: bool) -> Self {
+    pub fn new(source_file: &str, search_paths: Vec<String>, symbols_extra_info: bool, option: Option<RunProgramOption>) -> Self {
         CompilerOperators {
             parent: Rc::new(CompilerOperatorsInternal::new(
                 source_file,
                 search_paths,
                 symbols_extra_info,
+                option,
             )),
         }
     }
@@ -112,8 +113,13 @@ impl Drop for CompilerOperators {
 }
 
 impl CompilerOperatorsInternal {
-    pub fn new(source_file: &str, search_paths: Vec<String>, symbols_extra_info: bool) -> Self {
-        let base_dialect = Rc::new(ChiaDialect::new(NO_NEG_DIV | NO_UNKNOWN_OPS));
+    pub fn new(source_file: &str, search_paths: Vec<String>, symbols_extra_info: bool, option: Option<RunProgramOption>) -> Self {
+        let dialect_flags = if option.map(|o| o.strict).unwrap_or(false) {
+            NO_NEG_DIV | NO_UNKNOWN_OPS
+        } else {
+            NO_NEG_DIV
+        };
+        let base_dialect = Rc::new(ChiaDialect::new(dialect_flags));
         let base_runner = Rc::new(DefaultProgramRunner::new());
         CompilerOperatorsInternal {
             base_dialect,
@@ -329,6 +335,7 @@ impl TRunProgram for CompilerOperatorsInternal {
         allocator: &mut Allocator,
         program: NodePtr,
         args: NodePtr,
+        pre_eval_f: Option<PreEval>,
         option: Option<RunProgramOption>,
     ) -> Response {
         let max_cost = option.as_ref().and_then(|o| o.max_cost).unwrap_or(0);
@@ -338,7 +345,7 @@ impl TRunProgram for CompilerOperatorsInternal {
             program,
             args,
             max_cost,
-            option.and_then(|o| o.pre_eval_f),
+            pre_eval_f
         )
     }
 }
@@ -349,9 +356,10 @@ impl TRunProgram for CompilerOperators {
         allocator: &mut Allocator,
         program: NodePtr,
         args: NodePtr,
+        pre_eval_f: Option<PreEval>,
         option: Option<RunProgramOption>,
     ) -> Response {
-        self.parent.run_program(allocator, program, args, option)
+        self.parent.run_program(allocator, program, args, pre_eval_f, option)
     }
 }
 
@@ -359,11 +367,13 @@ pub fn run_program_for_search_paths(
     source_file: &str,
     search_paths: &[String],
     symbols_extra_info: bool,
+    option: Option<RunProgramOption>,
 ) -> Rc<CompilerOperators> {
     let ops = Rc::new(CompilerOperators::new(
         source_file,
         search_paths.to_vec(),
         symbols_extra_info,
+        option,
     ));
     ops.parent.set_runner(ops.parent.clone());
     ops

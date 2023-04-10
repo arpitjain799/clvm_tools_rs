@@ -61,7 +61,7 @@ fn test_do_com_prog(
     macro_lookup_src: String,
     symbol_table_src: String,
 ) -> String {
-    let runner = run_program_for_search_paths("*test*", &vec![".".to_string()], false);
+    let runner = run_program_for_search_paths("*test*", &vec![".".to_string()], false, None);
     let prog_ir = read_ir(&program_src).unwrap();
     let program = assemble_from_ir(allocator, Rc::new(prog_ir)).unwrap();
     let macro_ir = read_ir(&macro_lookup_src).unwrap();
@@ -177,7 +177,7 @@ fn test_stage_2_run() {
 fn test_present_file_smoke_not_exists() {
     let mut allocator = Allocator::new();
     let runner =
-        run_program_for_search_paths("*test*", &vec!["resources/tests".to_string()], false);
+        run_program_for_search_paths("*test*", &vec!["resources/tests".to_string()], false, None);
     let sexp_triggering_read = assemble(&mut allocator, "(embed-file test-file sexp embed.sexp)")
         .expect("should assemble");
     let res = read_file(
@@ -193,7 +193,7 @@ fn test_present_file_smoke_not_exists() {
 fn test_present_file_smoke_exists() {
     let mut allocator = Allocator::new();
     let runner =
-        run_program_for_search_paths("*test*", &vec!["resources/tests".to_string()], false);
+        run_program_for_search_paths("*test*", &vec!["resources/tests".to_string()], false, None);
     let sexp_triggering_read = assemble(&mut allocator, "(embed-file test-file sexp embed.sexp)")
         .expect("should assemble");
     let res = read_file(runner, &mut allocator, sexp_triggering_read, "embed.sexp")
@@ -205,7 +205,7 @@ fn test_present_file_smoke_exists() {
 fn test_process_embed_file_as_sexp() {
     let mut allocator = Allocator::new();
     let runner =
-        run_program_for_search_paths("*test*", &vec!["resources/tests".to_string()], false);
+        run_program_for_search_paths("*test*", &vec!["resources/tests".to_string()], false, None);
     let declaration_sexp = assemble(&mut allocator, "(embed-file test-embed sexp embed.sexp)")
         .expect("should assemble");
     let want_exp = assemble(&mut allocator, "(q 23 24 25)").expect("should assemble");
@@ -228,6 +228,7 @@ fn test_process_embed_file_as_sexp_in_an_unexpected_location() {
         "*test*",
         &vec!["resources/tests/stage_2".to_string()],
         false,
+        None
     );
     let sexp_triggering_read = assemble(&mut allocator, "(embed-file test-file hex act.clvm.hex)")
         .expect("should assemble");
@@ -248,6 +249,7 @@ fn test_process_embed_file_as_sexp_in_an_expected_location() {
         "*test*",
         &vec!["resources/tests/steprun".to_string()],
         false,
+        None
     );
     let sexp_triggering_read = assemble(&mut allocator, "(embed-file test-file hex act.clvm.hex)")
         .expect("should assemble");
@@ -267,7 +269,7 @@ fn test_process_embed_file_as_sexp_in_an_expected_location() {
 fn test_process_embed_file_as_hex() {
     let mut allocator = Allocator::new();
     let runner =
-        run_program_for_search_paths("*test*", &vec!["resources/tests".to_string()], false);
+        run_program_for_search_paths("*test*", &vec!["resources/tests".to_string()], false, None);
     let declaration_sexp = assemble(
         &mut allocator,
         "(embed-file test-embed-from-hex hex steprun/fact.clvm.hex)",

@@ -748,7 +748,7 @@ fn calculate_cost_offset(
     */
     let almost_empty_list = enlist(allocator, &[allocator.null()]).unwrap();
     let cost = run_program
-        .run_program(allocator, run_script, almost_empty_list, None)
+        .run_program(allocator, run_script, almost_empty_list, None, None)
         .map(|x| x.0)
         .unwrap_or_else(|_| 0);
 
@@ -1038,8 +1038,17 @@ pub fn launch_tool(stdout: &mut Stream, args: &[String], tool_name: &str, defaul
         input_args = path_or_code.to_string();
     }
 
+    let strict_run = parsed_args
+        .get("strict")
+        .map(|_| true)
+        .unwrap_or(false);
+
+    let starter_run_options = RunProgramOption {
+        max_cost: None,
+        strict: strict_run,
+    };
     let special_runner =
-        run_program_for_search_paths(&reported_input_file, &search_paths, extra_symbol_info);
+        run_program_for_search_paths(&reported_input_file, &search_paths, extra_symbol_info, Some(starter_run_options));
     let dpr = special_runner.clone();
     let run_program = special_runner;
 
@@ -1392,27 +1401,29 @@ pub fn launch_tool(stdout: &mut Stream, args: &[String], tool_name: &str, defaul
     // Here, if we're in that mode, we'll produce the hash of the input program so
     // that we can recognize it and start the output for the table trace.
     let maybe_program_hash = parsed_args
-        .get("table").map(Some).unwrap_or_else(|| parsed_args.get("verbose"))
+        .get("table").map(Some).unwrap_or_else(|| parsed_args.get("verbose").filter(|_| tool_name == "brun"))
         .and_then(|_| program_hash_from_program_env_cons(&mut allocator, input_sexp.unwrap()).ok());
+    eprintln!("{tool_name} maybe_program_hash {maybe_program_hash:?}");
 
     let time_parse_input = SystemTime::now();
+    let run_options = RunProgramOption {
+        max_cost: if max_cost == 0 {
+            None
+        } else {
+            Some(max_cost as u64)
+        },
+        strict: parsed_args
+            .get("strict")
+            .map(|_| true)
+            .unwrap_or_else(|| false),
+    };
     let res = run_program
         .run_program(
             &mut allocator,
             run_script,
             input_sexp.unwrap(),
-            Some(RunProgramOption {
-                max_cost: if max_cost == 0 {
-                    None
-                } else {
-                    Some(max_cost as u64)
-                },
-                pre_eval_f,
-                strict: parsed_args
-                    .get("strict")
-                    .map(|_| true)
-                    .unwrap_or_else(|| false),
-            }),
+            pre_eval_f,
+            Some(run_options)
         )
         .map(|run_program_result| {
             let mut cost: i64 = run_program_result.0 as i64;
