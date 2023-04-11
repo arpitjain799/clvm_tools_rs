@@ -16,6 +16,16 @@ fn main() {
     let allowed_tools: Vec<String> = ["brun","opc","opd"].iter().map(|x| x.to_string()).collect();
     for input_line_osstr in io::stdin().lines() {
         let input_line = input_line_osstr.unwrap();
+
+        let args = match split(&input_line) {
+            Some(a) => a,
+            _ => { continue; }
+        };
+
+        if args.is_empty() || !allowed_tools.contains(&args[0]) {
+            continue;
+        }
+
         let exec_result = Exec::shell(&input_line).stdout(Redirection::Pipe).stderr(Redirection::Pipe).capture();
         let result = match exec_result {
             Ok(r) => r,
@@ -25,14 +35,6 @@ fn main() {
         let mut python_got_back = result.stdout_str();
         if python_got_back.is_empty() {
             python_got_back = result.stderr_str();
-        }
-        let args = match split(&input_line) {
-            Some(a) => a,
-            _ => { continue; }
-        };
-
-        if args.is_empty() || !allowed_tools.contains(&args[0]) {
-            continue;
         }
 
         let mut stdout_result;
