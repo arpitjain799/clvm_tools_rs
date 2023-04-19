@@ -219,21 +219,25 @@ fn display_trace(
         let form = item_vec[0];
         let env = item_vec[1];
         let not_exn = item_vec.len() > 2;
+        let h = sha256tree(allocator, form).hex();
+        let symbol = symbol_table
+            .as_ref()
+            .and_then(|st| st.get(&h).map(|x| x.to_string()));
+
+        if only_exn {
+            if !not_exn {
+                display_fun(allocator, stdout, disassemble_f, form, symbol, env, "(didn't finish)");
+            }
+            continue;
+        }
+
         let rv = if not_exn {
             disassemble_f(allocator, item_vec[2])
         } else {
             "(didn't finish)".to_string()
         };
 
-        let h = sha256tree(allocator, form).hex();
-        let symbol = symbol_table
-            .as_ref()
-            .and_then(|st| st.get(&h).map(|x| x.to_string()));
-
-        let display = !only_exn || !not_exn;
-        if display {
-            display_fun(allocator, stdout, disassemble_f, form, symbol, env, &rv);
-        }
+        display_fun(allocator, stdout, disassemble_f, form, symbol, env, &rv);
     }
 }
 

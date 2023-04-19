@@ -401,44 +401,23 @@ impl Stream {
         self.length
     }
 
-    fn re_allocate(&mut self, size: Option<usize>) {
-        let mut s = match size {
-            None => self.buffer.len() * BUF_ALLOC_MULTIPLIER,
-            Some(s) => s,
-        };
-
-        /*
-         * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Errors/Invalid_array_length
-         */
-        if s > 4294967295 {
-            // 4294967295 = 2**32 - 1
-            s = 4294967295;
-        }
-
-        let mut buf = Vec::<u8>::with_capacity(s);
-        for by in &self.buffer {
-            buf.push(*by);
-        }
-        self.buffer = buf;
-    }
-
     pub fn write(&mut self, b: Bytes) -> usize {
-        let new_length = max(self.buffer.len(), b.length() + self.seek);
-        if new_length > self.buffer.len() {
-            self.re_allocate(Some(new_length * BUF_ALLOC_MULTIPLIER));
+        if b.length() <= 0 {
+            return b.length();
         }
 
-        if b.length() > 0 {
-            self.buffer
-                .resize(max(self.seek + b.length(), self.buffer.len()), 0);
-
-            for i in 0..b.length() {
-                self.buffer[i + self.seek] = b.at(i);
-            }
+        let mut i = 0;
+        while i < b.length() && self.seek < self.buffer.len() {
+            self.buffer[self.seek] = b.at(i);
+            i += 1;
+            self.seek += 1;
+        }
+        while i < b.length() {
+            self.buffer.push(b.at(i));
+            i += 1;
+            self.seek += 1;
         }
 
-        self.length = new_length;
-        self.seek += b.length(); // Don't move this line prior to `this._length = newLength`!
         b.length()
     }
 
