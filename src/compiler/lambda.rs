@@ -170,18 +170,7 @@ pub fn handle_lambda(
     ));
 
     let rolled_elements_vec: Vec<Rc<SExp>> = v.iter().skip(1).map(|x| Rc::new(x.clone())).collect();
-    let body_list = enlist(v[0].loc(), rolled_elements_vec);
-
-    // Make the mod form
-    let mod_form_data = Rc::new(SExp::Cons(
-        v[0].loc(),
-        Rc::new(SExp::atom_from_string(v[0].loc(), "mod+")),
-        Rc::new(SExp::Cons(
-            found.args.loc(),
-            combined_captures_and_args,
-            Rc::new(body_list),
-        )),
-    ));
+    let body = compile_bodyform(opts, v[1].clone());
 
     // Requires captures
     let subparse = compile_bodyform(opts, mod_form_data)?;
@@ -191,6 +180,6 @@ pub fn handle_lambda(
         args: found.args.clone(),
         capture_args: found.capture_args.clone(),
         captures: found.captures,
-        body: Rc::new(subparse),
+        body: body,
     }))
 }

@@ -15,7 +15,7 @@ use crate::compiler::compiler::{is_at_capture, run_optimizer};
 use crate::compiler::comptypes::{
     fold_m, join_vecs_to_string, list_to_cons, Binding, BodyForm, Callable, CompileErr,
     CompileForm, CompiledCode, CompilerOpts, ConstantKind, DefunCall, DefunData, HelperForm,
-    InlineFunction, LetData, LetFormKind, PrimaryCodegen,
+    InlineFunction, LambdaData, LetData, LetFormKind, PrimaryCodegen,
 };
 use crate::compiler::debug::{build_swap_table_mut, relabel};
 use crate::compiler::evaluate::{Evaluator, EVAL_STACK_LIMIT};
@@ -580,7 +580,7 @@ pub fn generate_expr_code(
             let opts_with_env = opts
                 .set_start_env(Some(env))
                 .set_in_defun(true)
-                .set_compiler(compiler.clone());
+                .set_code_generator(compiler.clone());
             let code = codegen(
                 allocator,
                 runner,
@@ -920,11 +920,31 @@ pub fn hoist_body_let_binding(
             }
             (vres, Rc::new(BodyForm::Call(l.clone(), new_call_list)))
         }
+        BodyForm::Lambda(ldata) => {
+            // We'll model the lambda itself as a helper function with special surrondings.
+            let new_outer_context = Rc::new(SExp::Cons(
+                ldata.loc.clone(),
+                ldata.capture_args.clone(),
+                ldata.args.clone()
+            ));
+            let (new_helpers, new_body) =
+                hoist_body_let_binding(
+                    Some(new_outer_context.clone()),
+                    ldata.args.clone(),
+                    ldata.body.clone()
+                );
+            let new_lambda =
+                BodyForm::Lambda(LambdaData {
+                    body: new_body,
+                    .. ldata.clone()
+                });
+            (new_helpers, Rc::new(new_lambda))
+        }
         _ => (Vec::new(), body.clone()),
     }
 }
 
-fn process_helper_let_bindings(helpers: &[HelperForm]) -> Vec<HelperForm> {
+pub fn process_helper_let_bindings(helpers: &[HelperForm]) -> Vec<HelperForm> {
     let mut result = helpers.to_owned();
     let mut i = 0;
 
@@ -1096,9 +1116,8 @@ fn start_codegen(
         };
     }
 
-    let combined_helpers = &mut program.helpers.clone();
-    let let_helpers_with_expr = process_helper_let_bindings(combined_helpers);
-    let live_helpers: Vec<HelperForm> = let_helpers_with_expr
+    let only_defuns: Vec<HelperForm> = program
+        .helpers
         .iter()
         .filter(|x| is_defun(x))
         .cloned()
@@ -1109,12 +1128,12 @@ fn start_codegen(
         None => Rc::new(compute_env_shape(
             program.loc.clone(),
             program.args,
-            &live_helpers,
+            &only_defuns,
         )),
     };
 
-    code_generator.to_process = let_helpers_with_expr.clone();
-    code_generator.original_helpers = let_helpers_with_expr;
+    code_generator.to_process = program.helpers.clone();
+    code_generator.original_helpers = program.helpers.clone();
     code_generator.final_expr = program.exp;
 
     Ok(code_generator)

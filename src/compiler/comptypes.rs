@@ -166,9 +166,7 @@ pub enum BodyForm {
     /// (mod ...) can be used in chialisp as an expression, in which it returns
     /// the compiled code.  Here, it contains a CompileForm, which represents
     /// the full significant input of a program (yielded by frontend()).
-    /// If the bool is true, then the module takes a environment when applied in
-    /// the same shape as the host program.
-    Mod(Srcloc, bool, CompileForm),
+    Mod(Srcloc, CompileForm),
     /// A lambda form (lambda (...) ...)
     ///
     /// The lambda arguments are in two parts:
